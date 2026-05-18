@@ -9,6 +9,8 @@ import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
 import {
   amountsToPortfolioSnapshot,
+  getAeroPriceUsdAtBlock,
+  getEthPriceUsdAtBlock,
   getNextLpAssetAmounts,
   getTransactionAssetDelta,
   getWalletAssetSnapshot,
@@ -37,7 +39,8 @@ function tokenAmountUsd(amount: { amount?: string; symbol?: string }, prices?: {
   return null;
 }
 
-function impliedAeroPriceUsd(value: unknown) {
+function impliedAeroPriceUsd(type: TransactionType, value: unknown) {
+  if (type !== TransactionType.swap) return null;
   if (!Array.isArray(value)) return null;
 
   let aeroAmount = 0;
@@ -136,23 +139,34 @@ export default async function DashboardPage() {
   const transactionAssetStates = new Map<string, WalletAssetSnapshot>();
   let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
   let runningAssets = snapshotToAmounts(walletAssets);
-  const tokenPrices = { ethPriceUsd: walletAssets?.ethPriceUsd ?? null, aeroPriceUsd: walletAssets?.aeroPriceUsd ?? null };
+  const transactionEthPrices = new Map<string, number | null>();
   const transactionAeroPrices = new Map<string, number | null>();
-  let historicalAeroPriceUsd: number | null = null;
+  const ethPricesByBlock = new Map<string, number | null>();
+  const aeroPricesByBlock = new Map<string, number | null>();
+
+  for (const blockNumber of [...new Set(transactions.map((transaction) => transaction.blockNumber.toString()))]) {
+    const [ethPriceUsd, aeroPriceUsd] = await Promise.all([
+      getEthPriceUsdAtBlock(BigInt(blockNumber)).catch(() => null),
+      getAeroPriceUsdAtBlock(BigInt(blockNumber)).catch(() => null)
+    ]);
+    ethPricesByBlock.set(blockNumber, ethPriceUsd);
+    aeroPricesByBlock.set(blockNumber, aeroPriceUsd);
+  }
 
   for (const transaction of [...transactions].reverse()) {
     chronologicalLpAssets = getNextLpAssetAmounts(chronologicalLpAssets, transaction);
     transactionLpStates.set(transaction.id, chronologicalLpAssets);
 
-    const transactionAeroPriceUsd = impliedAeroPriceUsd(transaction.tokenAmounts);
-    if (transactionAeroPriceUsd !== null) historicalAeroPriceUsd = transactionAeroPriceUsd;
-    transactionAeroPrices.set(transaction.id, historicalAeroPriceUsd);
+    const transactionAeroPriceUsd = impliedAeroPriceUsd(transaction.type, transaction.tokenAmounts);
+    transactionEthPrices.set(transaction.id, ethPricesByBlock.get(transaction.blockNumber.toString()) ?? null);
+    transactionAeroPrices.set(transaction.id, transactionAeroPriceUsd ?? aeroPricesByBlock.get(transaction.blockNumber.toString()) ?? null);
   }
 
   for (const transaction of transactions) {
     const lpAssets = transactionLpStates.get(transaction.id) ?? { weth: 0, usdc: 0 };
+    const transactionEthPriceUsd = transactionEthPrices.get(transaction.id) ?? null;
     const transactionAeroPriceUsd = transactionAeroPrices.get(transaction.id) ?? null;
-    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, tokenPrices.ethPriceUsd, transactionAeroPriceUsd));
+    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, transactionEthPriceUsd, transactionAeroPriceUsd));
     runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, getAddress(config.BASE_WALLET_ADDRESS)));
   }
 
@@ -312,8 +326,8 @@ export default async function DashboardPage() {
                     const assetState = transactionAssetStates.get(transaction.id);
                     const approvals = approvalsByTransactionId.get(transaction.id) ?? [];
                     const transactionPrices = {
-                      ethPriceUsd: tokenPrices.ethPriceUsd,
-                      aeroPriceUsd: impliedAeroPriceUsd(transaction.tokenAmounts) ?? transactionAeroPrices.get(transaction.id) ?? null
+                      ethPriceUsd: transactionEthPrices.get(transaction.id) ?? null,
+                      aeroPriceUsd: impliedAeroPriceUsd(transaction.type, transaction.tokenAmounts) ?? transactionAeroPrices.get(transaction.id) ?? null
                     };
 
                     return (

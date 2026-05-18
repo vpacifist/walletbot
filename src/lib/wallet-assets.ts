@@ -410,6 +410,19 @@ async function getEthPriceUsd() {
   return priceFromTick({ tick, token0: selected.token0, token1: selected.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
 }
 
+export async function getEthPriceUsdAtBlock(blockNumber: bigint) {
+  const client = createBaseClient();
+  const [slot0, liquidity, token0, token1] = await Promise.all([
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "slot0", blockNumber }),
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "liquidity", blockNumber }),
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token0", blockNumber }),
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token1", blockNumber })
+  ]);
+
+  if (liquidity === 0n) return null;
+  return priceFromTick({ tick: Number(slot0[1]), token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+}
+
 async function getAeroPriceUsd() {
   const client = createBaseClient();
   const [slot0, liquidity, token0, token1] = await Promise.all([
@@ -417,6 +430,19 @@ async function getAeroPriceUsd() {
     client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "liquidity" }),
     client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token0" }),
     client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token1" })
+  ]);
+
+  if (liquidity === 0n) return null;
+  return priceFromTick({ tick: Number(slot0[1]), token0, token1, baseToken: CONTRACTS.aero, quoteToken: CONTRACTS.usdc });
+}
+
+export async function getAeroPriceUsdAtBlock(blockNumber: bigint) {
+  const client = createBaseClient();
+  const [slot0, liquidity, token0, token1] = await Promise.all([
+    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "slot0", blockNumber }),
+    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "liquidity", blockNumber }),
+    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token0", blockNumber }),
+    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token1", blockNumber })
   ]);
 
   if (liquidity === 0n) return null;
