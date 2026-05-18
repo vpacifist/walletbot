@@ -240,6 +240,39 @@ describe("classifyTransaction", () => {
     ]);
   });
 
+  it("classifies swaps sent through Odos Smart Order Router V3", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.odosSmartOrderRouterV3,
+      method: "swapCompact",
+      receipt: {
+        logs: [
+          transferLog({
+            token: CONTRACTS.aero,
+            from: walletAddress,
+            to: poolAddress,
+            value: parseUnits("211.711243259616094767", 18)
+          }),
+          transferLog({
+            token: CONTRACTS.weth,
+            from: CONTRACTS.odosSmartOrderRouterV3,
+            to: walletAddress,
+            value: parseUnits("0.032804963275764742", 18)
+          })
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.swap);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("Odos");
+    expect(result.tokenAmounts).toMatchObject([
+      { symbol: "AERO", amount: "211.711243259616094767", direction: "out" },
+      { symbol: "WETH", amount: "0.032804963275764742", direction: "in" }
+    ]);
+  });
+
   it("classifies Aerodrome Slipstream strategy increases as LP increases", () => {
     const result = classifyTransaction({
       walletAddress,

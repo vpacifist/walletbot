@@ -171,6 +171,9 @@ export function classifyTransaction(params: {
   const isKyberSwap =
     sameAddress(params.toAddress, CONTRACTS.kyberSwapMetaAggregationRouterV2) ||
     hasLogFromAddress(params.receipt, CONTRACTS.kyberSwapMetaAggregationRouterV2);
+  const isOdosSwap =
+    sameAddress(params.toAddress, CONTRACTS.odosSmartOrderRouterV3) ||
+    hasLogFromAddress(params.receipt, CONTRACTS.odosSmartOrderRouterV3);
   const lowerWallet = params.walletAddress.toLowerCase();
   const fromWallet = params.fromAddress.toLowerCase() === lowerWallet;
   const toWallet = params.toAddress?.toLowerCase() === lowerWallet;
@@ -212,7 +215,7 @@ export function classifyTransaction(params: {
   }
 
   if (tokenAmounts.some((amount) => amount.direction === "in") && tokenAmounts.some((amount) => amount.direction === "out")) {
-    const protocol = isUniswapV3Swap ? "Uniswap v3" : isZeroExSwap ? "0x" : isKyberSwap ? "KyberSwap" : "unknown";
+    const protocol = isUniswapV3Swap ? "Uniswap v3" : isZeroExSwap ? "0x" : isKyberSwap ? "KyberSwap" : isOdosSwap ? "Odos" : "unknown";
 
     return {
       type: TransactionType.swap,
