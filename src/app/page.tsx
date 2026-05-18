@@ -244,6 +244,17 @@ export default async function DashboardPage() {
           </div>
           <div className="table-wrap transactions-wrap">
             <table className="transactions-table">
+              <colgroup>
+                <col className="tx-col-time" />
+                <col className="tx-col-type" />
+                <col className="tx-col-amounts" />
+                <col className="tx-col-protocol" />
+                <col className="tx-col-position" />
+                <col className="tx-col-status" />
+                <col className="tx-col-hash" />
+                <col className="tx-col-asset" span={5} />
+                <col className="tx-col-total" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Time</th>

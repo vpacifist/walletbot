@@ -169,6 +169,7 @@ table {
 
 .transactions-table {
   min-width: 1420px;
+  table-layout: fixed;
 }
 
 th,
@@ -199,13 +200,15 @@ td {
 .amounts-cell {
   display: grid;
   gap: 4px;
-  min-width: 300px;
+  width: max-content;
+  min-width: 200px;
+  max-width: 100%;
 }
 
 .amount-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 18px;
+  gap: 10px;
   align-items: baseline;
 }
 
@@ -258,6 +261,42 @@ th {
   background: var(--surface);
   border-top: 0;
   box-shadow: 0 1px 0 var(--border);
+}
+
+.tx-col-time {
+  width: 112px;
+}
+
+.tx-col-type {
+  width: 104px;
+}
+
+.tx-col-amounts {
+  width: 230px;
+}
+
+.tx-col-protocol {
+  width: 112px;
+}
+
+.tx-col-position {
+  width: 92px;
+}
+
+.tx-col-status {
+  width: 104px;
+}
+
+.tx-col-hash {
+  width: 118px;
+}
+
+.tx-col-asset {
+  width: 112px;
+}
+
+.tx-col-total {
+  width: 120px;
 }
 
 .status {
