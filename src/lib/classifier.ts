@@ -149,6 +149,16 @@ export function classifyTransaction(params: {
     };
   }
 
+  if (method === "deposit" && sameAddress(params.toAddress, CONTRACTS.nftFarmStrategy)) {
+    return {
+      type: TransactionType.lp_deposit,
+      status: ClassificationStatus.classified,
+      protocol: "NftFarmStrategy",
+      tokenAmounts,
+      usdEstimate
+    };
+  }
+
   if (tokenAmounts.some((amount) => amount.direction === "in") && tokenAmounts.some((amount) => amount.direction === "out")) {
     return {
       type: TransactionType.swap,

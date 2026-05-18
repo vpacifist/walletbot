@@ -51,6 +51,7 @@ export default async function DashboardPage() {
       lp_decrease: 0,
       lp_collect: 0,
       lp_exit: 0,
+      lp_deposit: 0,
       swap: 0,
       unknown: 0
     }
@@ -99,7 +100,7 @@ export default async function DashboardPage() {
           </div>
           <div className="panel stat">
             <span>LP operations</span>
-            <strong>{txCount.lp_increase + txCount.lp_decrease + txCount.lp_collect + txCount.lp_exit}</strong>
+            <strong>{txCount.lp_increase + txCount.lp_decrease + txCount.lp_collect + txCount.lp_exit + txCount.lp_deposit}</strong>
           </div>
         </section>
 

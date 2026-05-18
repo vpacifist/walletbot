@@ -14,6 +14,7 @@ enum TransactionType {
   lp_decrease
   lp_collect
   lp_exit
+  lp_deposit
   swap
   unknown
 }

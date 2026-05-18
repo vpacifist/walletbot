@@ -19,4 +19,20 @@ describe("classifyTransaction", () => {
     expect(result.status).toBe(ClassificationStatus.classified);
     expect(result.protocol).toBe("NftFarmStrategy");
   });
+
+  it("classifies NftFarmStrategy deposit calls as lp_deposit before withdrawal heuristics", () => {
+    const result = classifyTransaction({
+      walletAddress: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45",
+      fromAddress: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45",
+      toAddress: CONTRACTS.nftFarmStrategy,
+      method: "deposit",
+      receipt: {
+        logs: []
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.lp_deposit);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("NftFarmStrategy");
+  });
 });
