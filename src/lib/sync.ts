@@ -7,6 +7,7 @@ import { getConfig } from "./config";
 import { prisma } from "./db";
 import { jsonSafe } from "./json";
 import { upsertTrackedPositions } from "./positions";
+import { getWethUsdcUniswapV3PoolAddresses } from "./uniswap-v3";
 
 export async function ensureConfiguredWallet() {
   const address = getAddress(getConfig().BASE_WALLET_ADDRESS);
@@ -33,6 +34,7 @@ export async function syncWalletOnce() {
 
   try {
     const txs = await fetchWalletTransactions(wallet.address, wallet.lastSyncedBlock ?? undefined);
+    const uniswapV3PoolAddresses = await getWethUsdcUniswapV3PoolAddresses(client).catch(() => new Set<string>());
     const discoveredTokenIds = new Set<string>();
 
     for (const tx of txs) {
@@ -45,7 +47,8 @@ export async function syncWalletOnce() {
         fromAddress,
         toAddress,
         method: tx.method,
-        receipt
+        receipt,
+        uniswapV3PoolAddresses
       });
 
       if (classification.relatedPositionTokenId) {

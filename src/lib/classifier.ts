@@ -1,6 +1,6 @@
 import { ClassificationStatus, TransactionType } from "@prisma/client";
 import { decodeEventLog, formatUnits, getAddress, type Address, type TransactionReceipt } from "viem";
-import { erc20Abi, positionManagerAbi } from "./abi";
+import { erc20Abi, poolAbi, positionManagerAbi } from "./abi";
 import { CONTRACTS, SUPPORTED_TOKEN_SET, TOKEN_META } from "./constants";
 
 export type TokenAmount = {
@@ -24,14 +24,20 @@ function sameAddress(a?: string | null, b?: string | null) {
   return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
 }
 
-function classifyByNpmEvents(receipt: TransactionReceipt) {
+function classifyByPositionManagerEvents(receipt: TransactionReceipt) {
+  const positionManagers = [
+    { address: CONTRACTS.nonfungiblePositionManager, protocol: "Uniswap v3" },
+    { address: CONTRACTS.aerodromeNonfungiblePositionManager, protocol: "Aerodrome Slipstream" }
+  ];
   const tokenIds = new Set<string>();
   let sawIncrease = false;
   let sawDecrease = false;
   let sawCollect = false;
+  let protocol: string | undefined;
 
   for (const log of receipt.logs) {
-    if (!sameAddress(log.address, CONTRACTS.nonfungiblePositionManager)) continue;
+    const positionManager = positionManagers.find((manager) => sameAddress(log.address, manager.address));
+    if (!positionManager) continue;
 
     try {
       const parsed = decodeEventLog({
@@ -42,17 +48,21 @@ function classifyByNpmEvents(receipt: TransactionReceipt) {
 
       if (parsed.eventName === "IncreaseLiquidity") {
         sawIncrease = true;
+        protocol = positionManager.protocol;
         tokenIds.add(parsed.args.tokenId.toString());
       }
       if (parsed.eventName === "DecreaseLiquidity") {
         sawDecrease = true;
+        protocol = positionManager.protocol;
         tokenIds.add(parsed.args.tokenId.toString());
       }
       if (parsed.eventName === "Collect") {
         sawCollect = true;
+        protocol = positionManager.protocol;
         tokenIds.add(parsed.args.tokenId.toString());
       }
       if (parsed.eventName === "Transfer") {
+        protocol = positionManager.protocol;
         tokenIds.add(parsed.args.tokenId.toString());
       }
     } catch {
@@ -61,10 +71,10 @@ function classifyByNpmEvents(receipt: TransactionReceipt) {
   }
 
   const relatedPositionTokenId = [...tokenIds][0];
-  if (sawIncrease) return { type: TransactionType.lp_increase, relatedPositionTokenId };
-  if (sawDecrease) return { type: TransactionType.lp_decrease, relatedPositionTokenId };
-  if (sawCollect) return { type: TransactionType.lp_collect, relatedPositionTokenId };
-  if (relatedPositionTokenId) return { type: TransactionType.unknown, relatedPositionTokenId };
+  if (sawIncrease) return { type: TransactionType.lp_increase, relatedPositionTokenId, protocol };
+  if (sawDecrease) return { type: TransactionType.lp_decrease, relatedPositionTokenId, protocol };
+  if (sawCollect) return { type: TransactionType.lp_collect, relatedPositionTokenId, protocol };
+  if (relatedPositionTokenId) return { type: TransactionType.unknown, relatedPositionTokenId, protocol };
 
   return undefined;
 }
@@ -111,15 +121,46 @@ function extractTokenAmounts(receipt: TransactionReceipt, walletAddress: Address
     });
 }
 
+function hasUniswapV3SwapEvent(receipt: TransactionReceipt, poolAddresses?: ReadonlySet<string>) {
+  if (!poolAddresses || poolAddresses.size === 0) return false;
+
+  for (const log of receipt.logs) {
+    if (!poolAddresses.has(log.address.toLowerCase())) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: poolAbi,
+        data: log.data,
+        topics: log.topics
+      });
+
+      if (parsed.eventName === "Swap") return true;
+    } catch {
+      // Not a Uniswap v3 Swap event.
+    }
+  }
+
+  return false;
+}
+
+function hasLogFromAddress(receipt: TransactionReceipt, address: Address) {
+  const lowerAddress = address.toLowerCase();
+  return receipt.logs.some((log) => log.address.toLowerCase() === lowerAddress);
+}
+
 export function classifyTransaction(params: {
   walletAddress: Address;
   fromAddress: Address;
   toAddress?: Address | null;
   method?: string | null;
   receipt: TransactionReceipt;
+  uniswapV3PoolAddresses?: ReadonlySet<string>;
 }): ClassificationResult {
-  const lpEvent = classifyByNpmEvents(params.receipt);
+  const lpEvent = classifyByPositionManagerEvents(params.receipt);
   const tokenAmounts = extractTokenAmounts(params.receipt, params.walletAddress);
+  const isUniswapV3Swap = hasUniswapV3SwapEvent(params.receipt, params.uniswapV3PoolAddresses);
+  const isZeroExSwap =
+    sameAddress(params.toAddress, CONTRACTS.zeroExAllowanceHolder) || hasLogFromAddress(params.receipt, CONTRACTS.zeroExAllowanceHolder);
   const lowerWallet = params.walletAddress.toLowerCase();
   const fromWallet = params.fromAddress.toLowerCase() === lowerWallet;
   const toWallet = params.toAddress?.toLowerCase() === lowerWallet;
@@ -132,7 +173,7 @@ export function classifyTransaction(params: {
     return {
       type: lpEvent.type,
       status: lpEvent.type === TransactionType.unknown ? ClassificationStatus.partial : ClassificationStatus.classified,
-      protocol: "Uniswap v3",
+      protocol: lpEvent.protocol,
       tokenAmounts,
       usdEstimate,
       relatedPositionTokenId: lpEvent.relatedPositionTokenId
@@ -160,10 +201,12 @@ export function classifyTransaction(params: {
   }
 
   if (tokenAmounts.some((amount) => amount.direction === "in") && tokenAmounts.some((amount) => amount.direction === "out")) {
+    const protocol = isUniswapV3Swap ? "Uniswap v3" : isZeroExSwap ? "0x" : "unknown";
+
     return {
       type: TransactionType.swap,
-      status: ClassificationStatus.partial,
-      protocol: "unknown",
+      status: protocol === "unknown" ? ClassificationStatus.partial : ClassificationStatus.classified,
+      protocol,
       tokenAmounts,
       usdEstimate
     };

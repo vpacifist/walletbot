@@ -1,10 +1,9 @@
-import { formatUnits, type Address } from "viem";
-import { erc20Abi, factoryAbi, poolAbi } from "./abi";
+import { decodeEventLog, formatUnits, type Address } from "viem";
+import { erc20Abi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
 import { createBaseClient } from "./chain";
-import { CONTRACTS, TOKEN_META } from "./constants";
+import { CONTRACTS, TOKEN_META, WETH_USDC_FEE_TIERS } from "./constants";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-const WETH_USDC_FEE_TIERS = [500, 3000, 10000] as const;
 
 export type WalletAssetSnapshot = {
   weth: WalletAssetValue;
@@ -90,6 +89,82 @@ function rawStringToEth(value?: unknown) {
 
 function readRawRecord(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function tokenPairFromDecodedInput(value: unknown): [string, string] | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const nestedValue of Object.values(value)) {
+      const nested = tokenPairFromDecodedInput(nestedValue);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  if (!Array.isArray(value)) return null;
+
+  if (
+    value.length === 3 &&
+    typeof value[0] === "string" &&
+    typeof value[1] === "string" &&
+    new Set([value[0].toLowerCase(), value[1].toLowerCase()]).size === 2
+  ) {
+    const pair = new Set([value[0].toLowerCase(), value[1].toLowerCase()]);
+    if (pair.has(CONTRACTS.weth.toLowerCase()) && pair.has(CONTRACTS.usdc.toLowerCase())) return [value[0], value[1]];
+  }
+
+  for (const item of value) {
+    const nested = tokenPairFromDecodedInput(item);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function aerodromeSlipstreamLpDelta(transaction: TransactionAssetSource): LpAssetDelta | null {
+  const toAddress = transaction.toAddress?.toLowerCase();
+  const isAerodromeStrategy =
+    toAddress === CONTRACTS.nftFarmStrategy.toLowerCase() || toAddress === CONTRACTS.aerodromeNftFarmStrategy.toLowerCase();
+  if (transaction.type !== "lp_increase" || !isAerodromeStrategy) return null;
+
+  const raw = readRawRecord(transaction.raw);
+  const blockscout = readRawRecord(raw.blockscout);
+  const decodedInput = readRawRecord(blockscout.decoded_input);
+  const tokenPair = tokenPairFromDecodedInput(decodedInput.parameters);
+  if (!tokenPair) return null;
+
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || record.address.toLowerCase() !== CONTRACTS.aerodromeNonfungiblePositionManager.toLowerCase()) continue;
+    if (!record.data || !record.topics) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: positionManagerAbi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName !== "IncreaseLiquidity") continue;
+
+      const [token0, token1] = tokenPair;
+      const delta: LpAssetDelta = { weth: 0, usdc: 0 };
+      const amount0 = tokenAmountFromRaw(token0, Number(parsed.args.amount0));
+      const amount1 = tokenAmountFromRaw(token1, Number(parsed.args.amount1));
+
+      if (token0.toLowerCase() === CONTRACTS.weth.toLowerCase()) delta.weth += amount0;
+      if (token1.toLowerCase() === CONTRACTS.weth.toLowerCase()) delta.weth += amount1;
+      if (token0.toLowerCase() === CONTRACTS.usdc.toLowerCase()) delta.usdc += amount0;
+      if (token1.toLowerCase() === CONTRACTS.usdc.toLowerCase()) delta.usdc += amount1;
+      return delta;
+    } catch {
+      // Not an Aerodrome Slipstream increase-liquidity event.
+    }
+  }
+
+  return null;
 }
 
 function gasCostWei(receipt: Record<string, unknown>) {
@@ -208,6 +283,8 @@ export function getTransactionAssetDelta(transaction: TransactionAssetSource, wa
 export function getTransactionLpDelta(transaction: TransactionAssetSource): LpAssetDelta {
   const delta: LpAssetDelta = { weth: 0, usdc: 0 };
   if (!transaction.type?.startsWith("lp_") || transaction.type === "lp_collect") return delta;
+  const aerodromeDelta = aerodromeSlipstreamLpDelta(transaction);
+  if (aerodromeDelta) return aerodromeDelta;
 
   const walletDelta = getTransactionAssetDelta(
     {

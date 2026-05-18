@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { encodeAbiParameters, encodeEventTopics, parseUnits } from "viem";
+import { positionManagerAbi } from "@/lib/abi";
+import { CONTRACTS } from "@/lib/constants";
 import { amountsToPortfolioSnapshot, getNextLpAssetAmounts, getTransactionAssetDelta, getTransactionLpDelta, subtractDelta } from "@/lib/wallet-assets";
 
 const walletAddress = "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45";
@@ -49,6 +52,59 @@ describe("wallet asset transaction states", () => {
 
     expect(getTransactionLpDelta(transaction)).toEqual({ weth: 2, usdc: 1000 });
     expect(amountsToPortfolioSnapshot({ weth: 1, usdc: 100, eth: 0 }, { weth: 2, usdc: 1000 }, 2000).totalUsd).toBe(7100);
+  });
+
+  it("uses Aerodrome Slipstream IncreaseLiquidity logs for strategy LP increases", () => {
+    const topics = encodeEventTopics({
+      abi: positionManagerAbi,
+      eventName: "IncreaseLiquidity",
+      args: { tokenId: 50443402n }
+    });
+    const transaction = {
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.aerodromeNftFarmStrategy,
+      type: "lp_increase",
+      tokenAmounts: [
+        { symbol: "WETH", amount: "0.172616050263152195", direction: "out" },
+        { symbol: "USDC", amount: "1.213639", direction: "in" }
+      ],
+      raw: {
+        blockscout: {
+          decoded_input: {
+            parameters: [
+              {
+                value: [
+                  CONTRACTS.weth,
+                  CONTRACTS.usdc,
+                  "500"
+                ]
+              }
+            ]
+          }
+        },
+        receipt: {
+          logs: [
+            {
+              address: CONTRACTS.aerodromeNonfungiblePositionManager,
+              data: encodeAbiParameters(
+                [
+                  { type: "uint128" },
+                  { type: "uint256" },
+                  { type: "uint256" }
+                ],
+                [1n, parseUnits("0.130557727706596549", 18), parseUnits("83.928593", 6)]
+              ),
+              topics
+            }
+          ]
+        }
+      }
+    };
+
+    expect(getTransactionLpDelta(transaction)).toEqual({
+      weth: 0.13055772770659654,
+      usdc: 83.928593
+    });
   });
 
   it("closes tracked LP balances on strategy exit", () => {
