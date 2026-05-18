@@ -167,6 +167,39 @@ describe("classifyTransaction", () => {
     expect(result.protocol).toBe("0x");
   });
 
+  it("tracks AERO transfers so AERO to USDC is classified as a swap", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.kyberSwapMetaAggregationRouterV2,
+      method: "swap",
+      receipt: {
+        logs: [
+          transferLog({
+            token: CONTRACTS.aero,
+            from: walletAddress,
+            to: poolAddress,
+            value: parseUnits("100", 18)
+          }),
+          transferLog({
+            token: CONTRACTS.usdc,
+            from: poolAddress,
+            to: walletAddress,
+            value: parseUnits("35", 6)
+          })
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.swap);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("KyberSwap");
+    expect(result.tokenAmounts).toMatchObject([
+      { symbol: "AERO", amount: "100", direction: "out" },
+      { symbol: "USDC", amount: "35", direction: "in" }
+    ]);
+  });
+
   it("classifies Aerodrome Slipstream strategy increases as LP increases", () => {
     const result = classifyTransaction({
       walletAddress,

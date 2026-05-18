@@ -15,6 +15,7 @@ describe("wallet asset transaction states", () => {
         tokenAmounts: [
           { symbol: "WETH", amount: "1.25", direction: "in" },
           { symbol: "USDC", amount: "100", direction: "out" },
+          { symbol: "AERO", amount: "50", direction: "in" },
           { symbol: "SPAM", amount: "999999", direction: "in" }
         ],
         raw: {
@@ -27,13 +28,15 @@ describe("wallet asset transaction states", () => {
 
     expect(delta.weth).toBe(1.25);
     expect(delta.usdc).toBe(-100);
+    expect(delta.aero).toBe(50);
     expect(delta.eth).toBeCloseTo(-2.000021);
   });
 
   it("walks backward from the latest wallet state", () => {
-    expect(subtractDelta({ weth: 3, usdc: 500, eth: 1 }, { weth: 1, usdc: -100, eth: -0.1 })).toEqual({
+    expect(subtractDelta({ weth: 3, usdc: 500, aero: 20, eth: 1 }, { weth: 1, usdc: -100, aero: 5, eth: -0.1 })).toEqual({
       weth: 2,
       usdc: 600,
+      aero: 15,
       eth: 1.1
     });
   });
@@ -51,7 +54,7 @@ describe("wallet asset transaction states", () => {
     };
 
     expect(getTransactionLpDelta(transaction)).toEqual({ weth: 2, usdc: 1000 });
-    expect(amountsToPortfolioSnapshot({ weth: 1, usdc: 100, eth: 0 }, { weth: 2, usdc: 1000 }, 2000).totalUsd).toBe(7100);
+    expect(amountsToPortfolioSnapshot({ weth: 1, usdc: 100, aero: 10, eth: 0 }, { weth: 2, usdc: 1000 }, 2000, 0.5).totalUsd).toBe(7105);
   });
 
   it("uses Aerodrome Slipstream IncreaseLiquidity logs for strategy LP increases", () => {

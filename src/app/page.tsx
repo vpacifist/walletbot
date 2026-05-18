@@ -26,22 +26,44 @@ function statusClass(status: string) {
   return "";
 }
 
-function tokenAmountUsd(amount: { amount?: string; symbol?: string }, ethPriceUsd?: number | null) {
+function tokenAmountUsd(amount: { amount?: string; symbol?: string }, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
   const numericAmount = Number(amount.amount);
   if (!Number.isFinite(numericAmount)) return null;
   if (amount.symbol === "USDC") return numericAmount;
-  if ((amount.symbol === "WETH" || amount.symbol === "ETH") && ethPriceUsd !== undefined && ethPriceUsd !== null) return numericAmount * ethPriceUsd;
+  if ((amount.symbol === "WETH" || amount.symbol === "ETH") && prices?.ethPriceUsd !== undefined && prices.ethPriceUsd !== null) {
+    return numericAmount * prices.ethPriceUsd;
+  }
+  if (amount.symbol === "AERO" && prices?.aeroPriceUsd !== undefined && prices.aeroPriceUsd !== null) return numericAmount * prices.aeroPriceUsd;
   return null;
 }
 
-function tokenAmountRows(value: unknown, ethPriceUsd?: number | null) {
+function impliedAeroPriceUsd(value: unknown) {
+  if (!Array.isArray(value)) return null;
+
+  let aeroAmount = 0;
+  let usdcAmount = 0;
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const amount = item as { amount?: string; symbol?: string };
+    const numericAmount = Number(amount.amount);
+    if (!Number.isFinite(numericAmount)) continue;
+    if (amount.symbol === "AERO") aeroAmount += Math.abs(numericAmount);
+    if (amount.symbol === "USDC") usdcAmount += Math.abs(numericAmount);
+  }
+
+  if (aeroAmount <= 0 || usdcAmount <= 0) return null;
+  return usdcAmount / aeroAmount;
+}
+
+function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
   if (!Array.isArray(value) || value.length === 0) return "-";
   const rows = value
     .map((item, index) => {
       if (!item || typeof item !== "object") return null;
       const amount = item as { direction?: string; amount?: string; symbol?: string };
       const sign = amount.direction === "out" ? "-" : "+";
-      const usdValue = tokenAmountUsd(amount, ethPriceUsd);
+      const usdValue = tokenAmountUsd(amount, prices);
       const signedUsd = usdValue === null ? "-" : `${sign}${formatUsd(usdValue)}`;
 
       return (
@@ -65,7 +87,7 @@ function formatUsd(value?: number | null) {
   return `$${formatNumber(value, 2)}`;
 }
 
-function walletAssetCell(asset?: WalletAssetSnapshot["weth" | "usdc" | "eth"]) {
+function walletAssetCell(asset?: WalletAssetSnapshot["weth" | "usdc" | "aero" | "eth"]) {
   if (!asset || asset.amount === null) return "-";
   const amountDigits = asset.symbol === "USDC" ? 2 : 6;
 
@@ -114,15 +136,23 @@ export default async function DashboardPage() {
   const transactionAssetStates = new Map<string, WalletAssetSnapshot>();
   let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
   let runningAssets = snapshotToAmounts(walletAssets);
+  const tokenPrices = { ethPriceUsd: walletAssets?.ethPriceUsd ?? null, aeroPriceUsd: walletAssets?.aeroPriceUsd ?? null };
+  const transactionAeroPrices = new Map<string, number | null>();
+  let historicalAeroPriceUsd: number | null = null;
 
   for (const transaction of [...transactions].reverse()) {
     chronologicalLpAssets = getNextLpAssetAmounts(chronologicalLpAssets, transaction);
     transactionLpStates.set(transaction.id, chronologicalLpAssets);
+
+    const transactionAeroPriceUsd = impliedAeroPriceUsd(transaction.tokenAmounts);
+    if (transactionAeroPriceUsd !== null) historicalAeroPriceUsd = transactionAeroPriceUsd;
+    transactionAeroPrices.set(transaction.id, historicalAeroPriceUsd);
   }
 
   for (const transaction of transactions) {
     const lpAssets = transactionLpStates.get(transaction.id) ?? { weth: 0, usdc: 0 };
-    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, walletAssets?.ethPriceUsd ?? null));
+    const transactionAeroPriceUsd = transactionAeroPrices.get(transaction.id) ?? null;
+    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, tokenPrices.ethPriceUsd, transactionAeroPriceUsd));
     runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, getAddress(config.BASE_WALLET_ADDRESS)));
   }
 
@@ -281,12 +311,16 @@ export default async function DashboardPage() {
                   visibleTransactions.map((transaction) => {
                     const assetState = transactionAssetStates.get(transaction.id);
                     const approvals = approvalsByTransactionId.get(transaction.id) ?? [];
+                    const transactionPrices = {
+                      ethPriceUsd: tokenPrices.ethPriceUsd,
+                      aeroPriceUsd: impliedAeroPriceUsd(transaction.tokenAmounts) ?? transactionAeroPrices.get(transaction.id) ?? null
+                    };
 
                     return (
                       <tr key={transaction.id}>
                         <td>{transaction.timestamp.toLocaleString()}</td>
                         <td>{transaction.type}</td>
-                        <td>{tokenAmountRows(transaction.tokenAmounts, walletAssets?.ethPriceUsd)}</td>
+                        <td>{tokenAmountRows(transaction.tokenAmounts, transactionPrices)}</td>
                         <td>{transaction.protocol ?? "-"}</td>
                         <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
                         <td>

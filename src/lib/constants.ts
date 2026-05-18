@@ -8,19 +8,24 @@ export const CONTRACTS = {
   aerodromeNonfungiblePositionManager: "0x827922686190790b37229fd06084350E74485b72",
   nftFarmStrategy: "0xD62b33A7Df4D0ca5EdD373576E48F73366E36179",
   aerodromeNftFarmStrategy: "0x9699bE38E6D54E51a4b36645726FEE9CC736EB45",
+  aeroUsdcSlipstreamPool: "0xBE00fF35AF70E8415D0eB605a286D8A45466A4c1",
   zeroExAllowanceHolder: "0x0000000000001fF3684f28c67538d4D072C22734",
+  kyberSwapMetaAggregationRouterV2: "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5",
   weth: "0x4200000000000000000000000000000000000006",
-  usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  aero: "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
 } as const satisfies Record<string, Address>;
 
 export const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
   [CONTRACTS.weth.toLowerCase()]: { symbol: "WETH", decimals: 18 },
-  [CONTRACTS.usdc.toLowerCase()]: { symbol: "USDC", decimals: 6 }
+  [CONTRACTS.usdc.toLowerCase()]: { symbol: "USDC", decimals: 6 },
+  [CONTRACTS.aero.toLowerCase()]: { symbol: "AERO", decimals: 18 }
 };
 
 export const SUPPORTED_TOKEN_SET = new Set([
   CONTRACTS.weth.toLowerCase(),
-  CONTRACTS.usdc.toLowerCase()
+  CONTRACTS.usdc.toLowerCase(),
+  CONTRACTS.aero.toLowerCase()
 ]);
 
 export const WETH_USDC_FEE_TIERS = [500, 3000, 10000] as const;

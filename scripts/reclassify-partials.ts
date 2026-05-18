@@ -15,10 +15,12 @@ function readRaw(value: Prisma.JsonValue): RawRecord {
 }
 
 async function main() {
+  const hashArg = process.argv.find((arg) => arg.startsWith("--hash="))?.slice("--hash=".length);
+  const reclassifyAll = process.argv.includes("--all");
   const client = createBaseClient();
   const uniswapV3PoolAddresses = await getWethUsdcUniswapV3PoolAddresses(client);
   const transactions = await prisma.transaction.findMany({
-    where: { classificationStatus: ClassificationStatus.partial },
+    where: hashArg ? { hash: hashArg } : reclassifyAll ? {} : { classificationStatus: ClassificationStatus.partial },
     include: { wallet: true },
     orderBy: [{ blockNumber: "asc" }]
   });
@@ -46,7 +48,10 @@ async function main() {
     if (
       classification.type === transaction.type &&
       classification.status === transaction.classificationStatus &&
-      classification.protocol === transaction.protocol
+      (classification.protocol ?? null) === transaction.protocol &&
+      JSON.stringify(classification.tokenAmounts) === JSON.stringify(transaction.tokenAmounts) &&
+      (classification.usdEstimate ?? null) === transaction.usdEstimate?.toString() &&
+      (classification.relatedPositionTokenId ?? null) === transaction.relatedPositionTokenId
     ) {
       unchanged += 1;
       continue;
@@ -57,10 +62,10 @@ async function main() {
       data: {
         type: classification.type,
         classificationStatus: classification.status,
-        protocol: classification.protocol,
+        protocol: classification.protocol ?? null,
         tokenAmounts: classification.tokenAmounts,
-        usdEstimate: classification.usdEstimate,
-        relatedPositionTokenId: classification.relatedPositionTokenId
+        usdEstimate: classification.usdEstimate ?? null,
+        relatedPositionTokenId: classification.relatedPositionTokenId ?? null
       }
     });
 
@@ -73,10 +78,12 @@ async function main() {
   console.log(
     JSON.stringify(
       {
-        partials: transactions.length,
+        selected: transactions.length,
         updated,
         unchanged,
         skipped,
+        hash: hashArg ?? null,
+        all: reclassifyAll,
         uniswapV3Pools: [...uniswapV3PoolAddresses]
       },
       null,
