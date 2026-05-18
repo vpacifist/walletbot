@@ -148,6 +148,13 @@ function hasLogFromAddress(receipt: TransactionReceipt, address: Address) {
   return receipt.logs.some((log) => log.address.toLowerCase() === lowerAddress);
 }
 
+function isStrategyExit(method?: string, toAddress?: Address | null) {
+  return (
+    method === "exit" &&
+    (sameAddress(toAddress, CONTRACTS.nftFarmStrategy) || sameAddress(toAddress, CONTRACTS.aerodromeNftFarmStrategy))
+  );
+}
+
 export function classifyTransaction(params: {
   walletAddress: Address;
   fromAddress: Address;
@@ -172,6 +179,17 @@ export function classifyTransaction(params: {
   const usdcAmount = tokenAmounts.find((amount) => amount.symbol === "USDC");
   const usdEstimate = usdcAmount?.amount;
 
+  if (isStrategyExit(method, params.toAddress)) {
+    return {
+      type: TransactionType.lp_exit,
+      status: ClassificationStatus.classified,
+      protocol: lpEvent?.protocol ?? "NftFarmStrategy",
+      tokenAmounts,
+      usdEstimate,
+      relatedPositionTokenId: lpEvent?.relatedPositionTokenId
+    };
+  }
+
   if (lpEvent) {
     return {
       type: lpEvent.type,
@@ -180,16 +198,6 @@ export function classifyTransaction(params: {
       tokenAmounts,
       usdEstimate,
       relatedPositionTokenId: lpEvent.relatedPositionTokenId
-    };
-  }
-
-  if (method === "exit" && sameAddress(params.toAddress, CONTRACTS.nftFarmStrategy)) {
-    return {
-      type: TransactionType.lp_exit,
-      status: ClassificationStatus.classified,
-      protocol: "NftFarmStrategy",
-      tokenAmounts,
-      usdEstimate
     };
   }
 

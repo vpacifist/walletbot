@@ -75,6 +75,29 @@ describe("classifyTransaction", () => {
     };
   }
 
+  function decreaseLiquidityLog() {
+    const topics = encodeEventTopics({
+      abi: positionManagerAbi,
+      eventName: "DecreaseLiquidity",
+      args: {
+        tokenId: 70762805n
+      }
+    });
+
+    return {
+      address: CONTRACTS.aerodromeNonfungiblePositionManager,
+      data: encodeAbiParameters(
+        [
+          { type: "uint128" },
+          { type: "uint256" },
+          { type: "uint256" }
+        ],
+        [1n, parseUnits("3.303388439918624185", 18), 0n]
+      ),
+      topics
+    };
+  }
+
   it("classifies NftFarmStrategy exit calls as lp_exit before deposit heuristics", () => {
     const result = classifyTransaction({
       walletAddress,
@@ -89,6 +112,23 @@ describe("classifyTransaction", () => {
     expect(result.type).toBe(TransactionType.lp_exit);
     expect(result.status).toBe(ClassificationStatus.classified);
     expect(result.protocol).toBe("NftFarmStrategy");
+  });
+
+  it("classifies strategy exit calls with DecreaseLiquidity logs as lp_exit", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.aerodromeNftFarmStrategy,
+      method: "exit",
+      receipt: {
+        logs: [decreaseLiquidityLog()]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.lp_exit);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("Aerodrome Slipstream");
+    expect(result.relatedPositionTokenId).toBe("70762805");
   });
 
   it("classifies NftFarmStrategy deposit calls as lp_deposit before withdrawal heuristics", () => {
