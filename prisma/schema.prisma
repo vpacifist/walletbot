@@ -13,6 +13,7 @@ enum TransactionType {
   lp_increase
   lp_decrease
   lp_collect
+  lp_exit
   swap
   unknown
 }

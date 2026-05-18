@@ -5,6 +5,7 @@ export const BASE_CHAIN_ID = 8453;
 export const CONTRACTS = {
   uniswapV3Factory: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
   nonfungiblePositionManager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
+  nftFarmStrategy: "0xD62b33A7Df4D0ca5EdD373576E48F73366E36179",
   weth: "0x4200000000000000000000000000000000000006",
   usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 } as const satisfies Record<string, Address>;

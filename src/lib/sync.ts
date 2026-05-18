@@ -44,6 +44,7 @@ export async function syncWalletOnce() {
         walletAddress: wallet.address as Address,
         fromAddress,
         toAddress,
+        method: tx.method,
         receipt
       });
 

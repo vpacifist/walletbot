@@ -115,6 +115,7 @@ export function classifyTransaction(params: {
   walletAddress: Address;
   fromAddress: Address;
   toAddress?: Address | null;
+  method?: string | null;
   receipt: TransactionReceipt;
 }): ClassificationResult {
   const lpEvent = classifyByNpmEvents(params.receipt);
@@ -122,6 +123,7 @@ export function classifyTransaction(params: {
   const lowerWallet = params.walletAddress.toLowerCase();
   const fromWallet = params.fromAddress.toLowerCase() === lowerWallet;
   const toWallet = params.toAddress?.toLowerCase() === lowerWallet;
+  const method = params.method?.toLowerCase();
 
   const usdcAmount = tokenAmounts.find((amount) => amount.symbol === "USDC");
   const usdEstimate = usdcAmount?.amount;
@@ -134,6 +136,16 @@ export function classifyTransaction(params: {
       tokenAmounts,
       usdEstimate,
       relatedPositionTokenId: lpEvent.relatedPositionTokenId
+    };
+  }
+
+  if (method === "exit" && sameAddress(params.toAddress, CONTRACTS.nftFarmStrategy)) {
+    return {
+      type: TransactionType.lp_exit,
+      status: ClassificationStatus.classified,
+      protocol: "NftFarmStrategy",
+      tokenAmounts,
+      usdEstimate
     };
   }
 
