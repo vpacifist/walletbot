@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  deposit
+  withdrawal
+  lp_increase
+  lp_decrease
+  lp_collect
+  swap
+  unknown
+}
+
+enum ClassificationStatus {
+  classified
+  partial
+  unknown
+}
+
+enum PositionStatus {
+  in_range
+  below_range
+  above_range
+  closed_or_zero_liquidity
+  unknown
+}
+
+enum SyncRunStatus {
+  running
+  succeeded
+  failed
+}
+
+model Wallet {
+  id              String        @id @default(cuid())
+  address         String        @unique
+  chain           String        @default("base")
+  enabled         Boolean       @default(true)
+  lastSyncedBlock BigInt?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  transactions    Transaction[]
+  positions       Position[]
+  syncRuns        SyncRun[]
+}
+
+model Transaction {
+  id                   String               @id @default(cuid())
+  walletId             String
+  hash                 String
+  blockNumber          BigInt
+  timestamp            DateTime
+  fromAddress          String
+  toAddress            String?
+  type                 TransactionType      @default(unknown)
+  classificationStatus ClassificationStatus @default(unknown)
+  protocol             String?
+  tokenAmounts         Json                 @default("[]")
+  usdEstimate          Decimal?             @db.Decimal(30, 8)
+  relatedPositionTokenId String?
+  raw                  Json
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  wallet               Wallet               @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, hash])
+  @@index([walletId, blockNumber])
+  @@index([type])
+}
+
+model Position {
+  id             String         @id @default(cuid())
+  walletId       String
+  tokenId        String
+  poolAddress    String?
+  token0         String
+  token1         String
+  fee            Int
+  tickLower      Int
+  tickUpper      Int
+  currentTick    Int?
+  liquidity      String
+  status         PositionStatus @default(unknown)
+  lastAlertStatus PositionStatus?
+  lastCheckedAt  DateTime?
+  raw            Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  wallet         Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  telegramEvents TelegramEvent[]
+
+  @@unique([walletId, tokenId])
+  @@index([status])
+}
+
+model SyncRun {
+  id             String        @id @default(cuid())
+  walletId       String
+  status         SyncRunStatus @default(running)
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  fromBlock      BigInt?
+  toBlock        BigInt?
+  transactionsSeen Int         @default(0)
+  error          String?
+  wallet         Wallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model TelegramEvent {
+  id         String   @id @default(cuid())
+  positionId String?
+  alertType  String
+  dedupeKey  String   @unique
+  sentAt     DateTime @default(now())
+  payload    Json?
+  position   Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
+}
