@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { loadEnvConfig } from "@next/env";
+
+loadEnvConfig(process.cwd());
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),

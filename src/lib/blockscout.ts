@@ -19,7 +19,6 @@ type BlockscoutResponse = {
 export async function fetchWalletTransactions(address: string, fromBlock?: bigint) {
   const baseUrl = getConfig().BLOCKSCOUT_BASE_URL.replace(/\/$/, "");
   const url = new URL(`${baseUrl}/api/v2/addresses/${address}/transactions`);
-  url.searchParams.set("filter", "to | from");
 
   const response = await fetch(url, {
     headers: { accept: "application/json" }

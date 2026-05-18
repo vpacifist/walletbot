@@ -9,8 +9,10 @@ async function main() {
   const bot = createBot();
 
   if (bot) {
-    await bot.launch();
-    console.log("Telegram bot launched");
+    void bot
+      .launch()
+      .then(() => console.log("Telegram bot launched"))
+      .catch((error) => console.error("Telegram bot failed to launch", error));
   } else {
     console.log("Telegram bot disabled: TELEGRAM_BOT_TOKEN is empty");
   }
