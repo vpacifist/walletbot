@@ -1,0 +1,120 @@
+import { Prisma, SyncRunStatus } from "@prisma/client";
+import { getAddress, type Address } from "viem";
+import { fetchWalletTransactions } from "./blockscout";
+import { createBaseClient } from "./chain";
+import { classifyTransaction } from "./classifier";
+import { getConfig } from "./config";
+import { prisma } from "./db";
+import { jsonSafe } from "./json";
+import { upsertTrackedPositions } from "./positions";
+
+export async function ensureConfiguredWallet() {
+  const address = getAddress(getConfig().BASE_WALLET_ADDRESS);
+  return prisma.wallet.upsert({
+    where: { address },
+    create: { address, chain: "base", enabled: true },
+    update: { enabled: true }
+  });
+}
+
+export async function syncWalletOnce() {
+  const wallet = await ensureConfiguredWallet();
+  const client = createBaseClient();
+  const run = await prisma.syncRun.create({
+    data: {
+      walletId: wallet.id,
+      fromBlock: wallet.lastSyncedBlock ?? null,
+      status: SyncRunStatus.running
+    }
+  });
+
+  let seen = 0;
+  let maxBlock = wallet.lastSyncedBlock ?? 0n;
+
+  try {
+    const txs = await fetchWalletTransactions(wallet.address, wallet.lastSyncedBlock ?? undefined);
+    const discoveredTokenIds = new Set<string>();
+
+    for (const tx of txs) {
+      seen += 1;
+      const receipt = await client.getTransactionReceipt({ hash: tx.hash as `0x${string}` });
+      const fromAddress = getAddress(tx.from.hash);
+      const toAddress = tx.to?.hash ? getAddress(tx.to.hash) : null;
+      const classification = classifyTransaction({
+        walletAddress: wallet.address as Address,
+        fromAddress,
+        toAddress,
+        receipt
+      });
+
+      if (classification.relatedPositionTokenId) {
+        discoveredTokenIds.add(classification.relatedPositionTokenId);
+      }
+
+      maxBlock = BigInt(tx.block_number) > maxBlock ? BigInt(tx.block_number) : maxBlock;
+
+      await prisma.transaction.upsert({
+        where: {
+          walletId_hash: {
+            walletId: wallet.id,
+            hash: tx.hash
+          }
+        },
+        create: {
+          walletId: wallet.id,
+          hash: tx.hash,
+          blockNumber: BigInt(tx.block_number),
+          timestamp: new Date(tx.timestamp),
+          fromAddress,
+          toAddress,
+          type: classification.type,
+          classificationStatus: classification.status,
+          protocol: classification.protocol,
+          tokenAmounts: classification.tokenAmounts,
+          usdEstimate: classification.usdEstimate,
+          relatedPositionTokenId: classification.relatedPositionTokenId,
+          raw: jsonSafe({ blockscout: tx, receipt }) as Prisma.InputJsonValue
+        },
+        update: {
+          type: classification.type,
+          classificationStatus: classification.status,
+          protocol: classification.protocol,
+          tokenAmounts: classification.tokenAmounts,
+          usdEstimate: classification.usdEstimate,
+          relatedPositionTokenId: classification.relatedPositionTokenId,
+          raw: jsonSafe({ blockscout: tx, receipt }) as Prisma.InputJsonValue
+        }
+      });
+    }
+
+    const positions = await upsertTrackedPositions(wallet.id, wallet.address as Address, [...discoveredTokenIds]);
+
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { lastSyncedBlock: maxBlock || wallet.lastSyncedBlock }
+    });
+
+    await prisma.syncRun.update({
+      where: { id: run.id },
+      data: {
+        status: SyncRunStatus.succeeded,
+        finishedAt: new Date(),
+        toBlock: maxBlock || wallet.lastSyncedBlock,
+        transactionsSeen: seen
+      }
+    });
+
+    return { runId: run.id, transactionsSeen: seen, positionsSeen: positions.length, toBlock: maxBlock.toString() };
+  } catch (error) {
+    await prisma.syncRun.update({
+      where: { id: run.id },
+      data: {
+        status: SyncRunStatus.failed,
+        finishedAt: new Date(),
+        transactionsSeen: seen,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
+    throw error;
+  }
+}

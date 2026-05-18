@@ -1,0 +1,23 @@
+import { z } from "zod";
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().min(1),
+  BASE_WALLET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  BASE_RPC_URL: z.string().url(),
+  BLOCKSCOUT_BASE_URL: z.string().url().default("https://base.blockscout.com"),
+  TELEGRAM_BOT_TOKEN: z.string().optional().default(""),
+  TELEGRAM_CHAT_ID: z.string().optional().default(""),
+  APP_PASSWORD: z.string().min(8).default("change-me-now"),
+  SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(180),
+  NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot")
+});
+
+let cachedConfig: z.infer<typeof envSchema> | undefined;
+
+export function getConfig() {
+  if (!cachedConfig) {
+    cachedConfig = envSchema.parse(process.env);
+  }
+
+  return cachedConfig;
+}
