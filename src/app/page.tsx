@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { TransactionType } from "@prisma/client";
 import { getAddress } from "viem";
 import { isAuthenticated } from "@/lib/auth";
+import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approvals";
 import { EXPLORER_TX_URL } from "@/lib/constants";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
@@ -86,6 +87,8 @@ export default async function DashboardPage() {
     }
   );
   const outOfRangeCount = positions.filter((position) => position.status === "above_range" || position.status === "below_range").length;
+  const approvalsByTransactionId = mapApprovalsToTransactions(transactions);
+  const visibleTransactions = transactions.filter((transaction) => !isApprovalTransaction(transaction));
   const transactionLpStates = new Map<string, { weth: number | null; usdc: number | null }>();
   const transactionAssetStates = new Map<string, WalletAssetSnapshot>();
   let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
@@ -239,13 +242,14 @@ export default async function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.length === 0 ? (
+                {visibleTransactions.length === 0 ? (
                   <tr>
                     <td colSpan={14}>No transactions imported yet.</td>
                   </tr>
                 ) : (
-                  transactions.map((transaction) => {
+                  visibleTransactions.map((transaction) => {
                     const assetState = transactionAssetStates.get(transaction.id);
+                    const approvals = approvalsByTransactionId.get(transaction.id) ?? [];
 
                     return (
                       <tr key={transaction.id}>
@@ -256,12 +260,26 @@ export default async function DashboardPage() {
                         <td>{transaction.protocol ?? "-"}</td>
                         <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
                         <td>
-                          <span className={`status ${statusClass(transaction.classificationStatus)}`}>{transaction.classificationStatus}</span>
+                          <div className="tx-stack">
+                            <span className={`status ${statusClass(transaction.classificationStatus)}`}>{transaction.classificationStatus}</span>
+                            {approvals.map((approval) => (
+                              <span className="status approved" key={approval.hash}>
+                                approved
+                              </span>
+                            ))}
+                          </div>
                         </td>
                         <td>
-                          <a href={`${EXPLORER_TX_URL}${transaction.hash}`} target="_blank" rel="noreferrer">
-                            {shortAddress(transaction.hash)}
-                          </a>
+                          <div className="tx-stack">
+                            <a href={`${EXPLORER_TX_URL}${transaction.hash}`} target="_blank" rel="noreferrer">
+                              {shortAddress(transaction.hash)}
+                            </a>
+                            {approvals.map((approval) => (
+                              <a href={`${EXPLORER_TX_URL}${approval.hash}`} target="_blank" rel="noreferrer" key={approval.hash}>
+                                {shortAddress(approval.hash)}
+                              </a>
+                            ))}
+                          </div>
                         </td>
                         <td>{walletAssetCell(assetState?.weth)}</td>
                         <td>{walletAssetCell(assetState?.usdc)}</td>

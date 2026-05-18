@@ -210,6 +210,18 @@ td {
   font-weight: 700;
 }
 
+.tx-stack {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.tx-stack > * {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+}
+
 th {
   color: var(--muted);
   font-size: 11px;
@@ -249,6 +261,11 @@ th {
 .status.bad {
   background: #fde2df;
   color: var(--danger);
+}
+
+.status.approved {
+  background: #e3edf7;
+  color: var(--accent-2);
 }
 
 .login {
