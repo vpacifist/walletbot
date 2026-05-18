@@ -196,6 +196,28 @@ td {
   min-width: 88px;
 }
 
+.amounts-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 300px;
+}
+
+.amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 18px;
+  align-items: baseline;
+}
+
+.amount-row span {
+  white-space: nowrap;
+}
+
+.amount-row span:last-child {
+  justify-self: end;
+  color: var(--muted);
+}
+
 .asset-cell strong,
 .total-cell {
   white-space: nowrap;

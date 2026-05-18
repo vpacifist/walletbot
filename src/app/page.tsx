@@ -26,17 +26,38 @@ function statusClass(status: string) {
   return "";
 }
 
-function tokenAmountText(value: unknown) {
+function tokenAmountUsd(amount: { amount?: string; symbol?: string }, ethPriceUsd?: number | null) {
+  const numericAmount = Number(amount.amount);
+  if (!Number.isFinite(numericAmount)) return null;
+  if (amount.symbol === "USDC") return numericAmount;
+  if ((amount.symbol === "WETH" || amount.symbol === "ETH") && ethPriceUsd !== undefined && ethPriceUsd !== null) return numericAmount * ethPriceUsd;
+  return null;
+}
+
+function tokenAmountRows(value: unknown, ethPriceUsd?: number | null) {
   if (!Array.isArray(value) || value.length === 0) return "-";
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return "";
+  const rows = value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
       const amount = item as { direction?: string; amount?: string; symbol?: string };
       const sign = amount.direction === "out" ? "-" : "+";
-      return `${sign}${formatNumber(amount.amount, 6)} ${amount.symbol ?? ""}`;
+      const usdValue = tokenAmountUsd(amount, ethPriceUsd);
+      const signedUsd = usdValue === null ? "-" : `${sign}${formatUsd(usdValue)}`;
+
+      return (
+        <div className="amount-row" key={`${amount.symbol ?? "token"}-${index}`}>
+          <span>
+            {sign}
+            {formatNumber(amount.amount, 6)} {amount.symbol ?? ""}
+          </span>
+          <span>{signedUsd}</span>
+        </div>
+      );
     })
-    .filter(Boolean)
-    .join(", ");
+    .filter(Boolean);
+
+  if (rows.length === 0) return "-";
+  return <div className="amounts-cell">{rows}</div>;
 }
 
 function formatUsd(value?: number | null) {
@@ -228,7 +249,6 @@ export default async function DashboardPage() {
                   <th>Time</th>
                   <th>Type</th>
                   <th>Amounts</th>
-                  <th>USD</th>
                   <th>Protocol</th>
                   <th>Position</th>
                   <th>Status</th>
@@ -244,7 +264,7 @@ export default async function DashboardPage() {
               <tbody>
                 {visibleTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={14}>No transactions imported yet.</td>
+                    <td colSpan={13}>No transactions imported yet.</td>
                   </tr>
                 ) : (
                   visibleTransactions.map((transaction) => {
@@ -255,8 +275,7 @@ export default async function DashboardPage() {
                       <tr key={transaction.id}>
                         <td>{transaction.timestamp.toLocaleString()}</td>
                         <td>{transaction.type}</td>
-                        <td>{tokenAmountText(transaction.tokenAmounts)}</td>
-                        <td>{transaction.usdEstimate ? `$${formatNumber(transaction.usdEstimate.toString(), 2)}` : "-"}</td>
+                        <td>{tokenAmountRows(transaction.tokenAmounts, walletAssets?.ethPriceUsd)}</td>
                         <td>{transaction.protocol ?? "-"}</td>
                         <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
                         <td>
