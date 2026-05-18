@@ -156,10 +156,19 @@ input {
   overflow: auto;
 }
 
+.transactions-wrap {
+  max-height: min(68vh, 760px);
+  border-top: 1px solid var(--border);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
   min-width: 900px;
+}
+
+.transactions-table {
+  min-width: 1420px;
 }
 
 th,
@@ -171,11 +180,50 @@ td {
   vertical-align: top;
 }
 
+.asset-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 118px;
+}
+
+.transactions-table th,
+.transactions-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.transactions-table .asset-cell {
+  min-width: 88px;
+}
+
+.asset-cell strong,
+.total-cell {
+  white-space: nowrap;
+}
+
+.asset-cell span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.total-cell {
+  font-weight: 700;
+}
+
 th {
   color: var(--muted);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0;
+}
+
+.transactions-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-top: 0;
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .status {

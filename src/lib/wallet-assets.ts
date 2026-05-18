@@ -1,0 +1,341 @@
+import { formatUnits, type Address } from "viem";
+import { erc20Abi, factoryAbi, poolAbi } from "./abi";
+import { createBaseClient } from "./chain";
+import { CONTRACTS, TOKEN_META } from "./constants";
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const WETH_USDC_FEE_TIERS = [500, 3000, 10000] as const;
+
+export type WalletAssetSnapshot = {
+  weth: WalletAssetValue;
+  usdc: WalletAssetValue;
+  eth: WalletAssetValue;
+  lpWeth?: WalletAssetValue;
+  lpUsdc?: WalletAssetValue;
+  totalUsd: number | null;
+  ethPriceUsd: number | null;
+};
+
+type WalletAssetValue = {
+  symbol: "WETH" | "USDC" | "ETH";
+  amount: number | null;
+  valueUsd: number | null;
+};
+
+export type WalletAssetAmounts = {
+  weth: number | null;
+  usdc: number | null;
+  eth: number | null;
+};
+
+export type WalletAssetDelta = {
+  weth: number;
+  usdc: number;
+  eth: number;
+};
+
+export type LpAssetAmounts = {
+  weth: number | null;
+  usdc: number | null;
+};
+
+export type LpAssetDelta = {
+  weth: number;
+  usdc: number;
+};
+
+type TransactionAssetSource = {
+  fromAddress: string;
+  toAddress?: string | null;
+  type?: string;
+  tokenAmounts: unknown;
+  raw: unknown;
+};
+
+type PositionAssetSource = {
+  token0: string;
+  token1: string;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number | null;
+  liquidity: string;
+};
+
+function toNumber(value: bigint, decimals: number) {
+  return Number(formatUnits(value, decimals));
+}
+
+function valueUsd(amount: number | null, priceUsd: number | null) {
+  if (amount === null || priceUsd === null) return null;
+  return amount * priceUsd;
+}
+
+function sumKnown(values: Array<number | null>) {
+  return values.every((value) => value === null) ? null : values.reduce<number>((total, value) => total + (value ?? 0), 0);
+}
+
+function applyValue(value: number | null, delta: number) {
+  return value === null ? null : value - delta;
+}
+
+function rawStringToEth(value?: unknown) {
+  if (typeof value !== "string" || value === "") return 0;
+
+  try {
+    return Number(formatUnits(BigInt(value), 18));
+  } catch {
+    return 0;
+  }
+}
+
+function readRawRecord(value: unknown) {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function gasCostWei(receipt: Record<string, unknown>) {
+  if (typeof receipt.gasUsed !== "string" || typeof receipt.effectiveGasPrice !== "string") return undefined;
+
+  try {
+    return (BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+export function snapshotToAmounts(snapshot: WalletAssetSnapshot | null): WalletAssetAmounts {
+  return {
+    weth: snapshot?.weth.amount ?? null,
+    usdc: snapshot?.usdc.amount ?? null,
+    eth: snapshot?.eth.amount ?? null
+  };
+}
+
+export function amountsToSnapshot(amounts: WalletAssetAmounts, ethPriceUsd: number | null): WalletAssetSnapshot {
+  const wethValueUsd = valueUsd(amounts.weth, ethPriceUsd);
+  const usdcValueUsd = amounts.usdc;
+  const ethValueUsd = valueUsd(amounts.eth, ethPriceUsd);
+
+  return {
+    weth: { symbol: "WETH", amount: amounts.weth, valueUsd: wethValueUsd },
+    usdc: { symbol: "USDC", amount: amounts.usdc, valueUsd: usdcValueUsd },
+    eth: { symbol: "ETH", amount: amounts.eth, valueUsd: ethValueUsd },
+    totalUsd: sumKnown([wethValueUsd, usdcValueUsd, ethValueUsd]),
+    ethPriceUsd
+  };
+}
+
+export function amountsToPortfolioSnapshot(
+  walletAmounts: WalletAssetAmounts,
+  lpAmounts: LpAssetAmounts,
+  ethPriceUsd: number | null
+): WalletAssetSnapshot {
+  const wethValueUsd = valueUsd(walletAmounts.weth, ethPriceUsd);
+  const usdcValueUsd = walletAmounts.usdc;
+  const ethValueUsd = valueUsd(walletAmounts.eth, ethPriceUsd);
+  const lpWethValueUsd = valueUsd(lpAmounts.weth, ethPriceUsd);
+  const lpUsdcValueUsd = lpAmounts.usdc;
+
+  return {
+    weth: { symbol: "WETH", amount: walletAmounts.weth, valueUsd: wethValueUsd },
+    usdc: { symbol: "USDC", amount: walletAmounts.usdc, valueUsd: usdcValueUsd },
+    eth: { symbol: "ETH", amount: walletAmounts.eth, valueUsd: ethValueUsd },
+    lpWeth: { symbol: "WETH", amount: lpAmounts.weth, valueUsd: lpWethValueUsd },
+    lpUsdc: { symbol: "USDC", amount: lpAmounts.usdc, valueUsd: lpUsdcValueUsd },
+    totalUsd: sumKnown([wethValueUsd, usdcValueUsd, ethValueUsd, lpWethValueUsd, lpUsdcValueUsd]),
+    ethPriceUsd
+  };
+}
+
+export function subtractDelta(amounts: WalletAssetAmounts, delta: WalletAssetDelta): WalletAssetAmounts {
+  return {
+    weth: applyValue(amounts.weth, delta.weth),
+    usdc: applyValue(amounts.usdc, delta.usdc),
+    eth: applyValue(amounts.eth, delta.eth)
+  };
+}
+
+export function subtractLpDelta(amounts: LpAssetAmounts, delta: LpAssetDelta): LpAssetAmounts {
+  return {
+    weth: applyValue(amounts.weth, delta.weth),
+    usdc: applyValue(amounts.usdc, delta.usdc)
+  };
+}
+
+function addLpValue(value: number | null, delta: number) {
+  if (value === null) return null;
+  return Math.max(0, value + delta);
+}
+
+export function addLpDelta(amounts: LpAssetAmounts, delta: LpAssetDelta): LpAssetAmounts {
+  return {
+    weth: addLpValue(amounts.weth, delta.weth),
+    usdc: addLpValue(amounts.usdc, delta.usdc)
+  };
+}
+
+export function getTransactionAssetDelta(transaction: TransactionAssetSource, walletAddress: Address): WalletAssetDelta {
+  const delta: WalletAssetDelta = { weth: 0, usdc: 0, eth: 0 };
+  const tokenAmounts = Array.isArray(transaction.tokenAmounts) ? transaction.tokenAmounts : [];
+
+  for (const item of tokenAmounts) {
+    if (!item || typeof item !== "object") continue;
+    const amount = item as { symbol?: string; amount?: string; direction?: string };
+    const parsed = Number(amount.amount);
+    if (!Number.isFinite(parsed)) continue;
+
+    const signed = amount.direction === "out" ? -parsed : parsed;
+    if (amount.symbol === "WETH") delta.weth += signed;
+    if (amount.symbol === "USDC") delta.usdc += signed;
+  }
+
+  const raw = readRawRecord(transaction.raw);
+  const blockscout = readRawRecord(raw.blockscout);
+  const receipt = readRawRecord(raw.receipt);
+  const wallet = walletAddress.toLowerCase();
+  const fromWallet = transaction.fromAddress.toLowerCase() === wallet;
+  const toWallet = transaction.toAddress?.toLowerCase() === wallet;
+  const nativeValue = rawStringToEth(blockscout.value);
+
+  if (toWallet) delta.eth += nativeValue;
+  if (fromWallet) {
+    delta.eth -= nativeValue;
+    delta.eth -= rawStringToEth(gasCostWei(receipt));
+  }
+
+  return delta;
+}
+
+export function getTransactionLpDelta(transaction: TransactionAssetSource): LpAssetDelta {
+  const delta: LpAssetDelta = { weth: 0, usdc: 0 };
+  if (!transaction.type?.startsWith("lp_") || transaction.type === "lp_collect") return delta;
+
+  const walletDelta = getTransactionAssetDelta(
+    {
+      ...transaction,
+      fromAddress: "",
+      toAddress: null,
+      raw: {}
+    },
+    ZERO_ADDRESS
+  );
+
+  delta.weth = -walletDelta.weth;
+  delta.usdc = -walletDelta.usdc;
+  return delta;
+}
+
+export function getNextLpAssetAmounts(amounts: LpAssetAmounts, transaction: TransactionAssetSource): LpAssetAmounts {
+  if (transaction.type === "lp_exit") return { weth: 0, usdc: 0 };
+  return addLpDelta(amounts, getTransactionLpDelta(transaction));
+}
+
+function sqrtRatioAtTick(tick: number) {
+  return Math.pow(1.0001, tick / 2);
+}
+
+function tokenAmountFromRaw(token: string, rawAmount: number) {
+  const meta = TOKEN_META[token.toLowerCase()];
+  if (!meta) return 0;
+  return rawAmount / 10 ** meta.decimals;
+}
+
+export function getCurrentLpAssetAmounts(positions: PositionAssetSource[]): LpAssetAmounts {
+  const lpAmounts = { weth: 0, usdc: 0 };
+
+  for (const position of positions) {
+    const liquidity = Number(position.liquidity);
+    if (!Number.isFinite(liquidity) || liquidity <= 0 || position.currentTick === null) continue;
+
+    const sqrtLower = sqrtRatioAtTick(position.tickLower);
+    const sqrtUpper = sqrtRatioAtTick(position.tickUpper);
+    const sqrtCurrent = sqrtRatioAtTick(Math.min(Math.max(position.currentTick, position.tickLower), position.tickUpper));
+    const token0Raw = position.currentTick < position.tickUpper ? liquidity * ((sqrtUpper - sqrtCurrent) / (sqrtCurrent * sqrtUpper)) : 0;
+    const token1Raw = position.currentTick > position.tickLower ? liquidity * (sqrtCurrent - sqrtLower) : 0;
+
+    const token0Amount = tokenAmountFromRaw(position.token0, token0Raw);
+    const token1Amount = tokenAmountFromRaw(position.token1, token1Raw);
+
+    if (position.token0.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token0Amount;
+    if (position.token1.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token1Amount;
+    if (position.token0.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token0Amount;
+    if (position.token1.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token1Amount;
+  }
+
+  return lpAmounts;
+}
+
+async function getEthPriceUsd() {
+  const client = createBaseClient();
+  const pools = await Promise.all(
+    WETH_USDC_FEE_TIERS.map(async (fee) => ({
+      fee,
+      address: await client.readContract({
+        address: CONTRACTS.uniswapV3Factory,
+        abi: factoryAbi,
+        functionName: "getPool",
+        args: [CONTRACTS.weth, CONTRACTS.usdc, fee]
+      })
+    }))
+  );
+
+  const activePools = await Promise.all(
+    pools
+      .filter((pool) => pool.address !== ZERO_ADDRESS)
+      .map(async (pool) => {
+        const [slot0, liquidity] = await Promise.all([
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "slot0" }),
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "liquidity" })
+        ]);
+        return { ...pool, slot0, liquidity };
+      })
+  );
+
+  const selected = activePools.reduce<(typeof activePools)[number] | null>((best, pool) => {
+    if (!best || pool.liquidity > best.liquidity) return pool;
+    return best;
+  }, null);
+
+  if (!selected || selected.liquidity === 0n) return null;
+
+  const tick = Number(selected.slot0[1]);
+  return Math.pow(1.0001, tick) * 10 ** 12;
+}
+
+export async function getWalletAssetSnapshot(walletAddress: Address): Promise<WalletAssetSnapshot> {
+  const client = createBaseClient();
+  const [ethPriceUsd, ethRaw, wethRaw, usdcRaw] = await Promise.all([
+    getEthPriceUsd().catch(() => null),
+    client.getBalance({ address: walletAddress }).catch(() => null),
+    client
+      .readContract({
+        address: CONTRACTS.weth,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      })
+      .catch(() => null),
+    client
+      .readContract({
+        address: CONTRACTS.usdc,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      })
+      .catch(() => null)
+  ]);
+
+  const ethAmount = ethRaw === null ? null : toNumber(ethRaw, 18);
+  const wethAmount = wethRaw === null ? null : toNumber(wethRaw, 18);
+  const usdcAmount = usdcRaw === null ? null : toNumber(usdcRaw, 6);
+  const ethValueUsd = valueUsd(ethAmount, ethPriceUsd);
+  const wethValueUsd = valueUsd(wethAmount, ethPriceUsd);
+  const usdcValueUsd = usdcAmount;
+
+  return {
+    weth: { symbol: "WETH", amount: wethAmount, valueUsd: wethValueUsd },
+    usdc: { symbol: "USDC", amount: usdcAmount, valueUsd: usdcValueUsd },
+    eth: { symbol: "ETH", amount: ethAmount, valueUsd: ethValueUsd },
+    totalUsd: sumKnown([wethValueUsd, usdcValueUsd, ethValueUsd]),
+    ethPriceUsd
+  };
+}

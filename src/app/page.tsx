@@ -1,10 +1,21 @@
 import { redirect } from "next/navigation";
 import { TransactionType } from "@prisma/client";
+import { getAddress } from "viem";
 import { isAuthenticated } from "@/lib/auth";
 import { EXPLORER_TX_URL } from "@/lib/constants";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
+import {
+  amountsToPortfolioSnapshot,
+  getNextLpAssetAmounts,
+  getTransactionAssetDelta,
+  getWalletAssetSnapshot,
+  snapshotToAmounts,
+  subtractDelta,
+  type LpAssetAmounts,
+  type WalletAssetSnapshot
+} from "@/lib/wallet-assets";
 import { logoutAction, runSyncAction } from "./actions";
 
 function statusClass(status: string) {
@@ -27,11 +38,28 @@ function tokenAmountText(value: unknown) {
     .join(", ");
 }
 
+function formatUsd(value?: number | null) {
+  if (value === undefined || value === null) return "-";
+  return `$${formatNumber(value, 2)}`;
+}
+
+function walletAssetCell(asset?: WalletAssetSnapshot["weth" | "usdc" | "eth"]) {
+  if (!asset || asset.amount === null) return "-";
+  const amountDigits = asset.symbol === "USDC" ? 2 : 6;
+
+  return (
+    <div className="asset-cell">
+      <strong>{formatNumber(asset.amount, amountDigits)}</strong>
+      <span>{formatUsd(asset.valueUsd)}</span>
+    </div>
+  );
+}
+
 export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
 
   const config = getConfig();
-  const [wallet, transactions, positions, latestRun, counts] = await Promise.all([
+  const [wallet, transactions, positions, latestRun, counts, walletAssets] = await Promise.all([
     prisma.wallet.findUnique({ where: { address: config.BASE_WALLET_ADDRESS } }),
     prisma.transaction.findMany({
       orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
@@ -39,7 +67,8 @@ export default async function DashboardPage() {
     }),
     prisma.position.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    prisma.transaction.groupBy({ by: ["type"], _count: true })
+    prisma.transaction.groupBy({ by: ["type"], _count: true }),
+    getWalletAssetSnapshot(getAddress(config.BASE_WALLET_ADDRESS)).catch(() => null)
   ]);
 
   const txCount = counts.reduce<Record<TransactionType, number>>(
@@ -57,6 +86,21 @@ export default async function DashboardPage() {
     }
   );
   const outOfRangeCount = positions.filter((position) => position.status === "above_range" || position.status === "below_range").length;
+  const transactionLpStates = new Map<string, { weth: number | null; usdc: number | null }>();
+  const transactionAssetStates = new Map<string, WalletAssetSnapshot>();
+  let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
+  let runningAssets = snapshotToAmounts(walletAssets);
+
+  for (const transaction of [...transactions].reverse()) {
+    chronologicalLpAssets = getNextLpAssetAmounts(chronologicalLpAssets, transaction);
+    transactionLpStates.set(transaction.id, chronologicalLpAssets);
+  }
+
+  for (const transaction of transactions) {
+    const lpAssets = transactionLpStates.get(transaction.id) ?? { weth: 0, usdc: 0 };
+    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, walletAssets?.ethPriceUsd ?? null));
+    runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, getAddress(config.BASE_WALLET_ADDRESS)));
+  }
 
   return (
     <main className="page">
@@ -174,8 +218,8 @@ export default async function DashboardPage() {
               <p className="muted">Normalized investor view backed by stored raw Blockscout/RPC payloads.</p>
             </div>
           </div>
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap transactions-wrap">
+            <table className="transactions-table">
               <thead>
                 <tr>
                   <th>Time</th>
@@ -186,32 +230,48 @@ export default async function DashboardPage() {
                   <th>Position</th>
                   <th>Status</th>
                   <th>Tx</th>
+                  <th>Wallet WETH</th>
+                  <th>Wallet USDC</th>
+                  <th>Wallet ETH</th>
+                  <th>LP WETH</th>
+                  <th>LP USDC</th>
+                  <th>Wallet total</th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>No transactions imported yet.</td>
+                    <td colSpan={14}>No transactions imported yet.</td>
                   </tr>
                 ) : (
-                  transactions.map((transaction) => (
-                    <tr key={transaction.id}>
-                      <td>{transaction.timestamp.toLocaleString()}</td>
-                      <td>{transaction.type}</td>
-                      <td>{tokenAmountText(transaction.tokenAmounts)}</td>
-                      <td>{transaction.usdEstimate ? `$${formatNumber(transaction.usdEstimate.toString(), 2)}` : "-"}</td>
-                      <td>{transaction.protocol ?? "-"}</td>
-                      <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
-                      <td>
-                        <span className={`status ${statusClass(transaction.classificationStatus)}`}>{transaction.classificationStatus}</span>
-                      </td>
-                      <td>
-                        <a href={`${EXPLORER_TX_URL}${transaction.hash}`} target="_blank" rel="noreferrer">
-                          {shortAddress(transaction.hash)}
-                        </a>
-                      </td>
-                    </tr>
-                  ))
+                  transactions.map((transaction) => {
+                    const assetState = transactionAssetStates.get(transaction.id);
+
+                    return (
+                      <tr key={transaction.id}>
+                        <td>{transaction.timestamp.toLocaleString()}</td>
+                        <td>{transaction.type}</td>
+                        <td>{tokenAmountText(transaction.tokenAmounts)}</td>
+                        <td>{transaction.usdEstimate ? `$${formatNumber(transaction.usdEstimate.toString(), 2)}` : "-"}</td>
+                        <td>{transaction.protocol ?? "-"}</td>
+                        <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
+                        <td>
+                          <span className={`status ${statusClass(transaction.classificationStatus)}`}>{transaction.classificationStatus}</span>
+                        </td>
+                        <td>
+                          <a href={`${EXPLORER_TX_URL}${transaction.hash}`} target="_blank" rel="noreferrer">
+                            {shortAddress(transaction.hash)}
+                          </a>
+                        </td>
+                        <td>{walletAssetCell(assetState?.weth)}</td>
+                        <td>{walletAssetCell(assetState?.usdc)}</td>
+                        <td>{walletAssetCell(assetState?.eth)}</td>
+                        <td>{walletAssetCell(assetState?.lpWeth)}</td>
+                        <td>{walletAssetCell(assetState?.lpUsdc)}</td>
+                        <td className="total-cell">{formatUsd(assetState?.totalUsd)}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
