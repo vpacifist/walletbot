@@ -60,12 +60,12 @@ function priceFromTick(params: { tick: number; token0: Address; token1: Address;
   return null;
 }
 
-function narrowTicksAround(currentTick: number) {
+export function narrowTicksAround(currentTick: number) {
   const nearestLowerTick = Math.floor(currentTick / WETH_USDC_NARROW_TICK_SPACING) * WETH_USDC_NARROW_TICK_SPACING;
   const lowerTick = nearestLowerTick - WETH_USDC_NARROW_TICK_SPACING;
   return {
     lowerTick,
-    upperTick: nearestLowerTick + WETH_USDC_NARROW_TICK_SPACING
+    upperTick: nearestLowerTick + WETH_USDC_NARROW_TICK_SPACING * 2
   };
 }
 

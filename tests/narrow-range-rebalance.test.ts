@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { calculateNarrowRangeRebalance } from "@/lib/narrow-range-rebalance";
+import { calculateNarrowRangeRebalance, narrowTicksAround } from "@/lib/narrow-range-rebalance";
 
 describe("narrow range rebalance", () => {
+  it("selects a three-interval range around the current price interval", () => {
+    expect(narrowTicksAround(-199745)).toEqual({
+      lowerTick: -199860,
+      upperTick: -199680
+    });
+  });
+
   it("asks to swap excess WETH into USDC", () => {
     const result = calculateNarrowRangeRebalance({
       weth: 1,
