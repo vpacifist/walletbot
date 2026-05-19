@@ -155,6 +155,31 @@ function isStrategyExit(method?: string, toAddress?: Address | null) {
   );
 }
 
+function swapProtocol(params: {
+  toAddress?: Address | null;
+  receipt: TransactionReceipt;
+  isUniswapV3Swap: boolean;
+}) {
+  if (sameAddress(params.toAddress, CONTRACTS.zeroExSettler) || hasLogFromAddress(params.receipt, CONTRACTS.zeroExSettler)) {
+    return "Matcha/0x v2";
+  }
+  if (sameAddress(params.toAddress, CONTRACTS.zeroExAllowanceHolder) || hasLogFromAddress(params.receipt, CONTRACTS.zeroExAllowanceHolder)) {
+    return "0x";
+  }
+  if (
+    sameAddress(params.toAddress, CONTRACTS.kyberSwapMetaAggregationRouterV2) ||
+    hasLogFromAddress(params.receipt, CONTRACTS.kyberSwapMetaAggregationRouterV2)
+  ) {
+    return "KyberSwap";
+  }
+  if (sameAddress(params.toAddress, CONTRACTS.odosSmartOrderRouterV3) || hasLogFromAddress(params.receipt, CONTRACTS.odosSmartOrderRouterV3)) {
+    return "Odos";
+  }
+  if (params.isUniswapV3Swap) return "Uniswap v3";
+
+  return "unknown";
+}
+
 export function classifyTransaction(params: {
   walletAddress: Address;
   fromAddress: Address;
@@ -166,14 +191,6 @@ export function classifyTransaction(params: {
   const lpEvent = classifyByPositionManagerEvents(params.receipt);
   const tokenAmounts = extractTokenAmounts(params.receipt, params.walletAddress);
   const isUniswapV3Swap = hasUniswapV3SwapEvent(params.receipt, params.uniswapV3PoolAddresses);
-  const isZeroExSwap =
-    sameAddress(params.toAddress, CONTRACTS.zeroExAllowanceHolder) || hasLogFromAddress(params.receipt, CONTRACTS.zeroExAllowanceHolder);
-  const isKyberSwap =
-    sameAddress(params.toAddress, CONTRACTS.kyberSwapMetaAggregationRouterV2) ||
-    hasLogFromAddress(params.receipt, CONTRACTS.kyberSwapMetaAggregationRouterV2);
-  const isOdosSwap =
-    sameAddress(params.toAddress, CONTRACTS.odosSmartOrderRouterV3) ||
-    hasLogFromAddress(params.receipt, CONTRACTS.odosSmartOrderRouterV3);
   const lowerWallet = params.walletAddress.toLowerCase();
   const fromWallet = params.fromAddress.toLowerCase() === lowerWallet;
   const toWallet = params.toAddress?.toLowerCase() === lowerWallet;
@@ -215,7 +232,7 @@ export function classifyTransaction(params: {
   }
 
   if (tokenAmounts.some((amount) => amount.direction === "in") && tokenAmounts.some((amount) => amount.direction === "out")) {
-    const protocol = isUniswapV3Swap ? "Uniswap v3" : isZeroExSwap ? "0x" : isKyberSwap ? "KyberSwap" : isOdosSwap ? "Odos" : "unknown";
+    const protocol = swapProtocol({ toAddress: params.toAddress, receipt: params.receipt, isUniswapV3Swap });
 
     return {
       type: TransactionType.swap,

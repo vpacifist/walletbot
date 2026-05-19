@@ -207,6 +207,35 @@ describe("classifyTransaction", () => {
     expect(result.protocol).toBe("0x");
   });
 
+  it("classifies swaps sent through 0x Settler as Matcha/0x v2", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.zeroExSettler,
+      method: "0x1fff991f",
+      receipt: {
+        logs: [
+          transferLog({
+            token: CONTRACTS.weth,
+            from: walletAddress,
+            to: CONTRACTS.zeroExSettler,
+            value: parseUnits("1.964126", 18)
+          }),
+          transferLog({
+            token: CONTRACTS.usdc,
+            from: poolAddress,
+            to: walletAddress,
+            value: parseUnits("4128.058898", 6)
+          })
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.swap);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("Matcha/0x v2");
+  });
+
   it("tracks AERO transfers so AERO to USDC is classified as a swap", () => {
     const result = classifyTransaction({
       walletAddress,
