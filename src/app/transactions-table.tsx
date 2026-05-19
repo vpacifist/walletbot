@@ -179,7 +179,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
           <col className="tx-col-position" />
           <col className="tx-col-status" />
           <col className="tx-col-hash" />
-          <col className="tx-col-asset" span={5} />
+          <col className="tx-col-asset" span={4} />
           <col className="tx-col-total" />
         </colgroup>
         <thead>
@@ -193,7 +193,6 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
             <th>Tx</th>
             <th>Wallet WETH</th>
             <th>Wallet USDC</th>
-            <th>Wallet ETH</th>
             <th>LP WETH</th>
             <th>LP USDC</th>
             <th>Wallet total</th>
@@ -202,7 +201,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={13}>No transactions imported yet.</td>
+              <td colSpan={12}>No transactions imported yet.</td>
             </tr>
           ) : (
             rows.map((transaction) => {
@@ -243,7 +242,6 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
                   </td>
                   <td>{walletAssetCell("WETH", transaction.assets.weth, transactionPrices)}</td>
                   <td>{walletAssetCell("USDC", transaction.assets.usdc, transactionPrices)}</td>
-                  <td>{walletAssetCell("ETH", transaction.assets.eth, transactionPrices)}</td>
                   <td>{walletAssetCell("WETH", transaction.assets.lpWeth, transactionPrices)}</td>
                   <td>{walletAssetCell("USDC", transaction.assets.lpUsdc, transactionPrices)}</td>
                   <td className="total-cell">{formatUsd(totalUsd(transaction, transactionPrices))}</td>

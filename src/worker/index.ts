@@ -1,12 +1,22 @@
-import { sendOutOfRangeAlerts } from "@/lib/alerts";
+import { sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { syncWalletOnce } from "@/lib/sync";
 import { createBot } from "./bot";
 
+function msUntilNextMoscowTen(now = new Date()) {
+  const next = new Date(now);
+  next.setUTCHours(7, 0, 0, 0);
+  if (next.getTime() <= now.getTime()) {
+    next.setUTCDate(next.getUTCDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
 async function main() {
   const config = getConfig();
   const bot = createBot();
+  let lowEthCheckTimeout: ReturnType<typeof setTimeout> | undefined;
 
   if (bot) {
     void bot
@@ -16,6 +26,19 @@ async function main() {
   } else {
     console.log("Telegram bot disabled: TELEGRAM_BOT_TOKEN is empty");
   }
+
+  const runLowEthCheck = async () => {
+    try {
+      if (bot) {
+        const result = await sendLowNativeEthAlert(bot);
+        console.log("low native ETH check complete", result);
+      }
+    } catch (error) {
+      console.error("low native ETH check failed", error);
+    } finally {
+      lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
+    }
+  };
 
   const run = async () => {
     try {
@@ -29,9 +52,13 @@ async function main() {
 
   await run();
   const interval = setInterval(run, config.SYNC_INTERVAL_SECONDS * 1000);
+  if (bot) {
+    lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
+  }
 
   const shutdown = async () => {
     clearInterval(interval);
+    if (lowEthCheckTimeout) clearTimeout(lowEthCheckTimeout);
     bot?.stop("SIGTERM");
     await prisma.$disconnect();
     process.exit(0);
