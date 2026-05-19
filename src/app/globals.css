@@ -12,7 +12,7 @@
   --warning: #b06400;
   --shadow: 0 18px 45px rgba(24, 32, 27, 0.08);
   --shell-width: 1180px;
-  --transactions-width: 1664px;
+  --transactions-width: 1560px;
 }
 
 * {
@@ -311,8 +311,8 @@ table {
 }
 
 .transactions-table {
-  width: 1594px;
-  min-width: 1578px;
+  width: 1490px;
+  min-width: 1474px;
   table-layout: fixed;
 }
 
