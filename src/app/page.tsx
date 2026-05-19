@@ -14,7 +14,8 @@ import {
   type LpAssetAmounts,
   type WalletAssetAmounts
 } from "@/lib/wallet-assets";
-import { logoutAction, runSyncAction } from "./actions";
+import { logoutAction } from "./actions";
+import { SyncNowButton } from "./sync-now-button";
 import { SyncStatusLive } from "./sync-status-live";
 import { TransactionsTable, type TransactionTableRow } from "./transactions-table";
 
@@ -95,11 +96,7 @@ export default async function DashboardPage() {
             </div>
           </div>
           <div className="actions">
-            <form action={runSyncAction}>
-              <button className="button primary" type="submit">
-                Sync now
-              </button>
-            </form>
+            <SyncNowButton />
             <form action={logoutAction}>
               <button className="button" type="submit">
                 Log out

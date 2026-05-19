@@ -60,10 +60,17 @@ export function SyncStatusLive({ initialRun }: SyncStatusLiveProps) {
       }
     };
 
+    const refreshNow = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      void poll();
+    };
+
+    window.addEventListener("walletbot:sync-status-refresh", refreshNow);
     void poll();
 
     return () => {
       active = false;
+      window.removeEventListener("walletbot:sync-status-refresh", refreshNow);
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [router]);
