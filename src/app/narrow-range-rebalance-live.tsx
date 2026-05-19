@@ -53,6 +53,12 @@ function formatPercent(value: number | null | undefined) {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 3 })}%`;
 }
 
+function formatSignedPercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
 function formatTime(value: string | null) {
   if (!value) return "-";
   return new Date(value).toLocaleTimeString();
@@ -70,6 +76,11 @@ function receiveText(data: RebalanceData | null) {
   if (data.swap.direction === "unavailable") return "-";
   if (data.swap.direction === "none") return "0";
   return `${formatAmount(data.swap.idealReceiveAmount, data.swap.receiveSymbol === "USDC" ? 2 : 6)} ${data.swap.receiveSymbol}`;
+}
+
+function priceOffsetPercent(price: number | null | undefined, boundaryPrice: number | null | undefined) {
+  if (!price || !boundaryPrice || !Number.isFinite(price) || !Number.isFinite(boundaryPrice)) return null;
+  return (boundaryPrice / price - 1) * 100;
 }
 
 export function NarrowRangeRebalanceLive() {
@@ -143,9 +154,18 @@ export function NarrowRangeRebalanceLive() {
         </div>
         <div>
           <p className="metric-label">Range</p>
-          <strong>
-            {data ? `${data.pool.lowerTick} - ${data.pool.upperTick}` : "-"}
-          </strong>
+          <div className="range-prices">
+            <div>
+              <span>Min price</span>
+              <strong>{formatAmount(data?.pool.lowerPrice, 4)}</strong>
+              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.lowerPrice))}</small>
+            </div>
+            <div>
+              <span>Max price</span>
+              <strong>{formatAmount(data?.pool.upperPrice, 4)}</strong>
+              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.upperPrice))}</small>
+            </div>
+          </div>
           <span>{formatPercent(data?.pool.widthPercent)} width</span>
         </div>
         <div>

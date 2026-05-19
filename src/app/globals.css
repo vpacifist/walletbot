@@ -270,6 +270,31 @@ input {
   font-size: 12px;
 }
 
+.range-prices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.range-prices > div {
+  min-width: 0;
+}
+
+.range-prices span,
+.range-prices small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range-prices strong {
+  display: block;
+  margin-top: 2px;
+}
+
 .table-wrap {
   overflow: auto;
 }
