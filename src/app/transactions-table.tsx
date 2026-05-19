@@ -42,6 +42,28 @@ function formatUsd(value?: number | null) {
   return `$${formatNumber(value, 2)}`;
 }
 
+function formatPercentChange(value?: number | null) {
+  if (value === undefined || value === null || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value * 10) / 10;
+  const roundedValue = Object.is(rounded, -0) ? 0 : rounded;
+  const sign = roundedValue > 0 ? "+" : "";
+  const direction = roundedValue > 0 ? "positive" : roundedValue < 0 ? "negative" : "neutral";
+  const formattedValue = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(roundedValue);
+
+  return (
+    <span className={`percent-change ${direction}`}>
+      {sign}
+      {formattedValue}%
+    </span>
+  );
+}
+
+function percentChange(current?: number | null, previous?: number | null) {
+  if (current === undefined || previous === undefined) return undefined;
+  if (current === null || previous === null || previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
 function formatSignedUsd(sign: string, value?: number | null) {
   if (value === undefined || value === null) return <span className="price-placeholder">loading</span>;
   return `${sign}$${formatNumber(value, 2)}`;
@@ -125,6 +147,28 @@ function walletAssetCell(symbol: "WETH" | "USDC" | "ETH", amount: number | null,
   );
 }
 
+function walletTotalCell(value?: number | null, previousValue?: number | null) {
+  const change = formatPercentChange(percentChange(value, previousValue));
+
+  return (
+    <div className="asset-cell total-asset-cell">
+      <strong>{formatUsd(value)}</strong>
+      {change}
+    </div>
+  );
+}
+
+function wethPriceCell(value?: number | null, previousValue?: number | null) {
+  const change = formatPercentChange(percentChange(value, previousValue));
+
+  return (
+    <div className="asset-cell">
+      <strong>{formatUsd(value)}</strong>
+      {change}
+    </div>
+  );
+}
+
 function totalUsd(row: TransactionTableRow, prices?: { ethPriceUsd?: number | null }) {
   const values = [
     assetValueUsd("WETH", row.assets.weth, prices),
@@ -181,6 +225,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
           <col className="tx-col-hash" />
           <col className="tx-col-asset" span={4} />
           <col className="tx-col-total" />
+          <col className="tx-col-weth-price" />
         </colgroup>
         <thead>
           <tr>
@@ -196,20 +241,32 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
             <th>LP WETH</th>
             <th>LP USDC</th>
             <th>Wallet total</th>
+            <th>WETH price</th>
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={12}>No transactions imported yet.</td>
+              <td colSpan={13}>No transactions imported yet.</td>
             </tr>
           ) : (
-            rows.map((transaction) => {
+            rows.map((transaction, index) => {
               const blockPrices = prices[transaction.blockNumber] ?? {};
               const transactionPrices = {
                 ethPriceUsd: blockPrices.ethPriceUsd,
                 aeroPriceUsd: impliedAeroPriceUsd(transaction.type, transaction.tokenAmounts) ?? blockPrices.aeroPriceUsd
               };
+              const previousTransaction = rows[index + 1];
+              const previousBlockPrices = previousTransaction ? prices[previousTransaction.blockNumber] ?? {} : undefined;
+              const previousPrices = previousBlockPrices
+                ? {
+                    ethPriceUsd: previousBlockPrices.ethPriceUsd,
+                    aeroPriceUsd:
+                      impliedAeroPriceUsd(previousTransaction.type, previousTransaction.tokenAmounts) ?? previousBlockPrices.aeroPriceUsd
+                  }
+                : undefined;
+              const currentWalletTotal = totalUsd(transaction, transactionPrices);
+              const previousWalletTotal = previousTransaction ? totalUsd(previousTransaction, previousPrices) : null;
 
               return (
                 <tr key={transaction.id}>
@@ -244,7 +301,8 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
                   <td>{walletAssetCell("USDC", transaction.assets.usdc, transactionPrices)}</td>
                   <td>{walletAssetCell("WETH", transaction.assets.lpWeth, transactionPrices)}</td>
                   <td>{walletAssetCell("USDC", transaction.assets.lpUsdc, transactionPrices)}</td>
-                  <td className="total-cell">{formatUsd(totalUsd(transaction, transactionPrices))}</td>
+                  <td>{walletTotalCell(currentWalletTotal, previousWalletTotal)}</td>
+                  <td>{wethPriceCell(transactionPrices.ethPriceUsd, previousPrices?.ethPriceUsd ?? null)}</td>
                 </tr>
               );
             })

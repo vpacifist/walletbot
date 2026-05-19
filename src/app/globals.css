@@ -11,6 +11,8 @@
   --danger: #b3261e;
   --warning: #b06400;
   --shadow: 0 18px 45px rgba(24, 32, 27, 0.08);
+  --shell-width: 1180px;
+  --transactions-width: 1560px;
 }
 
 * {
@@ -39,8 +41,13 @@ input {
 }
 
 .shell {
-  max-width: 1412px;
+  max-width: var(--shell-width);
   margin: 0 auto;
+}
+
+.section:has(.transactions-wrap) {
+  margin-left: min(0px, calc((var(--shell-width) - min(var(--transactions-width), calc(100vw - 56px))) / 2));
+  margin-right: min(0px, calc((var(--shell-width) - min(var(--transactions-width), calc(100vw - 56px))) / 2));
 }
 
 .topbar {
@@ -158,6 +165,13 @@ input {
   margin-bottom: 14px;
 }
 
+.section-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .section h2 {
   margin: 0;
   font-size: 18px;
@@ -179,8 +193,8 @@ table {
 }
 
 .transactions-table {
-  width: max-content;
-  min-width: 0;
+  width: 1490px;
+  min-width: 1474px;
   table-layout: fixed;
 }
 
@@ -234,7 +248,8 @@ td {
 }
 
 .asset-cell strong,
-.total-cell {
+.total-cell,
+.percent-change {
   white-space: nowrap;
 }
 
@@ -268,6 +283,27 @@ td {
 
 .total-cell {
   font-weight: 700;
+}
+
+.total-asset-cell strong {
+  font-weight: 700;
+}
+
+.percent-change {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.percent-change.positive {
+  color: var(--accent);
+}
+
+.percent-change.negative {
+  color: var(--danger);
+}
+
+.percent-change.neutral {
+  color: var(--muted);
 }
 
 .tx-stack {
@@ -331,7 +367,11 @@ th {
 }
 
 .tx-col-total {
-  width: 110px;
+  width: 116px;
+}
+
+.tx-col-weth-price {
+  width: 112px;
 }
 
 .status {

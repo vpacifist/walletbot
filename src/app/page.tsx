@@ -108,10 +108,16 @@ export default async function DashboardPage() {
         <section className="panel section">
           <div className="section-head">
             <div>
-              <h2>Sync status</h2>
+              <div className="section-title-row">
+                <h2>Sync status</h2>
+                {latestRun ? (
+                  <span className={`status ${statusClass(latestRun.status)}`}>{latestRun.status}</span>
+                ) : (
+                  <span className="status">not started</span>
+                )}
+              </div>
               <p className="muted">Polling worker imports wallet activity and refreshes position range state.</p>
             </div>
-            {latestRun ? <span className={`status ${statusClass(latestRun.status)}`}>{latestRun.status}</span> : <span className="status">not started</span>}
           </div>
           <SyncStatusLive
             initialRun={
