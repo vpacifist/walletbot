@@ -231,6 +231,29 @@ td {
   font-size: 12px;
 }
 
+.price-placeholder {
+  display: inline-block;
+  width: 68px;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #e5eae3, #f4f6f2, #e5eae3);
+  background-size: 180% 100%;
+  color: transparent;
+  vertical-align: middle;
+  animation: price-loading 1.2s ease-in-out infinite;
+}
+
+@keyframes price-loading {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -80% 0;
+  }
+}
+
 .total-cell {
   font-weight: 700;
 }

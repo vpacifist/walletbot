@@ -3,23 +3,22 @@ import { TransactionType } from "@prisma/client";
 import { getAddress } from "viem";
 import { isAuthenticated } from "@/lib/auth";
 import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approvals";
-import { EXPLORER_TX_URL } from "@/lib/constants";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
-import { formatNumber, shortAddress } from "@/lib/format";
+import { shortAddress } from "@/lib/format";
+import { readHistoricalPrices } from "@/lib/historical-prices";
 import {
-  amountsToPortfolioSnapshot,
-  getAeroPriceUsdAtBlock,
-  getEthPriceUsdAtBlock,
   getNextLpAssetAmounts,
   getTransactionAssetDelta,
-  getWalletAssetSnapshot,
-  snapshotToAmounts,
+  getWalletAssetAmountsSnapshot,
   subtractDelta,
   type LpAssetAmounts,
-  type WalletAssetSnapshot
+  type WalletAssetAmounts
 } from "@/lib/wallet-assets";
 import { logoutAction, runSyncAction } from "./actions";
+import { TransactionsTable, type TransactionTableRow } from "./transactions-table";
+
+export const dynamic = "force-dynamic";
 
 function statusClass(status: string) {
   if (status === "in_range" || status === "succeeded" || status === "classified") return "good";
@@ -28,85 +27,11 @@ function statusClass(status: string) {
   return "";
 }
 
-function tokenAmountUsd(amount: { amount?: string; symbol?: string }, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
-  const numericAmount = Number(amount.amount);
-  if (!Number.isFinite(numericAmount)) return null;
-  if (amount.symbol === "USDC") return numericAmount;
-  if ((amount.symbol === "WETH" || amount.symbol === "ETH") && prices?.ethPriceUsd !== undefined && prices.ethPriceUsd !== null) {
-    return numericAmount * prices.ethPriceUsd;
-  }
-  if (amount.symbol === "AERO" && prices?.aeroPriceUsd !== undefined && prices.aeroPriceUsd !== null) return numericAmount * prices.aeroPriceUsd;
-  return null;
-}
-
-function impliedAeroPriceUsd(type: TransactionType, value: unknown) {
-  if (type !== TransactionType.swap) return null;
-  if (!Array.isArray(value)) return null;
-
-  let aeroAmount = 0;
-  let usdcAmount = 0;
-
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const amount = item as { amount?: string; symbol?: string };
-    const numericAmount = Number(amount.amount);
-    if (!Number.isFinite(numericAmount)) continue;
-    if (amount.symbol === "AERO") aeroAmount += Math.abs(numericAmount);
-    if (amount.symbol === "USDC") usdcAmount += Math.abs(numericAmount);
-  }
-
-  if (aeroAmount <= 0 || usdcAmount <= 0) return null;
-  return usdcAmount / aeroAmount;
-}
-
-function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
-  if (!Array.isArray(value) || value.length === 0) return "-";
-  const rows = value
-    .map((item, index) => {
-      if (!item || typeof item !== "object") return null;
-      const amount = item as { direction?: string; amount?: string; symbol?: string };
-      const sign = amount.direction === "out" ? "-" : "+";
-      const usdValue = tokenAmountUsd(amount, prices);
-      const signedUsd = usdValue === null ? "-" : `${sign}${formatUsd(usdValue)}`;
-
-      return (
-        <div className="amount-row" key={`${amount.symbol ?? "token"}-${index}`}>
-          <span>
-            {sign}
-            {formatNumber(amount.amount, 6)} {amount.symbol ?? ""}
-          </span>
-          <span>{signedUsd}</span>
-        </div>
-      );
-    })
-    .filter(Boolean);
-
-  if (rows.length === 0) return "-";
-  return <div className="amounts-cell">{rows}</div>;
-}
-
-function formatUsd(value?: number | null) {
-  if (value === undefined || value === null) return "-";
-  return `$${formatNumber(value, 2)}`;
-}
-
-function walletAssetCell(asset?: WalletAssetSnapshot["weth" | "usdc" | "aero" | "eth"]) {
-  if (!asset || asset.amount === null) return "-";
-  const amountDigits = asset.symbol === "USDC" ? 2 : 6;
-
-  return (
-    <div className="asset-cell">
-      <strong>{formatNumber(asset.amount, amountDigits)}</strong>
-      <span>{formatUsd(asset.valueUsd)}</span>
-    </div>
-  );
-}
-
 export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
 
   const config = getConfig();
-  const [wallet, transactions, positions, latestRun, counts, walletAssets] = await Promise.all([
+  const [wallet, transactions, positions, latestRun, counts, walletAmounts] = await Promise.all([
     prisma.wallet.findUnique({ where: { address: config.BASE_WALLET_ADDRESS } }),
     prisma.transaction.findMany({
       orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
@@ -115,7 +40,7 @@ export default async function DashboardPage() {
     prisma.position.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
     prisma.transaction.groupBy({ by: ["type"], _count: true }),
-    getWalletAssetSnapshot(getAddress(config.BASE_WALLET_ADDRESS)).catch(() => null)
+    getWalletAssetAmountsSnapshot(getAddress(config.BASE_WALLET_ADDRESS)).catch(() => null)
   ]);
 
   const txCount = counts.reduce<Record<TransactionType, number>>(
@@ -136,39 +61,42 @@ export default async function DashboardPage() {
   const approvalsByTransactionId = mapApprovalsToTransactions(transactions);
   const visibleTransactions = transactions.filter((transaction) => !isApprovalTransaction(transaction));
   const transactionLpStates = new Map<string, { weth: number | null; usdc: number | null }>();
-  const transactionAssetStates = new Map<string, WalletAssetSnapshot>();
+  const transactionAssetStates = new Map<string, TransactionTableRow["assets"]>();
   let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
-  let runningAssets = snapshotToAmounts(walletAssets);
-  const transactionEthPrices = new Map<string, number | null>();
-  const transactionAeroPrices = new Map<string, number | null>();
-  const ethPricesByBlock = new Map<string, number | null>();
-  const aeroPricesByBlock = new Map<string, number | null>();
-
-  for (const blockNumber of [...new Set(transactions.map((transaction) => transaction.blockNumber.toString()))]) {
-    const [ethPriceUsd, aeroPriceUsd] = await Promise.all([
-      getEthPriceUsdAtBlock(BigInt(blockNumber)).catch(() => null),
-      getAeroPriceUsdAtBlock(BigInt(blockNumber)).catch(() => null)
-    ]);
-    ethPricesByBlock.set(blockNumber, ethPriceUsd);
-    aeroPricesByBlock.set(blockNumber, aeroPriceUsd);
-  }
+  let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
+  const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
+  const initialHistoricalPrices = await readHistoricalPrices(historicalPriceBlockNumbers);
 
   for (const transaction of [...transactions].reverse()) {
     chronologicalLpAssets = getNextLpAssetAmounts(chronologicalLpAssets, transaction);
     transactionLpStates.set(transaction.id, chronologicalLpAssets);
-
-    const transactionAeroPriceUsd = impliedAeroPriceUsd(transaction.type, transaction.tokenAmounts);
-    transactionEthPrices.set(transaction.id, ethPricesByBlock.get(transaction.blockNumber.toString()) ?? null);
-    transactionAeroPrices.set(transaction.id, transactionAeroPriceUsd ?? aeroPricesByBlock.get(transaction.blockNumber.toString()) ?? null);
   }
 
   for (const transaction of transactions) {
     const lpAssets = transactionLpStates.get(transaction.id) ?? { weth: 0, usdc: 0 };
-    const transactionEthPriceUsd = transactionEthPrices.get(transaction.id) ?? null;
-    const transactionAeroPriceUsd = transactionAeroPrices.get(transaction.id) ?? null;
-    transactionAssetStates.set(transaction.id, amountsToPortfolioSnapshot(runningAssets, lpAssets, transactionEthPriceUsd, transactionAeroPriceUsd));
+    transactionAssetStates.set(transaction.id, {
+      weth: runningAssets.weth,
+      usdc: runningAssets.usdc,
+      eth: runningAssets.eth,
+      lpWeth: lpAssets.weth,
+      lpUsdc: lpAssets.usdc
+    });
     runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, getAddress(config.BASE_WALLET_ADDRESS)));
   }
+
+  const transactionRows: TransactionTableRow[] = visibleTransactions.map((transaction) => ({
+    id: transaction.id,
+    hash: transaction.hash,
+    blockNumber: transaction.blockNumber.toString(),
+    timestamp: transaction.timestamp.toISOString(),
+    type: transaction.type,
+    tokenAmounts: transaction.tokenAmounts,
+    protocol: transaction.protocol,
+    relatedPositionTokenId: transaction.relatedPositionTokenId,
+    classificationStatus: transaction.classificationStatus,
+    approvals: (approvalsByTransactionId.get(transaction.id) ?? []).map((approval) => ({ hash: approval.hash })),
+    assets: transactionAssetStates.get(transaction.id) ?? { weth: null, usdc: null, eth: null, lpWeth: null, lpUsdc: null }
+  }));
 
   return (
     <main className="page">
@@ -286,92 +214,7 @@ export default async function DashboardPage() {
               <p className="muted">Normalized investor view backed by stored raw Blockscout/RPC payloads.</p>
             </div>
           </div>
-          <div className="table-wrap transactions-wrap">
-            <table className="transactions-table">
-              <colgroup>
-                <col className="tx-col-time" />
-                <col className="tx-col-type" />
-                <col className="tx-col-amounts" />
-                <col className="tx-col-protocol" />
-                <col className="tx-col-position" />
-                <col className="tx-col-status" />
-                <col className="tx-col-hash" />
-                <col className="tx-col-asset" span={5} />
-                <col className="tx-col-total" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Type</th>
-                  <th>Amounts</th>
-                  <th>Protocol</th>
-                  <th>Position</th>
-                  <th>Status</th>
-                  <th>Tx</th>
-                  <th>Wallet WETH</th>
-                  <th>Wallet USDC</th>
-                  <th>Wallet ETH</th>
-                  <th>LP WETH</th>
-                  <th>LP USDC</th>
-                  <th>Wallet total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleTransactions.length === 0 ? (
-                  <tr>
-                    <td colSpan={13}>No transactions imported yet.</td>
-                  </tr>
-                ) : (
-                  visibleTransactions.map((transaction) => {
-                    const assetState = transactionAssetStates.get(transaction.id);
-                    const approvals = approvalsByTransactionId.get(transaction.id) ?? [];
-                    const transactionPrices = {
-                      ethPriceUsd: transactionEthPrices.get(transaction.id) ?? null,
-                      aeroPriceUsd: impliedAeroPriceUsd(transaction.type, transaction.tokenAmounts) ?? transactionAeroPrices.get(transaction.id) ?? null
-                    };
-
-                    return (
-                      <tr key={transaction.id}>
-                        <td>{transaction.timestamp.toLocaleString()}</td>
-                        <td>{transaction.type}</td>
-                        <td>{tokenAmountRows(transaction.tokenAmounts, transactionPrices)}</td>
-                        <td>{transaction.protocol ?? "-"}</td>
-                        <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
-                        <td>
-                          <div className="tx-stack">
-                            <span className={`status ${statusClass(transaction.classificationStatus)}`}>{transaction.classificationStatus}</span>
-                            {approvals.map((approval) => (
-                              <span className="status approved" key={approval.hash}>
-                                approved
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="tx-stack">
-                            <a href={`${EXPLORER_TX_URL}${transaction.hash}`} target="_blank" rel="noreferrer">
-                              {shortAddress(transaction.hash)}
-                            </a>
-                            {approvals.map((approval) => (
-                              <a href={`${EXPLORER_TX_URL}${approval.hash}`} target="_blank" rel="noreferrer" key={approval.hash}>
-                                {shortAddress(approval.hash)}
-                              </a>
-                            ))}
-                          </div>
-                        </td>
-                        <td>{walletAssetCell(assetState?.weth)}</td>
-                        <td>{walletAssetCell(assetState?.usdc)}</td>
-                        <td>{walletAssetCell(assetState?.eth)}</td>
-                        <td>{walletAssetCell(assetState?.lpWeth)}</td>
-                        <td>{walletAssetCell(assetState?.lpUsdc)}</td>
-                        <td className="total-cell">{formatUsd(assetState?.totalUsd)}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          <TransactionsTable rows={transactionRows} initialPrices={initialHistoricalPrices} />
         </section>
       </div>
     </main>

@@ -4,6 +4,8 @@ import { createBaseClient } from "./chain";
 import { CONTRACTS, TOKEN_META, WETH_USDC_FEE_TIERS } from "./constants";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const historicalPriceCache = new Map<string, Promise<number | null>>();
+const poolTokenCache = new Map<string, Promise<{ token0: Address; token1: Address }>>();
 
 export type WalletAssetSnapshot = {
   weth: WalletAssetValue;
@@ -207,6 +209,44 @@ export function amountsToSnapshot(amounts: WalletAssetAmounts, ethPriceUsd: numb
   };
 }
 
+export async function getWalletAssetAmountsSnapshot(walletAddress: Address): Promise<WalletAssetAmounts> {
+  const client = createBaseClient();
+  const [ethRaw, wethRaw, usdcRaw, aeroRaw] = await Promise.all([
+    client.getBalance({ address: walletAddress }).catch(() => null),
+    client
+      .readContract({
+        address: CONTRACTS.weth,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      })
+      .catch(() => null),
+    client
+      .readContract({
+        address: CONTRACTS.usdc,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      })
+      .catch(() => null),
+    client
+      .readContract({
+        address: CONTRACTS.aero,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      })
+      .catch(() => null)
+  ]);
+
+  return {
+    eth: ethRaw === null ? null : toNumber(ethRaw, 18),
+    weth: wethRaw === null ? null : toNumber(wethRaw, 18),
+    usdc: usdcRaw === null ? null : toNumber(usdcRaw, 6),
+    aero: aeroRaw === null ? null : toNumber(aeroRaw, 18)
+  };
+}
+
 export function amountsToPortfolioSnapshot(
   walletAmounts: WalletAssetAmounts,
   lpAmounts: LpAssetAmounts,
@@ -346,6 +386,29 @@ function priceFromTick(params: { tick: number; token0: Address; token1: Address;
   return null;
 }
 
+function getPoolTokens(address: Address, abi: typeof poolAbi | typeof slipstreamPoolAbi) {
+  const key = address.toLowerCase();
+  let cached = poolTokenCache.get(key);
+  if (!cached) {
+    const client = createBaseClient();
+    cached = Promise.all([
+      client.readContract({ address, abi, functionName: "token0" }),
+      client.readContract({ address, abi, functionName: "token1" })
+    ]).then(([token0, token1]) => ({ token0, token1 }));
+    poolTokenCache.set(key, cached);
+  }
+  return cached;
+}
+
+function getCachedHistoricalPrice(key: string, load: () => Promise<number | null>) {
+  let cached = historicalPriceCache.get(key);
+  if (!cached) {
+    cached = load().catch(() => null);
+    historicalPriceCache.set(key, cached);
+  }
+  return cached;
+}
+
 export function getCurrentLpAssetAmounts(positions: PositionAssetSource[]): LpAssetAmounts {
   const lpAmounts = { weth: 0, usdc: 0 };
 
@@ -411,16 +474,17 @@ async function getEthPriceUsd() {
 }
 
 export async function getEthPriceUsdAtBlock(blockNumber: bigint) {
-  const client = createBaseClient();
-  const [slot0, liquidity, token0, token1] = await Promise.all([
-    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "slot0", blockNumber }),
-    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "liquidity", blockNumber }),
-    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token0", blockNumber }),
-    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token1", blockNumber })
-  ]);
+  return getCachedHistoricalPrice(`eth:${blockNumber.toString()}`, async () => {
+    const client = createBaseClient();
+    const [slot0, liquidity, tokens] = await Promise.all([
+      client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "slot0", blockNumber }),
+      client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "liquidity", blockNumber }),
+      getPoolTokens(CONTRACTS.wethUsdcUniswapV3Pool, poolAbi)
+    ]);
 
-  if (liquidity === 0n) return null;
-  return priceFromTick({ tick: Number(slot0[1]), token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+    if (liquidity === 0n) return null;
+    return priceFromTick({ tick: Number(slot0[1]), token0: tokens.token0, token1: tokens.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+  });
 }
 
 async function getAeroPriceUsd() {
@@ -437,16 +501,17 @@ async function getAeroPriceUsd() {
 }
 
 export async function getAeroPriceUsdAtBlock(blockNumber: bigint) {
-  const client = createBaseClient();
-  const [slot0, liquidity, token0, token1] = await Promise.all([
-    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "slot0", blockNumber }),
-    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "liquidity", blockNumber }),
-    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token0", blockNumber }),
-    client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "token1", blockNumber })
-  ]);
+  return getCachedHistoricalPrice(`aero:${blockNumber.toString()}`, async () => {
+    const client = createBaseClient();
+    const [slot0, liquidity, tokens] = await Promise.all([
+      client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "slot0", blockNumber }),
+      client.readContract({ address: CONTRACTS.aeroUsdcSlipstreamPool, abi: slipstreamPoolAbi, functionName: "liquidity", blockNumber }),
+      getPoolTokens(CONTRACTS.aeroUsdcSlipstreamPool, slipstreamPoolAbi)
+    ]);
 
-  if (liquidity === 0n) return null;
-  return priceFromTick({ tick: Number(slot0[1]), token0, token1, baseToken: CONTRACTS.aero, quoteToken: CONTRACTS.usdc });
+    if (liquidity === 0n) return null;
+    return priceFromTick({ tick: Number(slot0[1]), token0: tokens.token0, token1: tokens.token1, baseToken: CONTRACTS.aero, quoteToken: CONTRACTS.usdc });
+  });
 }
 
 export async function getWalletAssetSnapshot(walletAddress: Address): Promise<WalletAssetSnapshot> {

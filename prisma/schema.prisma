@@ -123,3 +123,15 @@ model TelegramEvent {
   payload    Json?
   position   Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
 }
+
+model HistoricalTokenPrice {
+  id          String   @id @default(cuid())
+  token       String
+  blockNumber BigInt
+  priceUsd    Decimal? @db.Decimal(30, 12)
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([token, blockNumber])
+  @@index([token])
+}
