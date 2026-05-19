@@ -9,7 +9,6 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="login">
       <form className="panel login-card" action="/api/auth/login" method="post">
         <div className="brand">
-          <div className="mark">WB</div>
           <div>
             <h1>WalletBot</h1>
             <p>Private Base liquidity monitor</p>

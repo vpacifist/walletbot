@@ -88,7 +88,6 @@ export default async function DashboardPage() {
       <div className="shell">
         <header className="topbar">
           <div className="brand">
-            <div className="mark">WB</div>
             <div>
               <h1>WalletBot</h1>
               <p>
