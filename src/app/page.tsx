@@ -15,6 +15,7 @@ import {
   type WalletAssetAmounts
 } from "@/lib/wallet-assets";
 import { logoutAction, runSyncAction } from "./actions";
+import { SyncStatusLive } from "./sync-status-live";
 import { TransactionsTable, type TransactionTableRow } from "./transactions-table";
 
 export const dynamic = "force-dynamic";
@@ -115,12 +116,20 @@ export default async function DashboardPage() {
             </div>
             {latestRun ? <span className={`status ${statusClass(latestRun.status)}`}>{latestRun.status}</span> : <span className="status">not started</span>}
           </div>
-          {latestRun ? (
-            <p className="muted">
-              Started {latestRun.startedAt.toLocaleString()} · seen {latestRun.transactionsSeen} tx
-              {latestRun.error ? ` · ${latestRun.error}` : ""}
-            </p>
-          ) : null}
+          <SyncStatusLive
+            initialRun={
+              latestRun
+                ? {
+                    id: latestRun.id,
+                    status: latestRun.status,
+                    startedAt: latestRun.startedAt.toISOString(),
+                    finishedAt: latestRun.finishedAt?.toISOString() ?? null,
+                    transactionsSeen: latestRun.transactionsSeen,
+                    error: latestRun.error
+                  }
+                : null
+            }
+          />
         </section>
 
         <section className="panel section">
