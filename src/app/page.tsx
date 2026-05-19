@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { TransactionType } from "@prisma/client";
 import { getAddress } from "viem";
 import { isAuthenticated } from "@/lib/auth";
 import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approvals";
@@ -31,33 +30,16 @@ export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
 
   const config = getConfig();
-  const [wallet, transactions, positions, latestRun, counts, walletAmounts] = await Promise.all([
-    prisma.wallet.findUnique({ where: { address: config.BASE_WALLET_ADDRESS } }),
+  const [transactions, positions, latestRun, walletAmounts] = await Promise.all([
     prisma.transaction.findMany({
       orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
       take: 80
     }),
     prisma.position.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    prisma.transaction.groupBy({ by: ["type"], _count: true }),
     getWalletAssetAmountsSnapshot(getAddress(config.BASE_WALLET_ADDRESS)).catch(() => null)
   ]);
 
-  const txCount = counts.reduce<Record<TransactionType, number>>(
-    (acc, item) => ({ ...acc, [item.type]: item._count }),
-    {
-      deposit: 0,
-      withdrawal: 0,
-      lp_increase: 0,
-      lp_decrease: 0,
-      lp_collect: 0,
-      lp_exit: 0,
-      lp_deposit: 0,
-      swap: 0,
-      unknown: 0
-    }
-  );
-  const outOfRangeCount = positions.filter((position) => position.status === "above_range" || position.status === "below_range").length;
   const approvalsByTransactionId = mapApprovalsToTransactions(transactions);
   const visibleTransactions = transactions.filter((transaction) => !isApprovalTransaction(transaction));
   const transactionLpStates = new Map<string, { weth: number | null; usdc: number | null }>();
@@ -124,25 +106,6 @@ export default async function DashboardPage() {
             </form>
           </div>
         </header>
-
-        <section className="grid">
-          <div className="panel stat">
-            <span>Last synced block</span>
-            <strong>{wallet?.lastSyncedBlock?.toString() ?? "Never"}</strong>
-          </div>
-          <div className="panel stat">
-            <span>Positions</span>
-            <strong>{positions.length}</strong>
-          </div>
-          <div className="panel stat">
-            <span>Out of range</span>
-            <strong>{outOfRangeCount}</strong>
-          </div>
-          <div className="panel stat">
-            <span>LP operations</span>
-            <strong>{txCount.lp_increase + txCount.lp_decrease + txCount.lp_collect + txCount.lp_exit + txCount.lp_deposit}</strong>
-          </div>
-        </section>
 
         <section className="panel section">
           <div className="section-head">
