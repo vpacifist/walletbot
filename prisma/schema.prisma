@@ -88,6 +88,8 @@ model Position {
   tickUpper      Int
   currentTick    Int?
   liquidity      String
+  wethAmount     String?
+  usdcAmount     String?
   status         PositionStatus @default(unknown)
   lastAlertStatus PositionStatus?
   lastCheckedAt  DateTime?

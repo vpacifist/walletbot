@@ -331,6 +331,24 @@ td {
   min-width: 118px;
 }
 
+.price-stack,
+.pool-cell {
+  display: grid;
+  gap: 3px;
+}
+
+.price-stack strong,
+.pool-cell strong {
+  white-space: nowrap;
+}
+
+.price-stack span,
+.pool-cell span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .transactions-table th,
 .transactions-table td {
   padding-left: 8px;

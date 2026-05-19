@@ -4,8 +4,9 @@ import { isAuthenticated } from "@/lib/auth";
 import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approvals";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
-import { shortAddress } from "@/lib/format";
+import { formatNumber, shortAddress } from "@/lib/format";
 import { readHistoricalPrices } from "@/lib/historical-prices";
+import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
   getNextLpAssetAmounts,
   getTransactionAssetDelta,
@@ -27,6 +28,15 @@ function statusClass(status: string) {
   if (status === "below_range" || status === "above_range" || status === "partial") return "warn";
   if (status === "failed") return "bad";
   return "";
+}
+
+function formatFee(fee: number) {
+  return `${fee / 10000}%`;
+}
+
+function formatPrice(tick: number | null | undefined, token0: string, token1: string) {
+  if (tick === null || tick === undefined) return "-";
+  return `$${formatNumber(tickToWethUsdcPrice(tick, token0, token1), 2)}`;
 }
 
 export default async function DashboardPage() {
@@ -156,17 +166,15 @@ export default async function DashboardPage() {
                 <tr>
                   <th>Token ID</th>
                   <th>Status</th>
-                  <th>Current tick</th>
-                  <th>Range</th>
-                  <th>Fee</th>
-                  <th>Liquidity</th>
+                  <th>Price range</th>
+                  <th>Position</th>
                   <th>Pool</th>
                 </tr>
               </thead>
               <tbody>
                 {positions.length === 0 ? (
                   <tr>
-                    <td colSpan={7}>No positions found yet.</td>
+                    <td colSpan={5}>No positions found yet.</td>
                   </tr>
                 ) : (
                   positions.map((position) => (
@@ -175,13 +183,25 @@ export default async function DashboardPage() {
                       <td>
                         <span className={`status ${statusClass(position.status)}`}>{position.status}</span>
                       </td>
-                      <td>{position.currentTick ?? "-"}</td>
                       <td>
-                        {position.tickLower} - {position.tickUpper}
+                        <div className="price-stack">
+                          <span>Max {formatPrice(position.tickUpper, position.token0, position.token1)}</span>
+                          <strong>Now {formatPrice(position.currentTick, position.token0, position.token1)}</strong>
+                          <span>Min {formatPrice(position.tickLower, position.token0, position.token1)}</span>
+                        </div>
                       </td>
-                      <td>{position.fee / 10000}%</td>
-                      <td>{position.liquidity}</td>
-                      <td>{shortAddress(position.poolAddress)}</td>
+                      <td>
+                        <div className="asset-cell">
+                          <strong>{formatNumber(position.wethAmount, 6)} WETH</strong>
+                          <span>{formatNumber(position.usdcAmount, 2)} USDC</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="pool-cell">
+                          <strong>{formatFee(position.fee)}</strong>
+                          <span>{shortAddress(position.poolAddress)}</span>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 )}

@@ -4,6 +4,7 @@ import { erc721OwnerAbi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
 import { createBaseClient } from "./chain";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
+import { getPositionTokenAmounts } from "./uniswap-v3-position";
 
 function tokenPairIsWethUsdc(token0: string, token1: string) {
   const pair = new Set([token0.toLowerCase(), token1.toLowerCase()]);
@@ -75,6 +76,8 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
 
     let currentTick: number | null = null;
     let status: PositionStatus = PositionStatus.unknown;
+    let wethAmount: string | null = null;
+    let usdcAmount: string | null = null;
 
     if (poolAddress !== zeroAddress) {
       const slot0 = await client.readContract({
@@ -89,6 +92,16 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
         tickUpper,
         currentTick
       });
+      const amounts = getPositionTokenAmounts({
+        token0,
+        token1,
+        liquidity,
+        tickLower,
+        tickUpper,
+        currentTick
+      });
+      wethAmount = amounts.weth;
+      usdcAmount = amounts.usdc;
     }
 
     const saved = await prisma.position.upsert({
@@ -104,6 +117,8 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
         tickUpper,
         currentTick,
         liquidity: liquidity.toString(),
+        wethAmount,
+        usdcAmount,
         status,
         lastCheckedAt: new Date(),
         raw: {
@@ -112,13 +127,17 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
           fee,
           tickLower,
           tickUpper,
-          liquidity: liquidity.toString()
+          liquidity: liquidity.toString(),
+          wethAmount,
+          usdcAmount
         }
       },
       update: {
         poolAddress: poolAddress === zeroAddress ? null : getAddress(poolAddress),
         currentTick,
         liquidity: liquidity.toString(),
+        wethAmount,
+        usdcAmount,
         status,
         lastCheckedAt: new Date(),
         raw: {
@@ -127,7 +146,9 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
           fee,
           tickLower,
           tickUpper,
-          liquidity: liquidity.toString()
+          liquidity: liquidity.toString(),
+          wethAmount,
+          usdcAmount
         }
       }
     });
