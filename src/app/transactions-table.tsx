@@ -19,6 +19,7 @@ export type TransactionTableRow = {
   assets: {
     weth: number | null;
     usdc: number | null;
+    aero: number | null;
     eth: number | null;
     lpWeth: number | null;
     lpUsdc: number | null;
@@ -127,14 +128,26 @@ function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null;
   return <div className="amounts-cell">{rows}</div>;
 }
 
-function assetValueUsd(symbol: "WETH" | "USDC" | "ETH", amount: number | null, prices?: { ethPriceUsd?: number | null }) {
+function assetValueUsd(
+  symbol: "WETH" | "USDC" | "AERO" | "ETH",
+  amount: number | null,
+  prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }
+) {
   if (amount === null) return null;
   if (symbol === "USDC") return amount;
+  if (symbol === "AERO") {
+    if (prices?.aeroPriceUsd === undefined || prices.aeroPriceUsd === null) return undefined;
+    return amount * prices.aeroPriceUsd;
+  }
   if (prices?.ethPriceUsd === undefined || prices.ethPriceUsd === null) return undefined;
   return amount * prices.ethPriceUsd;
 }
 
-function walletAssetCell(symbol: "WETH" | "USDC" | "ETH", amount: number | null, prices?: { ethPriceUsd?: number | null }) {
+function walletAssetCell(
+  symbol: "WETH" | "USDC" | "AERO" | "ETH",
+  amount: number | null,
+  prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }
+) {
   if (amount === null) return "-";
   const amountDigits = symbol === "USDC" ? 2 : 6;
   const valueUsd = assetValueUsd(symbol, amount, prices);
@@ -169,10 +182,11 @@ function wethPriceCell(value?: number | null, previousValue?: number | null) {
   );
 }
 
-function totalUsd(row: TransactionTableRow, prices?: { ethPriceUsd?: number | null }) {
+function totalUsd(row: TransactionTableRow, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
   const values = [
     assetValueUsd("WETH", row.assets.weth, prices),
     assetValueUsd("USDC", row.assets.usdc, prices),
+    assetValueUsd("AERO", row.assets.aero, prices),
     assetValueUsd("ETH", row.assets.eth, prices),
     assetValueUsd("WETH", row.assets.lpWeth, prices),
     assetValueUsd("USDC", row.assets.lpUsdc, prices)
@@ -223,7 +237,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
           <col className="tx-col-position" />
           <col className="tx-col-status" />
           <col className="tx-col-hash" />
-          <col className="tx-col-asset" span={4} />
+          <col className="tx-col-asset" span={5} />
           <col className="tx-col-total" />
           <col className="tx-col-weth-price" />
         </colgroup>
@@ -238,6 +252,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
             <th>Tx</th>
             <th>Wallet WETH</th>
             <th>Wallet USDC</th>
+            <th>Wallet AERO</th>
             <th>LP WETH</th>
             <th>LP USDC</th>
             <th>Wallet total</th>
@@ -247,7 +262,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={13}>No transactions imported yet.</td>
+              <td colSpan={14}>No transactions imported yet.</td>
             </tr>
           ) : (
             rows.map((transaction, index) => {
@@ -299,6 +314,7 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
                   </td>
                   <td>{walletAssetCell("WETH", transaction.assets.weth, transactionPrices)}</td>
                   <td>{walletAssetCell("USDC", transaction.assets.usdc, transactionPrices)}</td>
+                  <td>{walletAssetCell("AERO", transaction.assets.aero, transactionPrices)}</td>
                   <td>{walletAssetCell("WETH", transaction.assets.lpWeth, transactionPrices)}</td>
                   <td>{walletAssetCell("USDC", transaction.assets.lpUsdc, transactionPrices)}</td>
                   <td>{walletTotalCell(currentWalletTotal, previousWalletTotal)}</td>

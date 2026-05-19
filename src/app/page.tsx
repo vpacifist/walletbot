@@ -61,6 +61,7 @@ export default async function DashboardPage() {
     transactionAssetStates.set(transaction.id, {
       weth: runningAssets.weth,
       usdc: runningAssets.usdc,
+      aero: runningAssets.aero,
       eth: runningAssets.eth,
       lpWeth: lpAssets.weth,
       lpUsdc: lpAssets.usdc
@@ -79,7 +80,7 @@ export default async function DashboardPage() {
     relatedPositionTokenId: transaction.relatedPositionTokenId,
     classificationStatus: transaction.classificationStatus,
     approvals: (approvalsByTransactionId.get(transaction.id) ?? []).map((approval) => ({ hash: approval.hash })),
-    assets: transactionAssetStates.get(transaction.id) ?? { weth: null, usdc: null, eth: null, lpWeth: null, lpUsdc: null }
+    assets: transactionAssetStates.get(transaction.id) ?? { weth: null, usdc: null, aero: null, eth: null, lpWeth: null, lpUsdc: null }
   }));
 
   return (
