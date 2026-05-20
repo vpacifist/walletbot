@@ -25,6 +25,11 @@ function formatDate(value: string) {
   return new Date(value).toLocaleString();
 }
 
+function statusTimeLabel(run: LatestRun) {
+  if (run.status === "running") return `Started ${formatDate(run.startedAt)}`;
+  return `Updated ${formatDate(run.finishedAt ?? run.startedAt)}`;
+}
+
 export function SyncStatusLive({ initialRun }: SyncStatusLiveProps) {
   const router = useRouter();
   const [latestRun, setLatestRun] = useState(initialRun);
@@ -79,7 +84,7 @@ export function SyncStatusLive({ initialRun }: SyncStatusLiveProps) {
 
   return (
     <p className="muted">
-      Started {formatDate(latestRun.startedAt)} - seen {latestRun.transactionsSeen} tx
+      {statusTimeLabel(latestRun)}
       {latestRun.error ? ` - ${latestRun.error}` : ""}
     </p>
   );

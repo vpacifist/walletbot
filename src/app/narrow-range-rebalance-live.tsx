@@ -59,11 +59,6 @@ function formatSignedPercent(value: number | null | undefined) {
   return `${sign}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
 }
 
-function formatTime(value: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleTimeString();
-}
-
 function actionText(data: RebalanceData | null) {
   if (!data) return "Loading";
   if (data.swap.direction === "unavailable") return data.swap.reason ?? "Unavailable";
@@ -171,7 +166,6 @@ export function NarrowRangeRebalanceLive() {
         <div>
           <p className="metric-label">WETH price</p>
           <strong>{formatUsd(data?.pool.price)}</strong>
-          <span>Updated {formatTime(data?.updatedAt ?? null)}</span>
         </div>
       </div>
 

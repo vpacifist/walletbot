@@ -80,6 +80,27 @@ export const positionManagerAbi = [
   },
   {
     type: "function",
+    name: "collect",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenId", type: "uint256" },
+          { name: "recipient", type: "address" },
+          { name: "amount0Max", type: "uint128" },
+          { name: "amount1Max", type: "uint128" }
+        ]
+      }
+    ],
+    outputs: [
+      { name: "amount0", type: "uint256" },
+      { name: "amount1", type: "uint256" }
+    ]
+  },
+  {
+    type: "function",
     name: "positions",
     stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],

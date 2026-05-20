@@ -310,6 +310,47 @@ table {
   min-width: 900px;
 }
 
+.positions-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+
+.position-col-token {
+  width: 78px;
+}
+
+.position-col-status {
+  width: 82px;
+}
+
+.position-col-range {
+  width: 180px;
+}
+
+.position-col-amounts {
+  width: 138px;
+}
+
+.position-col-deposit {
+  width: 104px;
+}
+
+.position-col-earned {
+  width: 118px;
+}
+
+.position-col-total {
+  width: 86px;
+}
+
+.position-col-dpr {
+  width: 86px;
+}
+
+.position-col-pool {
+  width: 82px;
+}
+
 .transactions-table {
   width: 1490px;
   min-width: 1474px;
@@ -337,16 +378,144 @@ td {
   gap: 3px;
 }
 
+.price-range-cell {
+  display: grid;
+  grid-template-columns: minmax(88px, max-content) 28px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.range-visual {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  width: 28px;
+  height: 58px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: default;
+}
+
+.range-segment {
+  min-width: 0;
+  min-height: 0;
+  border-bottom: 1px solid rgba(24, 32, 27, 0.14);
+}
+
+.range-segment:first-of-type {
+  border-radius: 7px 7px 0 0;
+}
+
+.range-segment:last-of-type {
+  border-bottom: 0;
+  border-radius: 0 0 7px 7px;
+}
+
+.range-low {
+  grid-row: 3;
+  background: #f4eadb;
+  border-bottom: 0;
+  border-radius: 0 0 7px 7px;
+}
+
+.range-mid {
+  grid-row: 2;
+  background: #dff3e7;
+}
+
+.range-high {
+  grid-row: 1;
+  background: #ddeaf3;
+  border-radius: 7px 7px 0 0;
+}
+
+.range-marker {
+  position: absolute;
+  right: -5px;
+  left: -5px;
+  height: 2px;
+  background: #18201b;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+  transform: translateY(1px);
+  z-index: 2;
+}
+
+.range-hover-marker {
+  position: absolute;
+  right: -7px;
+  left: -7px;
+  height: 1px;
+  background: rgba(24, 32, 27, 0.65);
+  transform: translateY(0.5px);
+  z-index: 3;
+}
+
+.range-hover-marker.is-current {
+  height: 2px;
+  background: #18201b;
+  transform: translateY(1px);
+}
+
+.range-hover-label,
+.range-current-label {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  bottom: auto;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(24, 32, 27, 0.12);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+.range-current-label {
+  display: none;
+}
+
+.range-marker:hover .range-current-label,
+.range-hover-marker.is-current .range-hover-label {
+  display: block;
+  font-weight: 700;
+}
+
 .price-stack strong,
 .pool-cell strong {
   white-space: nowrap;
 }
 
 .price-stack span,
-.pool-cell span {
+.pool-cell span,
+.pool-link {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.pool-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.dpr-cell {
+  display: grid;
+  gap: 3px;
+}
+
+.dpr-cell span {
+  white-space: nowrap;
+}
+
+.dpr-cell span:last-child {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .transactions-table th,
@@ -392,6 +561,21 @@ td {
 .asset-cell span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.position-amounts span {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.deposit-cell {
+  min-width: 0;
+}
+
+.deposit-parts {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
 }
 
 .price-placeholder {
@@ -612,5 +796,9 @@ th {
 
   .metric-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .price-range-cell {
+    grid-template-columns: 1fr;
   }
 }
