@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.12.1",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
     "worker": "tsx src/worker/index.ts",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prisma-generate-safe.ps1 -NoRestart && next build",
     "start": "next start",

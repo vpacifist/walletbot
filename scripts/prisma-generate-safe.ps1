@@ -1,5 +1,5 @@
 param(
-  [int]$DevPort = 3001,
+  [int]$DevPort = 3000,
   [switch]$NoRestart
 )
 
