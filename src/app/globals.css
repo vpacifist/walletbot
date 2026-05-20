@@ -448,7 +448,7 @@ table {
 }
 
 .positions-table {
-  min-width: 980px;
+  min-width: 1048px;
   table-layout: fixed;
 }
 
@@ -481,6 +481,10 @@ table {
 }
 
 .position-col-dpr {
+  width: 86px;
+}
+
+.position-col-pnl {
   width: 86px;
 }
 
@@ -730,6 +734,22 @@ td {
 .dpr-cell span:last-child {
   color: var(--muted);
   font-size: 12px;
+}
+
+.pnl-cell strong {
+  white-space: nowrap;
+}
+
+.pnl-cell.positive strong {
+  color: var(--accent);
+}
+
+.pnl-cell.negative strong {
+  color: var(--danger);
+}
+
+.pnl-cell.neutral strong {
+  color: var(--muted);
 }
 
 .transactions-table th,

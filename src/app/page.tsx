@@ -60,6 +60,17 @@ function formatUsd(value: number | null) {
   return `$${formatNumber(value, 2)}`;
 }
 
+function formatSignedUsd(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}$${formatNumber(Math.abs(value), 2)}`;
+}
+
+function pnlClass(value: number | null) {
+  if (value === null || !Number.isFinite(value) || value === 0) return "neutral";
+  return value > 0 ? "positive" : "negative";
+}
+
 function tickSpacingForFee(fee: number) {
   if (fee === 500) return 10;
   if (fee === 3000) return 60;
@@ -127,6 +138,7 @@ type ClosedPositionSnapshot = {
   depositAmounts: LpAssetAmounts;
   exitAmounts: LpAssetAmounts;
   earnedAmounts?: LpAssetAmounts;
+  hodlAmounts: LpAssetAmounts;
 };
 
 export default async function DashboardPage() {
@@ -185,7 +197,8 @@ export default async function DashboardPage() {
           depositAmounts:
             exitAmounts?.principal ?? chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 },
           exitAmounts: exitAmounts?.collected ?? tokenAmountsToLpAmounts(transaction.tokenAmounts),
-          earnedAmounts: exitAmounts?.earned
+          earnedAmounts: exitAmounts?.earned,
+          hodlAmounts: chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 }
         });
         chronologicalLpAssetsByPosition.delete(transaction.relatedPositionTokenId);
         chronologicalLiquidityByPosition.delete(transaction.relatedPositionTokenId);
@@ -340,6 +353,7 @@ export default async function DashboardPage() {
                 <col className="position-col-earned" />
                 <col className="position-col-total" />
                 <col className="position-col-dpr" />
+                <col className="position-col-pnl" />
                 <col className="position-col-pool" />
               </colgroup>
               <thead>
@@ -352,13 +366,14 @@ export default async function DashboardPage() {
                   <th>Earned</th>
                   <th>Total</th>
                   <th>DPR</th>
+                  <th>PnL</th>
                   <th>Pool</th>
                 </tr>
               </thead>
               <tbody>
                 {positions.length === 0 ? (
                   <tr>
-                    <td colSpan={9}>No positions found yet.</td>
+                    <td colSpan={10}>No positions found yet.</td>
                   </tr>
                 ) : (
                   positions.map((position) => {
@@ -386,6 +401,9 @@ export default async function DashboardPage() {
                     const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
                     const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);
                     const displayedTotalUsd = closedSnapshot ? totalUsd : depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
+                    const hodlAmounts = closedSnapshot?.hodlAmounts ?? chronologicalLpAssetsByPosition.get(position.tokenId) ?? depositAmounts;
+                    const hodlUsd = lpAmountValueUsd(hodlAmounts, valuationPrice);
+                    const pnlUsd = displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
                     const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
                     const markerPosition = extendedRangeMarkerPosition(position.tickLower, position.tickUpper, position.currentTick, tickSpacing);
                     const poolUrl = uniswapPoolUrl(position.poolAddress);
@@ -469,6 +487,12 @@ export default async function DashboardPage() {
                           ) : (
                             "-"
                           )}
+                        </td>
+                        <td>
+                          <div className={`asset-cell pnl-cell ${pnlClass(pnlUsd)}`}>
+                            <strong>{formatSignedUsd(pnlUsd)}</strong>
+                            <span>vs hold</span>
+                          </div>
                         </td>
                         <td>
                           <div className="pool-cell">
