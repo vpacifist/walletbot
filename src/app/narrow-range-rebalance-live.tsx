@@ -95,11 +95,35 @@ function readStoredRangeWidthMultiplier(): RangeWidthMultiplier {
   return RANGE_WIDTH_OPTIONS.some((option) => option.value === stored) ? (stored as RangeWidthMultiplier) : 1;
 }
 
+async function writeClipboardText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+
+    try {
+      return document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  }
+}
+
 export function NarrowRangeRebalanceLive() {
   const [rangeWidthMultiplier, setRangeWidthMultiplier] = useState<RangeWidthMultiplier>(readStoredRangeWidthMultiplier);
   const [data, setData] = useState<RebalanceData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     let active = true;
@@ -149,8 +173,8 @@ export function NarrowRangeRebalanceLive() {
   async function copySwapAmount() {
     if (!data || data.swap.direction === "unavailable" || data.swap.direction === "none") return;
     const amount = formatPlainAmount(data.swap.spendAmount, data.swap.spendSymbol === "USDC" ? 2 : 6);
-    await navigator.clipboard.writeText(amount);
-    setCopyState("copied");
+    const copied = await writeClipboardText(amount);
+    setCopyState(copied ? "copied" : "failed");
     window.setTimeout(() => setCopyState("idle"), 1200);
   }
 
@@ -169,12 +193,16 @@ export function NarrowRangeRebalanceLive() {
           <p className="metric-label">Swap</p>
           <button
             type="button"
-            className="copy-metric"
+            className={`copy-metric ${copyState !== "idle" ? "has-feedback" : ""}`}
             disabled={!data || data.swap.direction === "unavailable" || data.swap.direction === "none"}
-            title={copyState === "copied" ? "Copied" : "Copy swap amount"}
+            title={copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy swap amount"}
+            aria-label={copyState === "copied" ? "Copied swap amount" : copyState === "failed" ? "Copy failed" : "Copy swap amount"}
             onClick={copySwapAmount}
           >
             <strong>{actionText(data, error)}</strong>
+            <span className={`copy-feedback ${copyState}`} aria-live="polite">
+              {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}
+            </span>
           </button>
           <p className="muted">Spend amount to rebalance the wallet before adding liquidity.</p>
         </div>
