@@ -85,7 +85,9 @@ function sumKnown(values: Array<number | null>) {
 }
 
 function applyValue(value: number | null, delta: number) {
-  return value === null ? null : value - delta;
+  if (value === null) return null;
+  const next = value - delta;
+  return Math.abs(next) < 1e-9 ? 0 : next;
 }
 
 function rawStringToEth(value?: unknown) {
@@ -455,32 +457,45 @@ function getCachedHistoricalPrice(key: string, load: () => Promise<number | null
   return cached;
 }
 
+export function getPositionLpAssetAmounts(position: PositionAssetSource): LpAssetAmounts {
+  const lpAmounts = { weth: 0, usdc: 0 };
+  const liquidity = Number(position.liquidity);
+  if (!Number.isFinite(liquidity) || liquidity <= 0 || position.currentTick === null) return lpAmounts;
+
+  const sqrtLower = sqrtRatioAtTick(position.tickLower);
+  const sqrtUpper = sqrtRatioAtTick(position.tickUpper);
+  const sqrtCurrent = sqrtRatioAtTick(Math.min(Math.max(position.currentTick, position.tickLower), position.tickUpper));
+  const token0Raw = position.currentTick < position.tickUpper ? liquidity * ((sqrtUpper - sqrtCurrent) / (sqrtCurrent * sqrtUpper)) : 0;
+  const token1Raw = position.currentTick > position.tickLower ? liquidity * (sqrtCurrent - sqrtLower) : 0;
+
+  const token0Amount = tokenAmountFromRaw(position.token0, token0Raw);
+  const token1Amount = tokenAmountFromRaw(position.token1, token1Raw);
+
+  if (position.token0.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token0Amount;
+  if (position.token1.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token1Amount;
+  if (position.token0.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token0Amount;
+  if (position.token1.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token1Amount;
+
+  return lpAmounts;
+}
+
 export function getCurrentLpAssetAmounts(positions: PositionAssetSource[]): LpAssetAmounts {
   const lpAmounts = { weth: 0, usdc: 0 };
 
   for (const position of positions) {
-    const liquidity = Number(position.liquidity);
-    if (!Number.isFinite(liquidity) || liquidity <= 0 || position.currentTick === null) continue;
-
-    const sqrtLower = sqrtRatioAtTick(position.tickLower);
-    const sqrtUpper = sqrtRatioAtTick(position.tickUpper);
-    const sqrtCurrent = sqrtRatioAtTick(Math.min(Math.max(position.currentTick, position.tickLower), position.tickUpper));
-    const token0Raw = position.currentTick < position.tickUpper ? liquidity * ((sqrtUpper - sqrtCurrent) / (sqrtCurrent * sqrtUpper)) : 0;
-    const token1Raw = position.currentTick > position.tickLower ? liquidity * (sqrtCurrent - sqrtLower) : 0;
-
-    const token0Amount = tokenAmountFromRaw(position.token0, token0Raw);
-    const token1Amount = tokenAmountFromRaw(position.token1, token1Raw);
-
-    if (position.token0.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token0Amount;
-    if (position.token1.toLowerCase() === CONTRACTS.weth.toLowerCase()) lpAmounts.weth += token1Amount;
-    if (position.token0.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token0Amount;
-    if (position.token1.toLowerCase() === CONTRACTS.usdc.toLowerCase()) lpAmounts.usdc += token1Amount;
+    const positionAmounts = getPositionLpAssetAmounts(position);
+    lpAmounts.weth += positionAmounts.weth ?? 0;
+    lpAmounts.usdc += positionAmounts.usdc ?? 0;
   }
 
   return lpAmounts;
 }
 
 async function getEthPriceUsd() {
+  return getMostLiquidWethUsdcPrice();
+}
+
+async function getMostLiquidWethUsdcPrice(blockNumber?: bigint) {
   const client = createBaseClient();
   const pools = await Promise.all(
     WETH_USDC_FEE_TIERS.map(async (fee) => ({
@@ -489,7 +504,8 @@ async function getEthPriceUsd() {
         address: CONTRACTS.uniswapV3Factory,
         abi: factoryAbi,
         functionName: "getPool",
-        args: [CONTRACTS.weth, CONTRACTS.usdc, fee]
+        args: [CONTRACTS.weth, CONTRACTS.usdc, fee],
+        blockNumber
       })
     }))
   );
@@ -499,10 +515,10 @@ async function getEthPriceUsd() {
       .filter((pool) => pool.address !== ZERO_ADDRESS)
       .map(async (pool) => {
         const [slot0, liquidity, token0, token1] = await Promise.all([
-          client.readContract({ address: pool.address, abi: poolAbi, functionName: "slot0" }),
-          client.readContract({ address: pool.address, abi: poolAbi, functionName: "liquidity" }),
-          client.readContract({ address: pool.address, abi: poolAbi, functionName: "token0" }),
-          client.readContract({ address: pool.address, abi: poolAbi, functionName: "token1" })
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "slot0", blockNumber }),
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "liquidity", blockNumber }),
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "token0", blockNumber }),
+          client.readContract({ address: pool.address, abi: poolAbi, functionName: "token1", blockNumber })
         ]);
         return { ...pool, slot0, liquidity, token0, token1 };
       })
@@ -520,17 +536,7 @@ async function getEthPriceUsd() {
 }
 
 export async function getEthPriceUsdAtBlock(blockNumber: bigint) {
-  return getCachedHistoricalPrice(`eth:${blockNumber.toString()}`, async () => {
-    const client = createBaseClient();
-    const [slot0, liquidity, tokens] = await Promise.all([
-      client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "slot0", blockNumber }),
-      client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "liquidity", blockNumber }),
-      getPoolTokens(CONTRACTS.wethUsdcUniswapV3Pool, poolAbi)
-    ]);
-
-    if (liquidity === 0n) return null;
-    return priceFromTick({ tick: Number(slot0[1]), token0: tokens.token0, token1: tokens.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
-  });
+  return getCachedHistoricalPrice(`eth:${blockNumber.toString()}`, () => getMostLiquidWethUsdcPrice(blockNumber));
 }
 
 async function getAeroPriceUsd() {

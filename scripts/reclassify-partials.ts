@@ -3,6 +3,7 @@ import { getAddress } from "viem";
 import { createBaseClient } from "../src/lib/chain";
 import { classifyTransaction } from "../src/lib/classifier";
 import { prisma } from "../src/lib/db";
+import { applyPositionLifecycleClassification } from "../src/lib/lp-lifecycle";
 import { getWethUsdcUniswapV3PoolAddresses } from "../src/lib/uniswap-v3";
 
 type RawRecord = {
@@ -28,6 +29,7 @@ async function main() {
   let updated = 0;
   let unchanged = 0;
   let skipped = 0;
+  const positionLiquidityState = new Map<string, bigint>();
 
   for (const transaction of transactions) {
     const raw = readRaw(transaction.raw);
@@ -36,7 +38,7 @@ async function main() {
       continue;
     }
 
-    const classification = classifyTransaction({
+    const baseClassification = classifyTransaction({
       walletAddress: getAddress(transaction.wallet.address),
       fromAddress: getAddress(transaction.fromAddress),
       toAddress: transaction.toAddress ? getAddress(transaction.toAddress) : null,
@@ -44,6 +46,7 @@ async function main() {
       receipt: raw.receipt as never,
       uniswapV3PoolAddresses
     });
+    const classification = applyPositionLifecycleClassification(baseClassification, positionLiquidityState, transaction);
 
     if (
       classification.type === transaction.type &&

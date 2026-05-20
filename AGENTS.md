@@ -26,6 +26,12 @@ Use the lightweight health endpoint instead:
 Invoke-WebRequest -Uri "http://localhost:3000/api/health" -UseBasicParsing -TimeoutSec 10
 ```
 
+## UI verification tools
+
+For browser/UI verification, first try to use the Codex Browser plugin / in-app browser when it is callable. If the Browser MCP tools are not exposed in the current session, do not stop to ask the user to reconfigure plugins. Use Playwright from the local project as the fallback and state that fallback briefly in the work log or final answer.
+
+For data assertions in rendered pages, Playwright is acceptable even when Browser is available. For visual QA, screenshots, layout checks, and manual interaction flows, prefer Browser when callable.
+
 ## Prisma generate on Windows
 
 Do not run raw `prisma generate` while the WalletBot dev server or worker is running. Windows can keep Prisma's query engine DLL locked through active Node processes.

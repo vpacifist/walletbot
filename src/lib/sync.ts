@@ -6,6 +6,7 @@ import { classifyTransaction } from "./classifier";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { jsonSafe } from "./json";
+import { applyPositionLifecycleClassification, updatePositionLiquidityState } from "./lp-lifecycle";
 import { upsertTrackedPositions } from "./positions";
 import { getWethUsdcUniswapV3PoolAddresses } from "./uniswap-v3";
 
@@ -35,6 +36,15 @@ export async function syncWalletOnce() {
   try {
     const txs = await fetchWalletTransactions(wallet.address, wallet.lastSyncedBlock ?? undefined);
     const uniswapV3PoolAddresses = await getWethUsdcUniswapV3PoolAddresses(client).catch(() => new Set<string>());
+    const positionLiquidityState = new Map<string, bigint>();
+    const existingTransactions = await prisma.transaction.findMany({
+      where: { walletId: wallet.id },
+      select: { raw: true },
+      orderBy: [{ blockNumber: "asc" }, { timestamp: "asc" }]
+    });
+    for (const transaction of existingTransactions) {
+      updatePositionLiquidityState(positionLiquidityState, transaction);
+    }
     const discoveredTokenIds = new Set<string>();
 
     for (const tx of txs) {
@@ -42,13 +52,16 @@ export async function syncWalletOnce() {
       const receipt = await client.getTransactionReceipt({ hash: tx.hash as `0x${string}` });
       const fromAddress = getAddress(tx.from.hash);
       const toAddress = tx.to?.hash ? getAddress(tx.to.hash) : null;
-      const classification = classifyTransaction({
+      const baseClassification = classifyTransaction({
         walletAddress: wallet.address as Address,
         fromAddress,
         toAddress,
         method: tx.method,
         receipt,
         uniswapV3PoolAddresses
+      });
+      const classification = applyPositionLifecycleClassification(baseClassification, positionLiquidityState, {
+        raw: { receipt }
       });
 
       if (classification.relatedPositionTokenId) {

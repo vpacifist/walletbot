@@ -105,12 +105,18 @@ export default async function DashboardPage() {
   const transactionAssetStates = new Map<string, TransactionTableRow["assets"]>();
   const chronologicalLpAssetsByPosition = new Map<string, LpAssetAmounts>();
   const chronologicalLiquidityByPosition = new Map<string, bigint>();
+  const trackedLpTokenIds = new Set(positions.map((position) => position.tokenId));
   let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
   const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
   const initialHistoricalPrices = await readHistoricalPrices(historicalPriceBlockNumbers);
 
+  for (const transaction of transactions) {
+    if (transaction.type === "lp_exit" && transaction.relatedPositionTokenId) trackedLpTokenIds.add(transaction.relatedPositionTokenId);
+  }
+
   for (const transaction of [...transactions].reverse()) {
     for (const liquidityDelta of getTransactionPositionLiquidityDeltas(transaction)) {
+      if (!trackedLpTokenIds.has(liquidityDelta.tokenId)) continue;
       chronologicalLiquidityByPosition.set(
         liquidityDelta.tokenId,
         (chronologicalLiquidityByPosition.get(liquidityDelta.tokenId) ?? 0n) + liquidityDelta.delta
@@ -118,9 +124,19 @@ export default async function DashboardPage() {
     }
 
     if (transaction.type === "lp_exit") {
-      chronologicalLpAssetsByPosition.clear();
-      chronologicalLiquidityByPosition.clear();
-    } else if (transaction.relatedPositionTokenId && transaction.type.startsWith("lp_") && transaction.type !== "lp_collect") {
+      if (transaction.relatedPositionTokenId) {
+        chronologicalLpAssetsByPosition.delete(transaction.relatedPositionTokenId);
+        chronologicalLiquidityByPosition.delete(transaction.relatedPositionTokenId);
+      } else {
+        chronologicalLpAssetsByPosition.clear();
+        chronologicalLiquidityByPosition.clear();
+      }
+    } else if (
+      transaction.relatedPositionTokenId &&
+      trackedLpTokenIds.has(transaction.relatedPositionTokenId) &&
+      transaction.type.startsWith("lp_") &&
+      transaction.type !== "lp_collect"
+    ) {
       const current = chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 };
       const next = addLpDelta(current, getTransactionLpDelta(transaction));
       const remainingLiquidity = chronologicalLiquidityByPosition.get(transaction.relatedPositionTokenId);
