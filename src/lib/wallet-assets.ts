@@ -54,6 +54,12 @@ export type PositionLiquidityDelta = {
   delta: bigint;
 };
 
+export type PositionExitAmounts = {
+  principal: LpAssetAmounts;
+  collected: LpAssetAmounts;
+  earned: LpAssetAmounts;
+};
+
 type TransactionAssetSource = {
   fromAddress: string;
   toAddress?: string | null;
@@ -416,6 +422,83 @@ function tokenAmountFromRaw(token: string, rawAmount: number) {
   const meta = TOKEN_META[token.toLowerCase()];
   if (!meta) return 0;
   return rawAmount / 10 ** meta.decimals;
+}
+
+function tokenAmountFromRawBigInt(token: string, rawAmount: bigint) {
+  const meta = TOKEN_META[token.toLowerCase()];
+  if (!meta) return 0;
+  return Number(formatUnits(rawAmount, meta.decimals));
+}
+
+function lpAmountsFromTokenPair(token0: string, token1: string, amount0: bigint, amount1: bigint) {
+  const amounts: LpAssetAmounts = { weth: 0, usdc: 0 };
+  const token0Amount = tokenAmountFromRawBigInt(token0, amount0);
+  const token1Amount = tokenAmountFromRawBigInt(token1, amount1);
+
+  if (token0.toLowerCase() === CONTRACTS.weth.toLowerCase()) amounts.weth = (amounts.weth ?? 0) + token0Amount;
+  if (token1.toLowerCase() === CONTRACTS.weth.toLowerCase()) amounts.weth = (amounts.weth ?? 0) + token1Amount;
+  if (token0.toLowerCase() === CONTRACTS.usdc.toLowerCase()) amounts.usdc = (amounts.usdc ?? 0) + token0Amount;
+  if (token1.toLowerCase() === CONTRACTS.usdc.toLowerCase()) amounts.usdc = (amounts.usdc ?? 0) + token1Amount;
+
+  return amounts;
+}
+
+function addKnownLpAmounts(left: LpAssetAmounts, right: LpAssetAmounts): LpAssetAmounts {
+  return {
+    weth: (left.weth ?? 0) + (right.weth ?? 0),
+    usdc: (left.usdc ?? 0) + (right.usdc ?? 0)
+  };
+}
+
+function subtractKnownLpAmounts(left: LpAssetAmounts, right: LpAssetAmounts): LpAssetAmounts {
+  return {
+    weth: (left.weth ?? 0) - (right.weth ?? 0),
+    usdc: (left.usdc ?? 0) - (right.usdc ?? 0)
+  };
+}
+
+export function getTransactionPositionExitAmounts(transaction: TransactionAssetSource, tokenId: string, token0: string, token1: string) {
+  const raw = readRawRecord(transaction.raw);
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  let principal: LpAssetAmounts = { weth: 0, usdc: 0 };
+  let collected: LpAssetAmounts = { weth: 0, usdc: 0 };
+  let sawExitEvent = false;
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || !record.data || !record.topics) continue;
+    const isPositionManager =
+      record.address.toLowerCase() === CONTRACTS.nonfungiblePositionManager.toLowerCase() ||
+      record.address.toLowerCase() === CONTRACTS.aerodromeNonfungiblePositionManager.toLowerCase();
+    if (!isPositionManager) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: positionManagerAbi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName !== "DecreaseLiquidity" && parsed.eventName !== "Collect") continue;
+      if (parsed.args.tokenId.toString() !== tokenId) continue;
+
+      const amounts = lpAmountsFromTokenPair(token0, token1, parsed.args.amount0, parsed.args.amount1);
+      if (parsed.eventName === "DecreaseLiquidity") principal = addKnownLpAmounts(principal, amounts);
+      if (parsed.eventName === "Collect") collected = addKnownLpAmounts(collected, amounts);
+      sawExitEvent = true;
+    } catch {
+      // Not a position-manager exit event.
+    }
+  }
+
+  if (!sawExitEvent) return null;
+
+  return {
+    principal,
+    collected,
+    earned: subtractKnownLpAmounts(collected, principal)
+  } satisfies PositionExitAmounts;
 }
 
 function priceFromTick(params: { tick: number; token0: Address; token1: Address; baseToken: Address; quoteToken: Address }) {

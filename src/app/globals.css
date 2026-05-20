@@ -503,10 +503,28 @@ td {
   vertical-align: top;
 }
 
+.position-row-closed td {
+  background: #f0f2ef;
+}
+
+.position-row-closed td:first-child {
+  border-left: 1px solid #cdd4cb;
+}
+
+.position-row-closed td:last-child {
+  border-right: 1px solid #cdd4cb;
+}
+
 .asset-cell {
   display: grid;
   gap: 3px;
   min-width: 118px;
+}
+
+.token-cell {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
 }
 
 .price-stack,
@@ -759,6 +777,13 @@ td {
   font-size: 12px;
 }
 
+.asset-cell .historical-note,
+.position-amounts .historical-note {
+  color: #768074;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
 .position-amounts span {
   color: var(--text);
   font-size: 13px;
@@ -923,6 +948,14 @@ th {
 .status.approved {
   background: #e3edf7;
   color: var(--accent-2);
+}
+
+.status.historical {
+  min-height: 20px;
+  padding: 2px 7px;
+  background: #e1e5df;
+  color: #526050;
+  font-size: 11px;
 }
 
 .login {

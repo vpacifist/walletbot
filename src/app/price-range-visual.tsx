@@ -10,14 +10,12 @@ type PriceRangeVisualProps = {
   upperExtendedPrice: number | null;
   currentPrice: number | null;
   lowerLabel: string;
-  currentLabel: string;
   upperLabel: string;
   rangeCount: number;
   markerPosition: number;
 };
 
 const VISUAL_HEIGHT = 72;
-const LABEL_GAP = 18;
 const LABEL_EDGE_PADDING = 7;
 
 function priceFromPosition(position: number, lowerExtendedPrice: number, upperExtendedPrice: number) {
@@ -44,12 +42,6 @@ function clampLabelTop(value: number) {
   return Math.min(VISUAL_HEIGHT - LABEL_EDGE_PADDING, Math.max(LABEL_EDGE_PADDING, value));
 }
 
-function currentLabelTop(currentTop: number, minTop: number, maxTop: number) {
-  if (currentTop <= maxTop + LABEL_GAP) return clampLabelTop(maxTop + LABEL_GAP);
-  if (currentTop >= minTop - LABEL_GAP) return clampLabelTop(minTop - LABEL_GAP);
-  return clampLabelTop(currentTop);
-}
-
 export function PriceRangeVisual(props: PriceRangeVisualProps) {
   const [hoverPosition, setHoverPosition] = useState<number | null>(null);
   const lowerExtendedPrice = props.lowerExtendedPrice;
@@ -58,7 +50,6 @@ export function PriceRangeVisual(props: PriceRangeVisualProps) {
   const greyPercent = 50 / (rangeCount + 1);
   const minLabelTop = clampLabelTop(topFromBottomPercent(greyPercent));
   const maxLabelTop = clampLabelTop(topFromBottomPercent(100 - greyPercent));
-  const nowLabelTop = currentLabelTop(topFromBottomPercent(props.markerPosition), minLabelTop, maxLabelTop);
   const isCurrentHover =
     hoverPosition !== null && Math.abs(hoverPosition - props.markerPosition) <= 2 && props.currentPrice !== null;
   const hoverPrice =
@@ -91,9 +82,6 @@ export function PriceRangeVisual(props: PriceRangeVisualProps) {
         <span className="range-boundary-label" style={{ top: `${maxLabelTop}px` }}>
           {props.upperLabel}
         </span>
-        <strong className="range-now-label" style={{ top: `${nowLabelTop}px` }}>
-          {props.currentLabel}
-        </strong>
         <span className="range-boundary-label" style={{ top: `${minLabelTop}px` }}>
           {props.lowerLabel}
         </span>
@@ -120,9 +108,7 @@ export function PriceRangeVisual(props: PriceRangeVisualProps) {
             <span className="range-hover-label">{formatHoverPrice(hoverPrice)}</span>
           </span>
         ) : null}
-        <span className="range-marker" style={{ bottom: `${props.markerPosition}%` }}>
-          <span className="range-current-label">{formatHoverPrice(props.currentPrice)}</span>
-        </span>
+        <span className="range-marker" style={{ bottom: `${props.markerPosition}%` }} />
       </div>
     </div>
   );

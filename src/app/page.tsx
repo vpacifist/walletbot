@@ -5,13 +5,14 @@ import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approva
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
-import { readHistoricalPrices } from "@/lib/historical-prices";
+import { loadAndCacheMissingHistoricalPrices, readHistoricalPrices } from "@/lib/historical-prices";
 import { getUncollectedPositionFees } from "@/lib/uniswap-v3-fees";
 import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
   addLpDelta,
   getTransactionAssetDelta,
   getTransactionLpDelta,
+  getTransactionPositionExitAmounts,
   getTransactionPositionLiquidityDeltas,
   getWalletAssetAmountsSnapshotAtBlock,
   subtractDelta,
@@ -32,6 +33,11 @@ function statusClass(status: string) {
   if (status === "below_range" || status === "above_range" || status === "partial") return "warn";
   if (status === "failed") return "bad";
   return "";
+}
+
+function statusLabel(status: string) {
+  if (status === "closed_or_zero_liquidity") return "closed";
+  return status;
 }
 
 function formatFee(fee: number) {
@@ -70,8 +76,8 @@ function extendedRangeMarkerPosition(tickLower: number, tickUpper: number, curre
   return Math.min(100, Math.max(0, ((currentTick - visualLower) / visualRange) * 100));
 }
 
-function dprDisplay(earnedUsd: number, depositUsd: number, openedAt: Date) {
-  const elapsedDays = Math.max((Date.now() - openedAt.getTime()) / 86_400_000, 1 / 24);
+function dprDisplay(earnedUsd: number, depositUsd: number, openedAt: Date, closedAt?: Date) {
+  const elapsedDays = Math.max(((closedAt?.getTime() ?? Date.now()) - openedAt.getTime()) / 86_400_000, 1 / 24);
   if (depositUsd <= 0 || earnedUsd <= 0) return { dpr: "0%", apr: "APR 0%" };
   const dpr = (earnedUsd / depositUsd / elapsedDays) * 100;
   const apr = dpr * 365;
@@ -92,6 +98,36 @@ function aggregateLpAssetAmounts(positionLpStates: Map<string, LpAssetAmounts>) 
 
   return total;
 }
+
+function tokenAmountsToLpAmounts(value: unknown) {
+  const amounts: LpAssetAmounts = { weth: 0, usdc: 0 };
+  if (!Array.isArray(value)) return amounts;
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const amount = item as { symbol?: string; amount?: string; direction?: string };
+    const parsed = Number(amount.amount);
+    if (!Number.isFinite(parsed)) continue;
+    const signed = amount.direction === "out" ? -parsed : parsed;
+    if (amount.symbol === "WETH") amounts.weth = (amounts.weth ?? 0) + signed;
+    if (amount.symbol === "USDC") amounts.usdc = (amounts.usdc ?? 0) + signed;
+  }
+
+  return amounts;
+}
+
+function lpAmountValueUsd(amounts: LpAssetAmounts, wethPriceUsd: number | null) {
+  if (wethPriceUsd === null) return null;
+  return (amounts.weth ?? 0) * wethPriceUsd + (amounts.usdc ?? 0);
+}
+
+type ClosedPositionSnapshot = {
+  closedAt: Date;
+  blockNumber: string;
+  depositAmounts: LpAssetAmounts;
+  exitAmounts: LpAssetAmounts;
+  earnedAmounts?: LpAssetAmounts;
+};
 
 export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
@@ -114,10 +150,15 @@ export default async function DashboardPage() {
   const transactionAssetStates = new Map<string, TransactionTableRow["assets"]>();
   const chronologicalLpAssetsByPosition = new Map<string, LpAssetAmounts>();
   const chronologicalLiquidityByPosition = new Map<string, bigint>();
+  const closedSnapshotsByTokenId = new Map<string, ClosedPositionSnapshot>();
   const trackedLpTokenIds = new Set(positions.map((position) => position.tokenId));
   let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
   const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
+  const exitBlockNumbers = transactions
+    .filter((transaction) => transaction.type === "lp_exit" && transaction.relatedPositionTokenId)
+    .map((transaction) => transaction.blockNumber.toString());
   const initialHistoricalPrices = await readHistoricalPrices(historicalPriceBlockNumbers);
+  const exitHistoricalPrices = await loadAndCacheMissingHistoricalPrices(exitBlockNumbers);
 
   for (const transaction of transactions) {
     if (transaction.type === "lp_exit" && transaction.relatedPositionTokenId) trackedLpTokenIds.add(transaction.relatedPositionTokenId);
@@ -134,6 +175,18 @@ export default async function DashboardPage() {
 
     if (transaction.type === "lp_exit") {
       if (transaction.relatedPositionTokenId) {
+        const position = positions.find((item) => item.tokenId === transaction.relatedPositionTokenId);
+        const exitAmounts = position
+          ? getTransactionPositionExitAmounts(transaction, transaction.relatedPositionTokenId, position.token0, position.token1)
+          : null;
+        closedSnapshotsByTokenId.set(transaction.relatedPositionTokenId, {
+          closedAt: transaction.timestamp,
+          blockNumber: transaction.blockNumber.toString(),
+          depositAmounts:
+            exitAmounts?.principal ?? chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 },
+          exitAmounts: exitAmounts?.collected ?? tokenAmountsToLpAmounts(transaction.tokenAmounts),
+          earnedAmounts: exitAmounts?.earned
+        });
         chronologicalLpAssetsByPosition.delete(transaction.relatedPositionTokenId);
         chronologicalLiquidityByPosition.delete(transaction.relatedPositionTokenId);
       } else {
@@ -246,7 +299,7 @@ export default async function DashboardPage() {
             <div className="section-title-row">
               <h2>Sync status</h2>
               {latestRun ? (
-                <span className={`status ${statusClass(latestRun.status)}`}>{latestRun.status}</span>
+                <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
               ) : (
                 <span className="status">not started</span>
               )}
@@ -309,6 +362,8 @@ export default async function DashboardPage() {
                   </tr>
                 ) : (
                   positions.map((position) => {
+                    const closedSnapshot = closedSnapshotsByTokenId.get(position.tokenId);
+                    const isClosed = position.status === "closed_or_zero_liquidity";
                     const currentPrice =
                       position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1);
                     const tickSpacing = tickSpacingForFee(position.fee);
@@ -317,22 +372,38 @@ export default async function DashboardPage() {
                     const lowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
                     const upperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
                     const upperExtendedPrice = tickToWethUsdcPrice(position.tickUpper + tickSpacing / 2, position.token0, position.token1);
-                    const wethAmount = numberValue(position.wethAmount);
-                    const usdcAmount = numberValue(position.usdcAmount);
-                    const earned = feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
-                    const depositUsd = currentPrice === null ? null : wethAmount * currentPrice + usdcAmount;
-                    const earnedUsd = currentPrice === null ? null : earned.weth * currentPrice + earned.usdc;
-                    const totalUsd = depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
+                    const historicalPrice = closedSnapshot ? (exitHistoricalPrices[closedSnapshot.blockNumber]?.ethPriceUsd ?? currentPrice) : null;
+                    const currentPositionAmounts = {
+                      weth: numberValue(position.wethAmount),
+                      usdc: numberValue(position.usdcAmount)
+                    };
+                    const displayAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
+                    const totalAmounts = closedSnapshot?.exitAmounts ?? currentPositionAmounts;
+                    const depositAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
+                    const earned = closedSnapshot?.earnedAmounts ?? feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
+                    const valuationPrice = closedSnapshot ? historicalPrice : currentPrice;
+                    const depositUsd = lpAmountValueUsd(depositAmounts, valuationPrice);
+                    const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
+                    const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);
+                    const displayedTotalUsd = closedSnapshot ? totalUsd : depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
                     const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
                     const markerPosition = extendedRangeMarkerPosition(position.tickLower, position.tickUpper, position.currentTick, tickSpacing);
                     const poolUrl = uniswapPoolUrl(position.poolAddress);
-                    const rate = depositUsd === null || earnedUsd === null ? null : dprDisplay(earnedUsd, depositUsd, openedAt);
+                    const rate =
+                      depositUsd === null || earnedUsd === null
+                        ? null
+                        : dprDisplay(earnedUsd, depositUsd, openedAt, closedSnapshot?.closedAt);
 
                     return (
-                      <tr key={position.id}>
-                        <td>#{position.tokenId}</td>
+                      <tr className={isClosed ? "position-row-closed" : undefined} key={position.id}>
                         <td>
-                          <span className={`status ${statusClass(position.status)}`}>{position.status}</span>
+                          <div className="token-cell">
+                            <span>#{position.tokenId}</span>
+                            {isClosed ? <span className="status historical">historical</span> : null}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`status ${statusClass(position.status)}`}>{statusLabel(position.status)}</span>
                         </td>
                         <td>
                           <div className="price-range-cell">
@@ -343,7 +414,6 @@ export default async function DashboardPage() {
                               upperExtendedPrice={upperExtendedPrice}
                               currentPrice={currentPrice}
                               lowerLabel={`Min ${formatPrice(position.tickLower, position.token0, position.token1)}`}
-                              currentLabel={`Now ${formatPrice(position.currentTick, position.token0, position.token1)}`}
                               upperLabel={`Max ${formatPrice(position.tickUpper, position.token0, position.token1)}`}
                               rangeCount={rangeCount}
                               markerPosition={markerPosition}
@@ -352,28 +422,43 @@ export default async function DashboardPage() {
                         </td>
                         <td>
                           <div className="asset-cell position-amounts">
-                            <span>{formatNumber(position.wethAmount, 6)} WETH</span>
-                            <span>{formatNumber(position.usdcAmount, 2)} USDC</span>
+                            <span>{formatNumber(displayAmounts.weth, 6)} WETH</span>
+                            <span>{formatNumber(displayAmounts.usdc, 2)} USDC</span>
+                            {isClosed ? <span className="historical-note">at close</span> : null}
                           </div>
                         </td>
                         <td>
                           <div className="asset-cell deposit-cell">
                             <strong>{formatUsd(depositUsd)}</strong>
                             <span className="deposit-parts">
-                              <span>{formatUsd(currentPrice === null ? null : wethAmount * currentPrice)}</span>
-                              <span>+ {formatUsd(usdcAmount)}</span>
+                              <span>{formatUsd(valuationPrice === null ? null : (depositAmounts.weth ?? 0) * valuationPrice)}</span>
+                              <span>+ {formatUsd(depositAmounts.usdc ?? 0)}</span>
+                              {isClosed ? <span className="historical-note">at close</span> : null}
                             </span>
                           </div>
                         </td>
                         <td>
                           <div className="asset-cell">
                             <strong>{formatUsd(earnedUsd)}</strong>
-                            <span>{formatNumber(earned.weth, 6)} WETH</span>
-                            <span>{formatNumber(earned.usdc, 2)} USDC</span>
+                            {isClosed ? (
+                              <>
+                                <span>{formatNumber(earned.weth, 6)} WETH</span>
+                                <span>{formatNumber(earned.usdc, 2)} USDC</span>
+                                <span className="historical-note">realized</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>{formatNumber(earned.weth, 6)} WETH</span>
+                                <span>{formatNumber(earned.usdc, 2)} USDC</span>
+                              </>
+                            )}
                           </div>
                         </td>
                         <td>
-                          <strong className="total-cell">{formatUsd(totalUsd)}</strong>
+                          <div className="asset-cell">
+                            <strong className="total-cell">{formatUsd(displayedTotalUsd)}</strong>
+                            {isClosed ? <span className="historical-note">at close</span> : null}
+                          </div>
                         </td>
                         <td>
                           {rate ? (
