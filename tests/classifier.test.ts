@@ -75,6 +75,24 @@ describe("classifyTransaction", () => {
     };
   }
 
+  function positionTransferLog(params: { from: `0x${string}`; to: `0x${string}`; tokenId: bigint }) {
+    const topics = encodeEventTopics({
+      abi: positionManagerAbi,
+      eventName: "Transfer",
+      args: {
+        from: params.from,
+        to: params.to,
+        tokenId: params.tokenId
+      }
+    });
+
+    return {
+      address: CONTRACTS.aerodromeNonfungiblePositionManager,
+      data: "0x",
+      topics
+    };
+  }
+
   function decreaseLiquidityLog() {
     const topics = encodeEventTopics({
       abi: positionManagerAbi,
@@ -328,6 +346,30 @@ describe("classifyTransaction", () => {
     });
 
     expect(result.type).toBe(TransactionType.lp_increase);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("Aerodrome Slipstream");
+    expect(result.relatedPositionTokenId).toBe("50443402");
+  });
+
+  it("classifies minted position liquidity as LP deposits", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.aerodromeNftFarmStrategy,
+      method: "increase",
+      receipt: {
+        logs: [
+          positionTransferLog({
+            from: "0x0000000000000000000000000000000000000000",
+            to: CONTRACTS.aerodromeNftFarmStrategy,
+            tokenId: 50443402n
+          }),
+          increaseLiquidityLog()
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.lp_deposit);
     expect(result.status).toBe(ClassificationStatus.classified);
     expect(result.protocol).toBe("Aerodrome Slipstream");
     expect(result.relatedPositionTokenId).toBe("50443402");

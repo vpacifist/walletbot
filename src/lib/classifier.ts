@@ -3,6 +3,8 @@ import { decodeEventLog, formatUnits, getAddress, type Address, type Transaction
 import { erc20Abi, poolAbi, positionManagerAbi } from "./abi";
 import { CONTRACTS, SUPPORTED_TOKEN_SET, TOKEN_META } from "./constants";
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
 export type TokenAmount = {
   token: string;
   symbol: string;
@@ -30,6 +32,8 @@ function classifyByPositionManagerEvents(receipt: TransactionReceipt) {
     { address: CONTRACTS.aerodromeNonfungiblePositionManager, protocol: "Aerodrome Slipstream" }
   ];
   const tokenIds = new Set<string>();
+  const increaseTokenIds = new Set<string>();
+  const mintedTokenIds = new Set<string>();
   let sawIncrease = false;
   let sawDecrease = false;
   let sawCollect = false;
@@ -49,7 +53,9 @@ function classifyByPositionManagerEvents(receipt: TransactionReceipt) {
       if (parsed.eventName === "IncreaseLiquidity") {
         sawIncrease = true;
         protocol = positionManager.protocol;
-        tokenIds.add(parsed.args.tokenId.toString());
+        const tokenId = parsed.args.tokenId.toString();
+        tokenIds.add(tokenId);
+        increaseTokenIds.add(tokenId);
       }
       if (parsed.eventName === "DecreaseLiquidity") {
         sawDecrease = true;
@@ -63,14 +69,18 @@ function classifyByPositionManagerEvents(receipt: TransactionReceipt) {
       }
       if (parsed.eventName === "Transfer") {
         protocol = positionManager.protocol;
-        tokenIds.add(parsed.args.tokenId.toString());
+        const tokenId = parsed.args.tokenId.toString();
+        tokenIds.add(tokenId);
+        if (parsed.args.from.toLowerCase() === ZERO_ADDRESS) mintedTokenIds.add(tokenId);
       }
     } catch {
       // Not a position-manager event covered by the MVP ABI.
     }
   }
 
-  const relatedPositionTokenId = [...tokenIds][0];
+  const mintedIncreaseTokenId = [...increaseTokenIds].find((tokenId) => mintedTokenIds.has(tokenId));
+  const relatedPositionTokenId = mintedIncreaseTokenId ?? [...tokenIds][0];
+  if (mintedIncreaseTokenId) return { type: TransactionType.lp_deposit, relatedPositionTokenId, protocol };
   if (sawIncrease) return { type: TransactionType.lp_increase, relatedPositionTokenId, protocol };
   if (sawDecrease) return { type: TransactionType.lp_decrease, relatedPositionTokenId, protocol };
   if (sawCollect) return { type: TransactionType.lp_collect, relatedPositionTokenId, protocol };

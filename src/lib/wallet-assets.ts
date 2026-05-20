@@ -135,7 +135,7 @@ function aerodromeSlipstreamLpDelta(transaction: TransactionAssetSource): LpAsse
   const toAddress = transaction.toAddress?.toLowerCase();
   const isAerodromeStrategy =
     toAddress === CONTRACTS.nftFarmStrategy.toLowerCase() || toAddress === CONTRACTS.aerodromeNftFarmStrategy.toLowerCase();
-  if (transaction.type !== "lp_increase" || !isAerodromeStrategy) return null;
+  if ((transaction.type !== "lp_increase" && transaction.type !== "lp_deposit") || !isAerodromeStrategy) return null;
 
   const raw = readRawRecord(transaction.raw);
   const blockscout = readRawRecord(raw.blockscout);
