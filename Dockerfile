@@ -23,4 +23,4 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.ts ./next.config.ts
 EXPOSE 3000
-CMD ["pnpm", "start"]
+CMD ["node", "./scripts/start-service.mjs"]
