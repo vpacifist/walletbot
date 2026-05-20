@@ -15,3 +15,13 @@ Alternatively, run through `cmd.exe`:
 ```powershell
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "pnpm dev" -WorkingDirectory "C:\projects\walletbot" -WindowStyle Hidden
 ```
+
+## Local server readiness
+
+Do not use the dashboard root `/` as a local dev-server readiness check. It requires an authenticated session and server-renders data from the database/RPC, so it can be slower than server startup or redirect to `/login`.
+
+Use the lightweight health endpoint instead:
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:3000/api/health" -UseBasicParsing -TimeoutSec 10
+```
