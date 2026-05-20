@@ -221,6 +221,26 @@ input {
   overflow-wrap: anywhere;
 }
 
+.copy-metric {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.copy-metric:disabled {
+  cursor: default;
+}
+
+.copy-metric:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .hero-metric.warn strong {
   color: var(--warning);
 }
@@ -235,10 +255,11 @@ input {
 
 .metric-list {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(150px, 1fr) minmax(270px, 1.7fr) minmax(170px, auto);
+  gap: 16px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
+  align-items: start;
 }
 
 .metric-list > div {
@@ -272,7 +293,7 @@ input {
 
 .range-prices {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -293,6 +314,38 @@ input {
 .range-prices strong {
   display: block;
   margin-top: 2px;
+}
+
+.range-width-metric {
+  justify-self: end;
+}
+
+.range-width-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, 30px);
+  gap: 4px;
+}
+
+.range-width-buttons button {
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.range-width-buttons button:hover {
+  border-color: var(--muted);
+}
+
+.range-width-buttons button.is-active {
+  border-color: var(--accent);
+  background: #e3f1e8;
+  color: var(--accent);
 }
 
 .table-wrap {
@@ -796,6 +849,16 @@ th {
 
   .metric-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .range-metric,
+  .range-width-metric {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .range-width-buttons {
+    grid-template-columns: repeat(5, minmax(30px, 1fr));
   }
 
   .price-range-cell {

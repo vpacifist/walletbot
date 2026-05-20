@@ -2,6 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+const RANGE_WIDTH_STORAGE_KEY = "walletbot:weth-usdc-range-width-multiplier";
+const RANGE_WIDTH_OPTIONS = [
+  { value: 1, label: "0.6" },
+  { value: 2, label: "1.2" },
+  { value: 3, label: "1.8" },
+  { value: 4, label: "2.4" },
+  { value: 5, label: "3.0" }
+] as const;
+type RangeWidthMultiplier = (typeof RANGE_WIDTH_OPTIONS)[number]["value"];
+
 type RebalanceData = {
   wallet: {
     weth: number | null;
@@ -43,9 +53,9 @@ function formatAmount(value: number | null | undefined, digits: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function formatUsd(value: number | null | undefined) {
+function formatPlainAmount(value: number | null | undefined, digits: number) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2, style: "currency", currency: "USD" });
+  return value.toLocaleString("en-US", { maximumFractionDigits: digits, useGrouping: false });
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -59,18 +69,19 @@ function formatSignedPercent(value: number | null | undefined) {
   return `${sign}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
 }
 
-function actionText(data: RebalanceData | null) {
+function actionText(data: RebalanceData | null, error: string | null) {
+  if (error && !data) return error;
   if (!data) return "Loading";
   if (data.swap.direction === "unavailable") return data.swap.reason ?? "Unavailable";
   if (data.swap.direction === "none") return "No swap needed";
-  return `Swap ${formatAmount(data.swap.spendAmount, data.swap.spendSymbol === "USDC" ? 2 : 6)} ${data.swap.spendSymbol}`;
+  return `${formatPlainAmount(data.swap.spendAmount, data.swap.spendSymbol === "USDC" ? 2 : 6)} ${data.swap.spendSymbol}`;
 }
 
 function receiveText(data: RebalanceData | null) {
   if (!data) return "-";
   if (data.swap.direction === "unavailable") return "-";
   if (data.swap.direction === "none") return "0";
-  return `${formatAmount(data.swap.idealReceiveAmount, data.swap.receiveSymbol === "USDC" ? 2 : 6)} ${data.swap.receiveSymbol}`;
+  return `${formatPlainAmount(data.swap.idealReceiveAmount, data.swap.receiveSymbol === "USDC" ? 2 : 6)} ${data.swap.receiveSymbol}`;
 }
 
 function priceOffsetPercent(price: number | null | undefined, boundaryPrice: number | null | undefined) {
@@ -78,17 +89,32 @@ function priceOffsetPercent(price: number | null | undefined, boundaryPrice: num
   return (boundaryPrice / price - 1) * 100;
 }
 
+function readStoredRangeWidthMultiplier(): RangeWidthMultiplier {
+  if (typeof window === "undefined") return 1;
+  const stored = Number(window.localStorage.getItem(RANGE_WIDTH_STORAGE_KEY));
+  return RANGE_WIDTH_OPTIONS.some((option) => option.value === stored) ? (stored as RangeWidthMultiplier) : 1;
+}
+
 export function NarrowRangeRebalanceLive() {
+  const [rangeWidthMultiplier, setRangeWidthMultiplier] = useState<RangeWidthMultiplier>(readStoredRangeWidthMultiplier);
   const [data, setData] = useState<RebalanceData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
   useEffect(() => {
     let active = true;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const poll = async () => {
+      const controller = new AbortController();
+      const abortId = window.setTimeout(() => controller.abort(), 20_000);
+
       try {
-        const response = await fetch("/api/rebalance", { cache: "no-store" });
+        const response = await fetch(`/api/rebalance?widthMultiplier=${rangeWidthMultiplier}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal
+        });
         const payload = (await response.json()) as RebalanceData | { error?: string };
         if (!active) return;
 
@@ -99,9 +125,10 @@ export function NarrowRangeRebalanceLive() {
 
         setData(payload as RebalanceData);
         setError(null);
-      } catch {
-        if (active) setError("Unable to load rebalance");
+      } catch (requestError) {
+        if (active) setError(requestError instanceof DOMException && requestError.name === "AbortError" ? "Rebalance request timed out" : "Unable to load rebalance");
       } finally {
+        window.clearTimeout(abortId);
         if (active) timeoutId = setTimeout(poll, 60_000);
       }
     };
@@ -112,21 +139,43 @@ export function NarrowRangeRebalanceLive() {
       active = false;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, []);
+  }, [rangeWidthMultiplier]);
+
+  function selectRangeWidthMultiplier(value: RangeWidthMultiplier) {
+    setRangeWidthMultiplier(value);
+    window.localStorage.setItem(RANGE_WIDTH_STORAGE_KEY, String(value));
+  }
+
+  async function copySwapAmount() {
+    if (!data || data.swap.direction === "unavailable" || data.swap.direction === "none") return;
+    const amount = formatPlainAmount(data.swap.spendAmount, data.swap.spendSymbol === "USDC" ? 2 : 6);
+    await navigator.clipboard.writeText(amount);
+    setCopyState("copied");
+    window.setTimeout(() => setCopyState("idle"), 1200);
+  }
 
   const swapClass = useMemo(() => {
+    if (error && !data) return "bad";
     if (!data) return "";
     if (data.swap.direction === "unavailable") return "bad";
     if (data.swap.direction === "none") return "good";
     return "warn";
-  }, [data]);
+  }, [data, error]);
 
   return (
     <div className="rebalance-grid">
       <div className="rebalance-primary">
         <div className={`hero-metric ${swapClass}`}>
           <p className="metric-label">Swap</p>
-          <strong>{actionText(data)}</strong>
+          <button
+            type="button"
+            className="copy-metric"
+            disabled={!data || data.swap.direction === "unavailable" || data.swap.direction === "none"}
+            title={copyState === "copied" ? "Copied" : "Copy swap amount"}
+            onClick={copySwapAmount}
+          >
+            <strong>{actionText(data, error)}</strong>
+          </button>
           <p className="muted">Spend amount to rebalance the wallet before adding liquidity.</p>
         </div>
         <div className="hero-metric">
@@ -147,7 +196,7 @@ export function NarrowRangeRebalanceLive() {
           <strong>{formatAmount(data?.target.weth, 6)} WETH</strong>
           <span>{formatAmount(data?.target.usdc, 2)} USDC</span>
         </div>
-        <div>
+        <div className="range-metric">
           <p className="metric-label">Range</p>
           <div className="range-prices">
             <div>
@@ -156,16 +205,34 @@ export function NarrowRangeRebalanceLive() {
               <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.lowerPrice))}</small>
             </div>
             <div>
+              <span>Current price</span>
+              <strong>{formatAmount(data?.pool.price, 4)}</strong>
+              <small>0%</small>
+            </div>
+            <div>
               <span>Max price</span>
               <strong>{formatAmount(data?.pool.upperPrice, 4)}</strong>
               <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.upperPrice))}</small>
             </div>
           </div>
-          <span>{formatPercent(data?.pool.widthPercent)} width</span>
         </div>
-        <div>
-          <p className="metric-label">WETH price</p>
-          <strong>{formatUsd(data?.pool.price)}</strong>
+        <div className="range-width-metric">
+          <p className="metric-label">Width</p>
+          <div className="range-width-buttons" role="group" aria-label="Range width">
+            {RANGE_WIDTH_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={option.value === rangeWidthMultiplier ? "is-active" : undefined}
+                aria-pressed={option.value === rangeWidthMultiplier}
+                title={`${option.label}% range width`}
+                onClick={() => selectRangeWidthMultiplier(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <span>{formatPercent(data?.pool.widthPercent)} width</span>
         </div>
       </div>
 

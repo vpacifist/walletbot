@@ -6,6 +6,8 @@ import { getWalletAssetAmountsSnapshot } from "./wallet-assets";
 
 const WETH_USDC_NARROW_FEE = 3000;
 const WETH_USDC_NARROW_TICK_SPACING = 60;
+export const WETH_USDC_RANGE_WIDTH_MULTIPLIERS = [1, 2, 3, 4, 5] as const;
+export type WethUsdcRangeWidthMultiplier = (typeof WETH_USDC_RANGE_WIDTH_MULTIPLIERS)[number];
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 export type NarrowRangeRebalance = {
@@ -60,12 +62,17 @@ function priceFromTick(params: { tick: number; token0: Address; token1: Address;
   return null;
 }
 
-export function narrowTicksAround(currentTick: number) {
+export function isWethUsdcRangeWidthMultiplier(value: number): value is WethUsdcRangeWidthMultiplier {
+  return WETH_USDC_RANGE_WIDTH_MULTIPLIERS.includes(value as WethUsdcRangeWidthMultiplier);
+}
+
+export function narrowTicksAround(currentTick: number, widthMultiplier: WethUsdcRangeWidthMultiplier = 3) {
   const nearestLowerTick = Math.floor(currentTick / WETH_USDC_NARROW_TICK_SPACING) * WETH_USDC_NARROW_TICK_SPACING;
-  const lowerTick = nearestLowerTick - WETH_USDC_NARROW_TICK_SPACING;
+  const intervalsBelow = Math.floor((widthMultiplier - 1) / 2);
+  const lowerTick = nearestLowerTick - WETH_USDC_NARROW_TICK_SPACING * intervalsBelow;
   return {
     lowerTick,
-    upperTick: nearestLowerTick + WETH_USDC_NARROW_TICK_SPACING * 2
+    upperTick: lowerTick + WETH_USDC_NARROW_TICK_SPACING * widthMultiplier
   };
 }
 
@@ -167,7 +174,10 @@ export function calculateNarrowRangeRebalance(params: {
   };
 }
 
-export async function getNarrowRangeRebalance(walletAddress: Address): Promise<NarrowRangeRebalance> {
+export async function getNarrowRangeRebalance(
+  walletAddress: Address,
+  widthMultiplier: WethUsdcRangeWidthMultiplier = 1
+): Promise<NarrowRangeRebalance> {
   const client = createBaseClient();
   const [wallet, poolAddress] = await Promise.all([
     getWalletAssetAmountsSnapshot(walletAddress),
@@ -188,7 +198,7 @@ export async function getNarrowRangeRebalance(walletAddress: Address): Promise<N
   ]);
 
   const currentTick = Number(slot0[1]);
-  const { lowerTick, upperTick } = narrowTicksAround(currentTick);
+  const { lowerTick, upperTick } = narrowTicksAround(currentTick, widthMultiplier);
   const price = priceFromTick({ tick: currentTick, token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
   const lowerPrice = priceFromTick({ tick: lowerTick, token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
   const upperPrice = priceFromTick({ tick: upperTick, token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });

@@ -9,6 +9,20 @@ describe("narrow range rebalance", () => {
     });
   });
 
+  it("selects the active tick interval for the narrowest range", () => {
+    expect(narrowTicksAround(-199745, 1)).toEqual({
+      lowerTick: -199800,
+      upperTick: -199740
+    });
+  });
+
+  it("expands range width by tick-spacing intervals", () => {
+    expect(narrowTicksAround(-199745, 5)).toEqual({
+      lowerTick: -199920,
+      upperTick: -199620
+    });
+  });
+
   it("asks to swap excess WETH into USDC", () => {
     const result = calculateNarrowRangeRebalance({
       weth: 1,
