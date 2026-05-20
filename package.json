@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "worker": "tsx src/worker/index.ts",
-    "build": "prisma generate && next build",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prisma-generate-safe.ps1 -NoRestart && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
