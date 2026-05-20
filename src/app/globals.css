@@ -457,11 +457,11 @@ table {
 }
 
 .position-col-status {
-  width: 82px;
+  width: 116px;
 }
 
 .position-col-range {
-  width: 180px;
+  width: 146px;
 }
 
 .position-col-amounts {
@@ -891,12 +891,17 @@ th {
 }
 
 .status {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
   min-height: 24px;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
   background: var(--surface-2);
 }
 
