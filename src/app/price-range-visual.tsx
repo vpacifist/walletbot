@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/format";
+import { priceRangeMarkerPosition } from "@/lib/range-visual";
 
 type PriceRangeVisualProps = {
   lowerExtendedPrice: number | null;
@@ -12,14 +13,16 @@ type PriceRangeVisualProps = {
   lowerLabel: string;
   upperLabel: string;
   rangeCount: number;
-  markerPosition: number;
+  livePriceEndpoint?: string;
 };
 
 const VISUAL_HEIGHT = 72;
 const LABEL_EDGE_PADDING = 7;
 
 function priceFromPosition(position: number, lowerExtendedPrice: number, upperExtendedPrice: number) {
-  return lowerExtendedPrice + (upperExtendedPrice - lowerExtendedPrice) * (position / 100);
+  const minPrice = Math.min(lowerExtendedPrice, upperExtendedPrice);
+  const maxPrice = Math.max(lowerExtendedPrice, upperExtendedPrice);
+  return minPrice + (maxPrice - minPrice) * (position / 100);
 }
 
 function formatHoverPrice(price: number | null) {
@@ -44,19 +47,26 @@ function clampLabelTop(value: number) {
 
 export function PriceRangeVisual(props: PriceRangeVisualProps) {
   const [hoverPosition, setHoverPosition] = useState<number | null>(null);
+  const [liveCurrentPrice, setLiveCurrentPrice] = useState<number | null>(null);
   const lowerExtendedPrice = props.lowerExtendedPrice;
   const upperExtendedPrice = props.upperExtendedPrice;
+  const currentPrice = liveCurrentPrice ?? props.currentPrice;
+  const markerPosition = priceRangeMarkerPosition({
+    lowerExtendedPrice,
+    upperExtendedPrice,
+    currentPrice
+  });
   const rangeCount = Math.max(1, Math.round(props.rangeCount));
   const greyPercent = 50 / (rangeCount + 1);
   const minLabelTop = clampLabelTop(topFromBottomPercent(greyPercent));
   const maxLabelTop = clampLabelTop(topFromBottomPercent(100 - greyPercent));
   const isCurrentHover =
-    hoverPosition !== null && Math.abs(hoverPosition - props.markerPosition) <= 2 && props.currentPrice !== null;
+    hoverPosition !== null && Math.abs(hoverPosition - markerPosition) <= 2 && currentPrice !== null;
   const hoverPrice =
     hoverPosition === null
       ? null
       : isCurrentHover
-        ? props.currentPrice
+        ? currentPrice
         : lowerExtendedPrice !== null && upperExtendedPrice !== null
           ? priceFromPosition(hoverPosition, lowerExtendedPrice, upperExtendedPrice)
           : null;
@@ -75,6 +85,40 @@ export function PriceRangeVisual(props: PriceRangeVisualProps) {
       />
     );
   });
+
+  useEffect(() => {
+    const livePriceEndpoint = props.livePriceEndpoint;
+    if (!livePriceEndpoint) {
+      setLiveCurrentPrice(null);
+      return;
+    }
+
+    let active = true;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(livePriceEndpoint, { cache: "no-store", credentials: "same-origin" });
+        if (!active || !response.ok) return;
+
+        const payload = (await response.json()) as { pool?: { price?: number } };
+        const nextPrice = payload.pool?.price;
+        if (typeof nextPrice === "number" && Number.isFinite(nextPrice)) {
+          setLiveCurrentPrice(nextPrice);
+        }
+      } catch {
+      } finally {
+        if (active) timeoutId = setTimeout(poll, 60_000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      active = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [props.livePriceEndpoint]);
 
   return (
     <div className="range-visual-layout">
@@ -108,7 +152,7 @@ export function PriceRangeVisual(props: PriceRangeVisualProps) {
             <span className="range-hover-label">{formatHoverPrice(hoverPrice)}</span>
           </span>
         ) : null}
-        <span className="range-marker" style={{ bottom: `${props.markerPosition}%` }} />
+        <span className="range-marker" style={{ bottom: `${markerPosition}%` }} />
       </div>
     </div>
   );

@@ -44,11 +44,6 @@ function formatFee(fee: number) {
   return `${fee / 10000}%`;
 }
 
-function formatPrice(tick: number | null | undefined, token0: string, token1: string) {
-  if (tick === null || tick === undefined) return "-";
-  return `$${formatNumber(tickToWethUsdcPrice(tick, token0, token1), 2)}`;
-}
-
 function numberValue(value?: number | string | null) {
   if (value === undefined || value === null || value === "") return 0;
   const parsed = typeof value === "number" ? value : Number(value);
@@ -76,15 +71,6 @@ function tickSpacingForFee(fee: number) {
   if (fee === 3000) return 60;
   if (fee === 10000) return 200;
   return 1;
-}
-
-function extendedRangeMarkerPosition(tickLower: number, tickUpper: number, currentTick: number | null, tickSpacing: number) {
-  if (currentTick === null) return 50;
-  const visualLower = tickLower - tickSpacing / 2;
-  const visualUpper = tickUpper + tickSpacing / 2;
-  const visualRange = visualUpper - visualLower;
-  if (visualRange <= 0) return 50;
-  return Math.min(100, Math.max(0, ((currentTick - visualLower) / visualRange) * 100));
 }
 
 function dprDisplay(earnedUsd: number, depositUsd: number, openedAt: Date, closedAt?: Date) {
@@ -383,10 +369,30 @@ export default async function DashboardPage() {
                       position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1);
                     const tickSpacing = tickSpacingForFee(position.fee);
                     const rangeCount = Math.max(1, Math.round((position.tickUpper - position.tickLower) / tickSpacing));
-                    const lowerExtendedPrice = tickToWethUsdcPrice(position.tickLower - tickSpacing / 2, position.token0, position.token1);
-                    const lowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
-                    const upperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
-                    const upperExtendedPrice = tickToWethUsdcPrice(position.tickUpper + tickSpacing / 2, position.token0, position.token1);
+                    const tickLowerExtendedPrice = tickToWethUsdcPrice(
+                      position.tickLower - tickSpacing / 2,
+                      position.token0,
+                      position.token1
+                    );
+                    const tickLowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
+                    const tickUpperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
+                    const tickUpperExtendedPrice = tickToWethUsdcPrice(
+                      position.tickUpper + tickSpacing / 2,
+                      position.token0,
+                      position.token1
+                    );
+                    const lowerExtendedPrice =
+                      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null
+                        ? null
+                        : Math.min(tickLowerExtendedPrice, tickUpperExtendedPrice);
+                    const upperExtendedPrice =
+                      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null
+                        ? null
+                        : Math.max(tickLowerExtendedPrice, tickUpperExtendedPrice);
+                    const lowerPrice =
+                      tickLowerPrice === null || tickUpperPrice === null ? null : Math.min(tickLowerPrice, tickUpperPrice);
+                    const upperPrice =
+                      tickLowerPrice === null || tickUpperPrice === null ? null : Math.max(tickLowerPrice, tickUpperPrice);
                     const historicalPrice = closedSnapshot ? (exitHistoricalPrices[closedSnapshot.blockNumber]?.ethPriceUsd ?? currentPrice) : null;
                     const currentPositionAmounts = {
                       weth: numberValue(position.wethAmount),
@@ -405,7 +411,6 @@ export default async function DashboardPage() {
                     const hodlUsd = lpAmountValueUsd(hodlAmounts, valuationPrice);
                     const pnlUsd = displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
                     const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
-                    const markerPosition = extendedRangeMarkerPosition(position.tickLower, position.tickUpper, position.currentTick, tickSpacing);
                     const poolUrl = uniswapPoolUrl(position.poolAddress);
                     const rate =
                       depositUsd === null || earnedUsd === null
@@ -431,10 +436,10 @@ export default async function DashboardPage() {
                               upperPrice={upperPrice}
                               upperExtendedPrice={upperExtendedPrice}
                               currentPrice={currentPrice}
-                              lowerLabel={`Min ${formatPrice(position.tickLower, position.token0, position.token1)}`}
-                              upperLabel={`Max ${formatPrice(position.tickUpper, position.token0, position.token1)}`}
+                              lowerLabel={`Min ${formatUsd(lowerPrice)}`}
+                              upperLabel={`Max ${formatUsd(upperPrice)}`}
                               rangeCount={rangeCount}
-                              markerPosition={markerPosition}
+                              livePriceEndpoint={position.fee === 3000 ? "/api/rebalance?widthMultiplier=1" : undefined}
                             />
                           </div>
                         </td>
