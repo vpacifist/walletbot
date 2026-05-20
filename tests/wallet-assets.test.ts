@@ -12,6 +12,16 @@ import {
 } from "@/lib/wallet-assets";
 
 const walletAddress = "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45";
+const wethWithdrawalAbi = [
+  {
+    type: "event",
+    name: "Withdrawal",
+    inputs: [
+      { indexed: true, name: "src", type: "address" },
+      { indexed: false, name: "wad", type: "uint256" }
+    ]
+  }
+] as const;
 
 describe("wallet asset transaction states", () => {
   it("extracts whitelist token and native ETH deltas", () => {
@@ -46,6 +56,51 @@ describe("wallet asset transaction states", () => {
       aero: 15,
       eth: 1.1
     });
+  });
+
+  it("credits LP exit WETH unwraps as native ETH received by the wallet", () => {
+    const withdrawalTopics = encodeEventTopics({
+      abi: wethWithdrawalAbi,
+      eventName: "Withdrawal",
+      args: { src: CONTRACTS.nonfungiblePositionManager }
+    });
+    const walletAddressWord = walletAddress.toLowerCase().slice(2).padStart(64, "0");
+    const delta = getTransactionAssetDelta(
+      {
+        fromAddress: walletAddress,
+        toAddress: CONTRACTS.nonfungiblePositionManager,
+        type: "lp_exit",
+        tokenAmounts: [{ symbol: "USDC", amount: "0.078962", direction: "in" }],
+        raw: {
+          blockscout: {
+            value: "0",
+            decoded_input: {
+              parameters: [
+                {
+                  name: "data",
+                  value: [`0x49404b7c${"0".repeat(64)}${walletAddressWord}`]
+                }
+              ]
+            }
+          },
+          receipt: {
+            gasUsed: "0",
+            effectiveGasPrice: "0",
+            logs: [
+              {
+                address: CONTRACTS.weth,
+                data: encodeAbiParameters([{ type: "uint256" }], [parseUnits("3.5305877339550573", 18)]),
+                topics: withdrawalTopics
+              }
+            ]
+          }
+        }
+      },
+      walletAddress
+    );
+
+    expect(delta.eth).toBeCloseTo(3.5305877339550573);
+    expect(delta.usdc).toBe(0.078962);
   });
 
   it("moves LP deposits into LP balances and portfolio total", () => {

@@ -4,6 +4,17 @@ import { createBaseClient } from "./chain";
 import { CONTRACTS, TOKEN_META, WETH_USDC_FEE_TIERS } from "./constants";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const UNWRAP_WETH9_SELECTOR = "0x49404b7c";
+const wethWithdrawalAbi = [
+  {
+    type: "event",
+    name: "Withdrawal",
+    inputs: [
+      { indexed: true, name: "src", type: "address" },
+      { indexed: false, name: "wad", type: "uint256" }
+    ]
+  }
+] as const;
 const historicalPriceCache = new Map<string, Promise<number | null>>();
 const poolTokenCache = new Map<string, Promise<{ token0: Address; token1: Address }>>();
 
@@ -196,6 +207,58 @@ function gasCostWei(receipt: Record<string, unknown>) {
   }
 }
 
+function decodedMulticallBytes(blockscout: Record<string, unknown>) {
+  const decodedInput = readRawRecord(blockscout.decoded_input);
+  const parameters = Array.isArray(decodedInput.parameters) ? decodedInput.parameters : [];
+  const dataParameter = parameters.find((parameter) => {
+    if (!parameter || typeof parameter !== "object") return false;
+    return (parameter as { name?: string }).name === "data";
+  });
+
+  if (!dataParameter || typeof dataParameter !== "object") return [];
+  const value = (dataParameter as { value?: unknown }).value;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function unwrapWeth9Recipients(blockscout: Record<string, unknown>) {
+  return decodedMulticallBytes(blockscout)
+    .filter((callData) => callData.toLowerCase().startsWith(UNWRAP_WETH9_SELECTOR))
+    .map((callData) => `0x${callData.slice(-40)}`.toLowerCase());
+}
+
+function unwrappedWethAmount(transaction: TransactionAssetSource, walletAddress: Address) {
+  if (transaction.type !== "lp_exit") return 0;
+
+  const raw = readRawRecord(transaction.raw);
+  const blockscout = readRawRecord(raw.blockscout);
+  const wallet = walletAddress.toLowerCase();
+  if (!unwrapWeth9Recipients(blockscout).includes(wallet)) return 0;
+
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  let amount = 0;
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || record.address.toLowerCase() !== CONTRACTS.weth.toLowerCase()) continue;
+    if (!record.data || !record.topics) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: wethWithdrawalAbi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName === "Withdrawal") amount += toNumber(parsed.args.wad, 18);
+    } catch {
+      // Not a WETH withdrawal event.
+    }
+  }
+
+  return amount;
+}
+
 export function snapshotToAmounts(snapshot: WalletAssetSnapshot | null): WalletAssetAmounts {
   return {
     weth: snapshot?.weth.amount ?? null,
@@ -350,6 +413,7 @@ export function getTransactionAssetDelta(transaction: TransactionAssetSource, wa
     delta.eth -= nativeValue;
     delta.eth -= rawStringToEth(gasCostWei(receipt));
   }
+  delta.eth += unwrappedWethAmount(transaction, walletAddress);
 
   return delta;
 }
