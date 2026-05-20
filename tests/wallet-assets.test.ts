@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, encodeEventTopics, parseUnits } from "viem";
 import { positionManagerAbi } from "@/lib/abi";
 import { CONTRACTS } from "@/lib/constants";
-import { amountsToPortfolioSnapshot, getNextLpAssetAmounts, getTransactionAssetDelta, getTransactionLpDelta, subtractDelta } from "@/lib/wallet-assets";
+import {
+  amountsToPortfolioSnapshot,
+  getNextLpAssetAmounts,
+  getTransactionAssetDelta,
+  getTransactionLpDelta,
+  getTransactionPositionLiquidityDeltas,
+  subtractDelta
+} from "@/lib/wallet-assets";
 
 const walletAddress = "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45";
 
@@ -123,5 +130,56 @@ describe("wallet asset transaction states", () => {
         }
       )
     ).toEqual({ weth: 0, usdc: 0 });
+  });
+
+  it("extracts signed position liquidity changes from manager logs", () => {
+    const increaseTopics = encodeEventTopics({
+      abi: positionManagerAbi,
+      eventName: "IncreaseLiquidity",
+      args: { tokenId: 5151970n }
+    });
+    const decreaseTopics = encodeEventTopics({
+      abi: positionManagerAbi,
+      eventName: "DecreaseLiquidity",
+      args: { tokenId: 5151970n }
+    });
+
+    expect(
+      getTransactionPositionLiquidityDeltas({
+        fromAddress: walletAddress,
+        type: "lp_decrease",
+        tokenAmounts: [],
+        raw: {
+          receipt: {
+            logs: [
+              {
+                address: CONTRACTS.nonfungiblePositionManager,
+                data: encodeAbiParameters(
+                  [
+                    { type: "uint128" },
+                    { type: "uint256" },
+                    { type: "uint256" }
+                  ],
+                  [100n, parseUnits("1", 18), parseUnits("1000", 6)]
+                ),
+                topics: increaseTopics
+              },
+              {
+                address: CONTRACTS.nonfungiblePositionManager,
+                data: encodeAbiParameters(
+                  [
+                    { type: "uint128" },
+                    { type: "uint256" },
+                    { type: "uint256" }
+                  ],
+                  [40n, 0n, parseUnits("400", 6)]
+                ),
+                topics: decreaseTopics
+              }
+            ]
+          }
+        }
+      })
+    ).toEqual([{ tokenId: "5151970", delta: 60n }]);
   });
 });

@@ -9,9 +9,11 @@ import { readHistoricalPrices } from "@/lib/historical-prices";
 import { getUncollectedPositionFees } from "@/lib/uniswap-v3-fees";
 import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
-  getNextLpAssetAmounts,
+  addLpDelta,
   getTransactionAssetDelta,
-  getWalletAssetAmountsSnapshot,
+  getTransactionLpDelta,
+  getTransactionPositionLiquidityDeltas,
+  getWalletAssetAmountsSnapshotAtBlock,
   subtractDelta,
   type LpAssetAmounts,
   type WalletAssetAmounts
@@ -71,32 +73,64 @@ function uniswapPoolUrl(poolAddress?: string | null) {
   return poolAddress ? `https://app.uniswap.org/explore/pools/base/${poolAddress}` : undefined;
 }
 
+function aggregateLpAssetAmounts(positionLpStates: Map<string, LpAssetAmounts>) {
+  const total: LpAssetAmounts = { weth: 0, usdc: 0 };
+
+  for (const amounts of positionLpStates.values()) {
+    total.weth = (total.weth ?? 0) + (amounts.weth ?? 0);
+    total.usdc = (total.usdc ?? 0) + (amounts.usdc ?? 0);
+  }
+
+  return total;
+}
+
 export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
 
   const config = getConfig();
-  const [transactions, positions, latestRun, walletAmounts] = await Promise.all([
-    prisma.transaction.findMany({
-      orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
-      take: 80
-    }),
+  const transactions = await prisma.transaction.findMany({
+    orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
+    take: 80
+  });
+  const latestKnownBlock = transactions[0]?.blockNumber;
+  const [positions, latestRun, walletAmounts] = await Promise.all([
     prisma.position.findMany({ orderBy: { updatedAt: "desc" } }),
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    getWalletAssetAmountsSnapshot(getAddress(config.BASE_WALLET_ADDRESS)).catch(() => null)
+    getWalletAssetAmountsSnapshotAtBlock(getAddress(config.BASE_WALLET_ADDRESS), latestKnownBlock).catch(() => null)
   ]);
 
   const approvalsByTransactionId = mapApprovalsToTransactions(transactions);
   const visibleTransactions = transactions.filter((transaction) => !isApprovalTransaction(transaction));
   const transactionLpStates = new Map<string, { weth: number | null; usdc: number | null }>();
   const transactionAssetStates = new Map<string, TransactionTableRow["assets"]>();
-  let chronologicalLpAssets: LpAssetAmounts = { weth: 0, usdc: 0 };
+  const chronologicalLpAssetsByPosition = new Map<string, LpAssetAmounts>();
+  const chronologicalLiquidityByPosition = new Map<string, bigint>();
   let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
   const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
   const initialHistoricalPrices = await readHistoricalPrices(historicalPriceBlockNumbers);
 
   for (const transaction of [...transactions].reverse()) {
-    chronologicalLpAssets = getNextLpAssetAmounts(chronologicalLpAssets, transaction);
-    transactionLpStates.set(transaction.id, chronologicalLpAssets);
+    for (const liquidityDelta of getTransactionPositionLiquidityDeltas(transaction)) {
+      chronologicalLiquidityByPosition.set(
+        liquidityDelta.tokenId,
+        (chronologicalLiquidityByPosition.get(liquidityDelta.tokenId) ?? 0n) + liquidityDelta.delta
+      );
+    }
+
+    if (transaction.type === "lp_exit") {
+      chronologicalLpAssetsByPosition.clear();
+      chronologicalLiquidityByPosition.clear();
+    } else if (transaction.relatedPositionTokenId && transaction.type.startsWith("lp_") && transaction.type !== "lp_collect") {
+      const current = chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 };
+      const next = addLpDelta(current, getTransactionLpDelta(transaction));
+      const remainingLiquidity = chronologicalLiquidityByPosition.get(transaction.relatedPositionTokenId);
+      chronologicalLpAssetsByPosition.set(
+        transaction.relatedPositionTokenId,
+        remainingLiquidity !== undefined && remainingLiquidity <= 0n ? { weth: 0, usdc: 0 } : next
+      );
+    }
+
+    transactionLpStates.set(transaction.id, aggregateLpAssetAmounts(chronologicalLpAssetsByPosition));
   }
 
   for (const transaction of transactions) {
