@@ -54,11 +54,20 @@ function formatUsd(value: number | null) {
   return `$${formatNumber(value, 2)}`;
 }
 
-function rangeMarkerPosition(tickLower: number, tickUpper: number, currentTick: number | null) {
+function tickSpacingForFee(fee: number) {
+  if (fee === 500) return 10;
+  if (fee === 3000) return 60;
+  if (fee === 10000) return 200;
+  return 1;
+}
+
+function extendedRangeMarkerPosition(tickLower: number, tickUpper: number, currentTick: number | null, tickSpacing: number) {
   if (currentTick === null) return 50;
-  const range = tickUpper - tickLower;
-  if (range <= 0) return 50;
-  return Math.min(100, Math.max(0, ((currentTick - tickLower) / range) * 100));
+  const visualLower = tickLower - tickSpacing / 2;
+  const visualUpper = tickUpper + tickSpacing / 2;
+  const visualRange = visualUpper - visualLower;
+  if (visualRange <= 0) return 50;
+  return Math.min(100, Math.max(0, ((currentTick - visualLower) / visualRange) * 100));
 }
 
 function dprDisplay(earnedUsd: number, depositUsd: number, openedAt: Date) {
@@ -302,8 +311,12 @@ export default async function DashboardPage() {
                   positions.map((position) => {
                     const currentPrice =
                       position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1);
+                    const tickSpacing = tickSpacingForFee(position.fee);
+                    const rangeCount = Math.max(1, Math.round((position.tickUpper - position.tickLower) / tickSpacing));
+                    const lowerExtendedPrice = tickToWethUsdcPrice(position.tickLower - tickSpacing / 2, position.token0, position.token1);
                     const lowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
                     const upperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
+                    const upperExtendedPrice = tickToWethUsdcPrice(position.tickUpper + tickSpacing / 2, position.token0, position.token1);
                     const wethAmount = numberValue(position.wethAmount);
                     const usdcAmount = numberValue(position.usdcAmount);
                     const earned = feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
@@ -311,7 +324,7 @@ export default async function DashboardPage() {
                     const earnedUsd = currentPrice === null ? null : earned.weth * currentPrice + earned.usdc;
                     const totalUsd = depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
                     const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
-                    const markerPosition = rangeMarkerPosition(position.tickLower, position.tickUpper, position.currentTick);
+                    const markerPosition = extendedRangeMarkerPosition(position.tickLower, position.tickUpper, position.currentTick, tickSpacing);
                     const poolUrl = uniswapPoolUrl(position.poolAddress);
                     const rate = depositUsd === null || earnedUsd === null ? null : dprDisplay(earnedUsd, depositUsd, openedAt);
 
@@ -323,15 +336,16 @@ export default async function DashboardPage() {
                         </td>
                         <td>
                           <div className="price-range-cell">
-                            <div className="price-stack">
-                              <span>Max {formatPrice(position.tickUpper, position.token0, position.token1)}</span>
-                              <strong>Now {formatPrice(position.currentTick, position.token0, position.token1)}</strong>
-                              <span>Min {formatPrice(position.tickLower, position.token0, position.token1)}</span>
-                            </div>
                             <PriceRangeVisual
+                              lowerExtendedPrice={lowerExtendedPrice}
                               lowerPrice={lowerPrice}
                               upperPrice={upperPrice}
+                              upperExtendedPrice={upperExtendedPrice}
                               currentPrice={currentPrice}
+                              lowerLabel={`Min ${formatPrice(position.tickLower, position.token0, position.token1)}`}
+                              currentLabel={`Now ${formatPrice(position.currentTick, position.token0, position.token1)}`}
+                              upperLabel={`Max ${formatPrice(position.tickUpper, position.token0, position.token1)}`}
+                              rangeCount={rangeCount}
                               markerPosition={markerPosition}
                             />
                           </div>
