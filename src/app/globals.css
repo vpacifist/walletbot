@@ -346,7 +346,7 @@ input {
 
 .metric-list {
   display: grid;
-  grid-template-columns: minmax(96px, 0.65fr) minmax(132px, 0.85fr) minmax(250px, 1.35fr) minmax(218px, 1fr);
+  grid-template-columns: minmax(218px, 1fr) minmax(250px, 1.35fr) minmax(96px, 0.65fr) minmax(132px, 0.85fr);
   gap: 14px;
   border-top: 1px solid var(--border);
   padding-top: 14px;
@@ -380,6 +380,12 @@ input {
 .metric-list span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.asset-metric .metric-value {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 400;
 }
 
 .range-prices {

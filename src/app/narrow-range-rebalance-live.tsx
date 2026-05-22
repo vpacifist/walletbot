@@ -269,57 +269,6 @@ export function NarrowRangeRebalanceLive() {
       </div>
 
       <div className="metric-list">
-        <div>
-          <p className="metric-label">Wallet</p>
-          <strong>{formatAmount(data?.wallet.weth, 6)} WETH</strong>
-          <span>{formatAmount(data?.wallet.usdc, 2)} USDC</span>
-        </div>
-        <div>
-          <p className="metric-label">Target after swap</p>
-          <strong>{formatAmount(data?.target.weth, 6)} WETH</strong>
-          <span>{formatAmount(data?.target.usdc, 2)} USDC</span>
-        </div>
-        <div className="range-metric">
-          <p className="metric-label">Range</p>
-          <div className="range-prices">
-            <div>
-              <span>Min price</span>
-              <button
-                type="button"
-                className="copy-price"
-                disabled={!data}
-                title={priceCopyState === "min" ? "Copied" : "Copy min price"}
-                aria-label={priceCopyState === "min" ? "Copied min price" : "Copy min price"}
-                onClick={() => copyPrice("min")}
-              >
-                <strong>{formatPlainAmount(data?.pool.lowerPrice, 4)}</strong>
-              </button>
-              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.lowerPrice))}</small>
-            </div>
-            <div>
-              <span>Current price</span>
-              <strong>{formatPlainAmount(data?.pool.price, 4)}</strong>
-              <small>0%</small>
-            </div>
-            <div>
-              <span>Max price</span>
-              <button
-                type="button"
-                className="copy-price"
-                disabled={!data}
-                title={priceCopyState === "max" ? "Copied" : "Copy max price"}
-                aria-label={priceCopyState === "max" ? "Copied max price" : "Copy max price"}
-                onClick={() => copyPrice("max")}
-              >
-                <strong>{formatPlainAmount(data?.pool.upperPrice, 4)}</strong>
-              </button>
-              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.upperPrice))}</small>
-            </div>
-          </div>
-          <span className={`price-copy-feedback ${priceCopyState}`} aria-live="polite">
-            {priceCopyState === "failed" ? "Copy failed" : priceCopyState === "idle" ? "" : "Copied"}
-          </span>
-        </div>
         <div className="range-width-metric">
           <p className="metric-label">Width</p>
           <div className="range-scale-control">
@@ -371,6 +320,57 @@ export function NarrowRangeRebalanceLive() {
             </div>
           </div>
           <span>{formatPercent(data?.pool.widthPercent)} width</span>
+        </div>
+        <div className="range-metric">
+          <p className="metric-label">Range</p>
+          <div className="range-prices">
+            <div>
+              <span>Min price</span>
+              <button
+                type="button"
+                className="copy-price"
+                disabled={!data}
+                title={priceCopyState === "min" ? "Copied" : "Copy min price"}
+                aria-label={priceCopyState === "min" ? "Copied min price" : "Copy min price"}
+                onClick={() => copyPrice("min")}
+              >
+                <strong>{formatPlainAmount(data?.pool.lowerPrice, 4)}</strong>
+              </button>
+              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.lowerPrice))}</small>
+            </div>
+            <div>
+              <span>Current price</span>
+              <strong>{formatPlainAmount(data?.pool.price, 4)}</strong>
+              <small>0%</small>
+            </div>
+            <div>
+              <span>Max price</span>
+              <button
+                type="button"
+                className="copy-price"
+                disabled={!data}
+                title={priceCopyState === "max" ? "Copied" : "Copy max price"}
+                aria-label={priceCopyState === "max" ? "Copied max price" : "Copy max price"}
+                onClick={() => copyPrice("max")}
+              >
+                <strong>{formatPlainAmount(data?.pool.upperPrice, 4)}</strong>
+              </button>
+              <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.upperPrice))}</small>
+            </div>
+          </div>
+          <span className={`price-copy-feedback ${priceCopyState}`} aria-live="polite">
+            {priceCopyState === "failed" ? "Copy failed" : priceCopyState === "idle" ? "" : "Copied"}
+          </span>
+        </div>
+        <div className="asset-metric">
+          <p className="metric-label">Wallet</p>
+          <span className="metric-value">{formatAmount(data?.wallet.weth, 6)} WETH</span>
+          <span>{formatAmount(data?.wallet.usdc, 2)} USDC</span>
+        </div>
+        <div className="asset-metric">
+          <p className="metric-label">Target after swap</p>
+          <span className="metric-value">{formatAmount(data?.target.weth, 6)} WETH</span>
+          <span>{formatAmount(data?.target.usdc, 2)} USDC</span>
         </div>
       </div>
 
