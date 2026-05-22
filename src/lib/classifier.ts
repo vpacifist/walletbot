@@ -209,6 +209,16 @@ export function classifyTransaction(params: {
   const usdcAmount = tokenAmounts.find((amount) => amount.symbol === "USDC");
   const usdEstimate = usdcAmount?.amount;
 
+  if (params.receipt.status === "reverted") {
+    return {
+      type: TransactionType.failed,
+      status: ClassificationStatus.failed,
+      protocol: swapProtocol({ toAddress: params.toAddress, receipt: params.receipt, isUniswapV3Swap }),
+      tokenAmounts,
+      usdEstimate
+    };
+  }
+
   if (isStrategyExit(method, params.toAddress)) {
     return {
       type: TransactionType.lp_exit,

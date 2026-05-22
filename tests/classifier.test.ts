@@ -254,6 +254,24 @@ describe("classifyTransaction", () => {
     expect(result.protocol).toBe("Matcha/0x v2");
   });
 
+  it("classifies reverted wallet calls as failed instead of withdrawals", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.zeroExSettler,
+      method: "0x1fff991f",
+      receipt: {
+        status: "reverted",
+        logs: []
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.failed);
+    expect(result.status).toBe(ClassificationStatus.failed);
+    expect(result.protocol).toBe("Matcha/0x v2");
+    expect(result.tokenAmounts).toEqual([]);
+  });
+
   it("tracks AERO transfers so AERO to USDC is classified as a swap", () => {
     const result = classifyTransaction({
       walletAddress,

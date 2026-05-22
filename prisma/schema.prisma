@@ -16,12 +16,14 @@ enum TransactionType {
   lp_exit
   lp_deposit
   swap
+  failed
   unknown
 }
 
 enum ClassificationStatus {
   classified
   partial
+  failed
   unknown
 }
 
