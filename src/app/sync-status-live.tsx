@@ -26,8 +26,8 @@ function formatDate(value: string) {
 }
 
 function statusTimeLabel(run: LatestRun) {
-  if (run.status === "running") return `Started ${formatDate(run.startedAt)}`;
-  return `Updated ${formatDate(run.finishedAt ?? run.startedAt)}`;
+  if (run.status === "running") return `Sync started ${formatDate(run.startedAt)}`;
+  return `Last sync ${formatDate(run.finishedAt ?? run.startedAt)}`;
 }
 
 export function SyncStatusLive({ initialRun }: SyncStatusLiveProps) {
