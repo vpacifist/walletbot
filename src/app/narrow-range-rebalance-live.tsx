@@ -3,14 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 const RANGE_WIDTH_STORAGE_KEY = "walletbot:weth-usdc-range-width-multiplier";
-const RANGE_WIDTH_OPTIONS = [
-  { value: 1, label: "0.6" },
-  { value: 2, label: "1.2" },
-  { value: 3, label: "1.8" },
-  { value: 4, label: "2.4" },
-  { value: 5, label: "3.0" }
-] as const;
-type RangeWidthMultiplier = (typeof RANGE_WIDTH_OPTIONS)[number]["value"];
+const MAX_RANGE_EXTENSION_INTERVALS = 4;
+
+type RangeSelection = {
+  lowerExtensionIntervals: number;
+  upperExtensionIntervals: number;
+};
 
 type RebalanceData = {
   wallet: {
@@ -55,7 +53,7 @@ function formatAmount(value: number | null | undefined, digits: number) {
 
 function formatPlainAmount(value: number | null | undefined, digits: number) {
   if (value === null || value === undefined || !Number.isFinite(value)) return "-";
-  return value.toLocaleString("en-US", { maximumFractionDigits: digits, useGrouping: false });
+  return value.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: 0, useGrouping: false });
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -89,10 +87,41 @@ function priceOffsetPercent(price: number | null | undefined, boundaryPrice: num
   return (boundaryPrice / price - 1) * 100;
 }
 
-function readStoredRangeWidthMultiplier(): RangeWidthMultiplier {
-  if (typeof window === "undefined") return 1;
-  const stored = Number(window.localStorage.getItem(RANGE_WIDTH_STORAGE_KEY));
-  return RANGE_WIDTH_OPTIONS.some((option) => option.value === stored) ? (stored as RangeWidthMultiplier) : 1;
+function readStoredRangeSelection(): RangeSelection {
+  if (typeof window === "undefined") return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+  const stored = window.localStorage.getItem(RANGE_WIDTH_STORAGE_KEY);
+  if (!stored) return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<RangeSelection>;
+    const lowerExtensionIntervals = clampRangeExtension(parsed.lowerExtensionIntervals);
+    const upperExtensionIntervals = clampRangeExtension(parsed.upperExtensionIntervals);
+    return { lowerExtensionIntervals, upperExtensionIntervals };
+  } catch {
+    return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+  }
+}
+
+function clampRangeExtension(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(MAX_RANGE_EXTENSION_INTERVALS, Math.max(0, Math.round(parsed)));
+}
+
+function rangeSelectionStorageValue(selection: RangeSelection) {
+  return JSON.stringify(selection);
+}
+
+function rangeScaleSegments(selection: RangeSelection) {
+  const segments = [];
+  for (let index = MAX_RANGE_EXTENSION_INTERVALS; index > 0; index -= 1) {
+    segments.push({ key: `lower-${index}`, active: index <= selection.lowerExtensionIntervals, tone: "lower" });
+  }
+  segments.push({ key: "active", active: true, tone: "active" });
+  for (let index = 1; index <= MAX_RANGE_EXTENSION_INTERVALS; index += 1) {
+    segments.push({ key: `upper-${index}`, active: index <= selection.upperExtensionIntervals, tone: "upper" });
+  }
+  return segments;
 }
 
 async function writeClipboardText(text: string) {
@@ -120,10 +149,11 @@ async function writeClipboardText(text: string) {
 }
 
 export function NarrowRangeRebalanceLive() {
-  const [rangeWidthMultiplier, setRangeWidthMultiplier] = useState<RangeWidthMultiplier>(readStoredRangeWidthMultiplier);
+  const [rangeSelection, setRangeSelection] = useState<RangeSelection>(readStoredRangeSelection);
   const [data, setData] = useState<RebalanceData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [priceCopyState, setPriceCopyState] = useState<"idle" | "min" | "max" | "failed">("idle");
 
   useEffect(() => {
     let active = true;
@@ -134,7 +164,11 @@ export function NarrowRangeRebalanceLive() {
       const abortId = window.setTimeout(() => controller.abort(), 20_000);
 
       try {
-        const response = await fetch(`/api/rebalance?widthMultiplier=${rangeWidthMultiplier}`, {
+        const params = new URLSearchParams({
+          lowerExtensionIntervals: String(rangeSelection.lowerExtensionIntervals),
+          upperExtensionIntervals: String(rangeSelection.upperExtensionIntervals)
+        });
+        const response = await fetch(`/api/rebalance?${params.toString()}`, {
           cache: "no-store",
           credentials: "same-origin",
           signal: controller.signal
@@ -163,11 +197,22 @@ export function NarrowRangeRebalanceLive() {
       active = false;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [rangeWidthMultiplier]);
+  }, [rangeSelection]);
 
-  function selectRangeWidthMultiplier(value: RangeWidthMultiplier) {
-    setRangeWidthMultiplier(value);
-    window.localStorage.setItem(RANGE_WIDTH_STORAGE_KEY, String(value));
+  function updateRangeSelection(nextSelection: RangeSelection) {
+    const normalized = {
+      lowerExtensionIntervals: clampRangeExtension(nextSelection.lowerExtensionIntervals),
+      upperExtensionIntervals: clampRangeExtension(nextSelection.upperExtensionIntervals)
+    };
+    setRangeSelection(normalized);
+    window.localStorage.setItem(RANGE_WIDTH_STORAGE_KEY, rangeSelectionStorageValue(normalized));
+  }
+
+  function adjustRangeBoundary(boundary: "min" | "max", delta: number) {
+    updateRangeSelection({
+      lowerExtensionIntervals: rangeSelection.lowerExtensionIntervals + (boundary === "min" ? delta : 0),
+      upperExtensionIntervals: rangeSelection.upperExtensionIntervals + (boundary === "max" ? delta : 0)
+    });
   }
 
   async function copySwapAmount() {
@@ -178,6 +223,14 @@ export function NarrowRangeRebalanceLive() {
     window.setTimeout(() => setCopyState("idle"), 1200);
   }
 
+  async function copyPrice(boundary: "min" | "max") {
+    const price = boundary === "min" ? data?.pool.lowerPrice : data?.pool.upperPrice;
+    if (price === null || price === undefined || !Number.isFinite(price)) return;
+    const copied = await writeClipboardText(formatPlainAmount(price, 4));
+    setPriceCopyState(copied ? boundary : "failed");
+    window.setTimeout(() => setPriceCopyState("idle"), 1200);
+  }
+
   const swapClass = useMemo(() => {
     if (error && !data) return "bad";
     if (!data) return "";
@@ -185,6 +238,8 @@ export function NarrowRangeRebalanceLive() {
     if (data.swap.direction === "none") return "good";
     return "warn";
   }, [data, error]);
+
+  const scaleSegments = rangeScaleSegments(rangeSelection);
 
   return (
     <div className="rebalance-grid">
@@ -229,36 +284,91 @@ export function NarrowRangeRebalanceLive() {
           <div className="range-prices">
             <div>
               <span>Min price</span>
-              <strong>{formatAmount(data?.pool.lowerPrice, 4)}</strong>
+              <button
+                type="button"
+                className="copy-price"
+                disabled={!data}
+                title={priceCopyState === "min" ? "Copied" : "Copy min price"}
+                aria-label={priceCopyState === "min" ? "Copied min price" : "Copy min price"}
+                onClick={() => copyPrice("min")}
+              >
+                <strong>{formatPlainAmount(data?.pool.lowerPrice, 4)}</strong>
+              </button>
               <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.lowerPrice))}</small>
             </div>
             <div>
               <span>Current price</span>
-              <strong>{formatAmount(data?.pool.price, 4)}</strong>
+              <strong>{formatPlainAmount(data?.pool.price, 4)}</strong>
               <small>0%</small>
             </div>
             <div>
               <span>Max price</span>
-              <strong>{formatAmount(data?.pool.upperPrice, 4)}</strong>
+              <button
+                type="button"
+                className="copy-price"
+                disabled={!data}
+                title={priceCopyState === "max" ? "Copied" : "Copy max price"}
+                aria-label={priceCopyState === "max" ? "Copied max price" : "Copy max price"}
+                onClick={() => copyPrice("max")}
+              >
+                <strong>{formatPlainAmount(data?.pool.upperPrice, 4)}</strong>
+              </button>
               <small>{formatSignedPercent(priceOffsetPercent(data?.pool.price, data?.pool.upperPrice))}</small>
             </div>
           </div>
+          <span className={`price-copy-feedback ${priceCopyState}`} aria-live="polite">
+            {priceCopyState === "failed" ? "Copy failed" : priceCopyState === "idle" ? "" : "Copied"}
+          </span>
         </div>
         <div className="range-width-metric">
           <p className="metric-label">Width</p>
-          <div className="range-width-buttons" role="group" aria-label="Range width">
-            {RANGE_WIDTH_OPTIONS.map((option) => (
+          <div className="range-scale-control">
+            <div className="range-boundary-controls" role="group" aria-label="Minimum price controls">
               <button
-                key={option.value}
                 type="button"
-                className={option.value === rangeWidthMultiplier ? "is-active" : undefined}
-                aria-pressed={option.value === rangeWidthMultiplier}
-                title={`${option.label}% range width`}
-                onClick={() => selectRangeWidthMultiplier(option.value)}
+                disabled={rangeSelection.lowerExtensionIntervals >= MAX_RANGE_EXTENSION_INTERVALS}
+                title="Lower min price"
+                aria-label="Lower min price"
+                onClick={() => adjustRangeBoundary("min", 1)}
               >
-                {option.label}
+                -
               </button>
-            ))}
+              <button
+                type="button"
+                disabled={rangeSelection.lowerExtensionIntervals <= 0}
+                title="Raise min price"
+                aria-label="Raise min price"
+                onClick={() => adjustRangeBoundary("min", -1)}
+              >
+                +
+              </button>
+            </div>
+            <div className="range-scale" aria-label="Selected price range">
+              {scaleSegments.map((segment) => (
+                <span className={`${segment.active ? "is-active" : ""} ${segment.tone}`} key={segment.key} />
+              ))}
+              <span className="range-scale-current">{formatPlainAmount(data?.pool.price, 2)}</span>
+            </div>
+            <div className="range-boundary-controls" role="group" aria-label="Maximum price controls">
+              <button
+                type="button"
+                disabled={rangeSelection.upperExtensionIntervals <= 0}
+                title="Lower max price"
+                aria-label="Lower max price"
+                onClick={() => adjustRangeBoundary("max", -1)}
+              >
+                -
+              </button>
+              <button
+                type="button"
+                disabled={rangeSelection.upperExtensionIntervals >= MAX_RANGE_EXTENSION_INTERVALS}
+                title="Raise max price"
+                aria-label="Raise max price"
+                onClick={() => adjustRangeBoundary("max", 1)}
+              >
+                +
+              </button>
+            </div>
           </div>
           <span>{formatPercent(data?.pool.widthPercent)} width</span>
         </div>

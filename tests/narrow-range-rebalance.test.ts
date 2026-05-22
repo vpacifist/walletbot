@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateNarrowRangeRebalance, narrowTicksAround } from "@/lib/narrow-range-rebalance";
+import { calculateNarrowRangeRebalance, narrowTicksAround, narrowTicksFromExtensions } from "@/lib/narrow-range-rebalance";
 
 describe("narrow range rebalance", () => {
   it("selects a three-interval range around the current price interval", () => {
@@ -13,6 +13,13 @@ describe("narrow range rebalance", () => {
     expect(narrowTicksAround(-199745, 1)).toEqual({
       lowerTick: -199800,
       upperTick: -199740
+    });
+  });
+
+  it("selects independently extended min and max ticks", () => {
+    expect(narrowTicksFromExtensions(-199745, 2, 1)).toEqual({
+      lowerTick: -199920,
+      upperTick: -199680
     });
   });
 
