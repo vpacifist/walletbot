@@ -5,7 +5,7 @@ import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approva
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
-import { loadAndCacheMissingHistoricalPrices, readHistoricalPrices } from "@/lib/historical-prices";
+import { readHistoricalPrices } from "@/lib/historical-prices";
 import { getUncollectedPositionFees } from "@/lib/uniswap-v3-fees";
 import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
@@ -155,8 +155,9 @@ export default async function DashboardPage() {
   const exitBlockNumbers = transactions
     .filter((transaction) => transaction.type === "lp_exit" && transaction.relatedPositionTokenId)
     .map((transaction) => transaction.blockNumber.toString());
-  const initialHistoricalPrices = await readHistoricalPrices(historicalPriceBlockNumbers);
-  const exitHistoricalPrices = await loadAndCacheMissingHistoricalPrices(exitBlockNumbers);
+  const historicalPrices = await readHistoricalPrices([...historicalPriceBlockNumbers, ...exitBlockNumbers]);
+  const initialHistoricalPrices = historicalPrices;
+  const exitHistoricalPrices = historicalPrices;
 
   for (const transaction of transactions) {
     if (transaction.type === "lp_exit" && transaction.relatedPositionTokenId) trackedLpTokenIds.add(transaction.relatedPositionTokenId);
@@ -402,7 +403,11 @@ export default async function DashboardPage() {
                     const totalAmounts = closedSnapshot?.exitAmounts ?? currentPositionAmounts;
                     const depositAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
                     const earned = closedSnapshot?.earnedAmounts ?? feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
-                    const valuationPrice = closedSnapshot ? historicalPrice : currentPrice;
+                    const valuationPrice = closedSnapshot
+                      ? historicalPrice
+                      : latestKnownBlock
+                        ? (historicalPrices[latestKnownBlock.toString()]?.ethPriceUsd ?? currentPrice)
+                        : currentPrice;
                     const depositUsd = lpAmountValueUsd(depositAmounts, valuationPrice);
                     const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
                     const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);

@@ -39,7 +39,8 @@ function statusClass(status: string) {
 }
 
 function formatUsd(value?: number | null) {
-  if (value === undefined || value === null) return <span className="price-placeholder">loading</span>;
+  if (value === undefined) return <span className="price-placeholder">loading</span>;
+  if (value === null) return "-";
   return `$${formatNumber(value, 2)}`;
 }
 
@@ -66,7 +67,8 @@ function percentChange(current?: number | null, previous?: number | null) {
 }
 
 function formatSignedUsd(sign: string, value?: number | null) {
-  if (value === undefined || value === null) return <span className="price-placeholder">loading</span>;
+  if (value === undefined) return <span className="price-placeholder">loading</span>;
+  if (value === null) return "-";
   return `${sign}$${formatNumber(value, 2)}`;
 }
 
@@ -139,7 +141,8 @@ function assetValueUsd(
     if (prices?.aeroPriceUsd === undefined || prices.aeroPriceUsd === null) return undefined;
     return amount * prices.aeroPriceUsd;
   }
-  if (prices?.ethPriceUsd === undefined || prices.ethPriceUsd === null) return undefined;
+  if (prices?.ethPriceUsd === undefined) return undefined;
+  if (prices.ethPriceUsd === null) return null;
   return amount * prices.ethPriceUsd;
 }
 

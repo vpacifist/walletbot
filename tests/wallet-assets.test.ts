@@ -4,6 +4,7 @@ import { positionManagerAbi } from "@/lib/abi";
 import { CONTRACTS } from "@/lib/constants";
 import {
   amountsToPortfolioSnapshot,
+  executableWethSellPrice,
   getNextLpAssetAmounts,
   getTransactionAssetDelta,
   getTransactionLpDelta,
@@ -117,6 +118,11 @@ describe("wallet asset transaction states", () => {
 
     expect(getTransactionLpDelta(transaction)).toEqual({ weth: 2, usdc: 1000 });
     expect(amountsToPortfolioSnapshot({ weth: 1, usdc: 100, aero: 10, eth: 0 }, { weth: 2, usdc: 1000 }, 2000, 0.5).totalUsd).toBe(7105);
+  });
+
+  it("values WETH with an executable sell reference instead of gross pool mid", () => {
+    expect(executableWethSellPrice(2126.684630056476, 3000)).toBeCloseTo(2120.3045761663066);
+    expect(executableWethSellPrice(2122.6479671332313, 100)).toBeCloseTo(2122.435702336518);
   });
 
   it("uses Aerodrome Slipstream IncreaseLiquidity logs for strategy LP increases", () => {

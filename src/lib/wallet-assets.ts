@@ -581,6 +581,10 @@ function priceFromTick(params: { tick: number; token0: Address; token1: Address;
   return null;
 }
 
+export function executableWethSellPrice(priceUsd: number, fee: number) {
+  return priceUsd * (1 - fee / 1_000_000);
+}
+
 function getPoolTokens(address: Address, abi: typeof poolAbi | typeof slipstreamPoolAbi) {
   const key = address.toLowerCase();
   let cached = poolTokenCache.get(key);
@@ -638,11 +642,11 @@ export function getCurrentLpAssetAmounts(positions: PositionAssetSource[]): LpAs
   return lpAmounts;
 }
 
-async function getEthPriceUsd() {
-  return getMostLiquidWethUsdcPrice();
+export async function getEthPriceUsd() {
+  return getBestExecutableWethUsdcSellPrice();
 }
 
-async function getMostLiquidWethUsdcPrice(blockNumber?: bigint) {
+async function getBestExecutableWethUsdcSellPrice(blockNumber?: bigint) {
   const client = createBaseClient();
   const pools = await Promise.all(
     WETH_USDC_FEE_TIERS.map(async (fee) => ({
@@ -671,19 +675,23 @@ async function getMostLiquidWethUsdcPrice(blockNumber?: bigint) {
       })
   );
 
-  const selected = activePools.reduce<(typeof activePools)[number] | null>((best, pool) => {
-    if (!best || pool.liquidity > best.liquidity) return pool;
+  const selected = activePools.reduce<((typeof activePools)[number] & { executableSellPrice: number }) | null>((best, pool) => {
+    const tick = Number(pool.slot0[1]);
+    const price = priceFromTick({ tick, token0: pool.token0, token1: pool.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+    if (price === null) return best;
+
+    const executableSellPrice = executableWethSellPrice(price, pool.fee);
+    if (!best || executableSellPrice > best.executableSellPrice) return { ...pool, executableSellPrice };
     return best;
   }, null);
 
   if (!selected || selected.liquidity === 0n) return null;
 
-  const tick = Number(selected.slot0[1]);
-  return priceFromTick({ tick, token0: selected.token0, token1: selected.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+  return selected.executableSellPrice;
 }
 
 export async function getEthPriceUsdAtBlock(blockNumber: bigint) {
-  return getCachedHistoricalPrice(`eth:${blockNumber.toString()}`, () => getMostLiquidWethUsdcPrice(blockNumber));
+  return getCachedHistoricalPrice(`eth:${blockNumber.toString()}`, () => getBestExecutableWethUsdcSellPrice(blockNumber));
 }
 
 async function getAeroPriceUsd() {

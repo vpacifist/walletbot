@@ -31,6 +31,6 @@ export const SUPPORTED_TOKEN_SET = new Set([
   CONTRACTS.aero.toLowerCase()
 ]);
 
-export const WETH_USDC_FEE_TIERS = [500, 3000, 10000] as const;
+export const WETH_USDC_FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 export const EXPLORER_TX_URL = "https://basescan.org/tx/";

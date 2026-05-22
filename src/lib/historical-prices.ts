@@ -13,7 +13,7 @@ export type HistoricalPricesByBlock = Record<
 >;
 
 const TOKENS: HistoricalPriceToken[] = ["ETH", "AERO"];
-const PRICE_LOAD_CONCURRENCY = 6;
+const PRICE_LOAD_CONCURRENCY = 1;
 
 async function runWithConcurrency(tasks: Array<() => Promise<void>>, concurrency: number) {
   const queue = [...tasks];
@@ -92,21 +92,32 @@ export async function loadAndCacheMissingHistoricalPrices(blockNumbers: string[]
     },
     select: {
       token: true,
-      blockNumber: true
+      blockNumber: true,
+      priceUsd: true
     }
   });
-  const cachedKeys = new Set(cachedRows.map((row) => `${row.token}:${row.blockNumber.toString()}`));
+  const cachedKeys = new Set(
+    cachedRows.filter((row) => row.priceUsd !== null).map((row) => `${row.token}:${row.blockNumber.toString()}`)
+  );
 
   const tasks = uniqueBlockNumbers.flatMap((blockNumber) => {
-      const blockTasks: Array<() => Promise<void>> = [];
-      if (!cachedKeys.has(`ETH:${blockNumber.toString()}`)) {
-        blockTasks.push(() => getEthPriceUsdAtBlock(blockNumber).then((priceUsd) => cachePrice("ETH", blockNumber, priceUsd)));
-      }
-      if (!cachedKeys.has(`AERO:${blockNumber.toString()}`)) {
-        blockTasks.push(() => getAeroPriceUsdAtBlock(blockNumber).then((priceUsd) => cachePrice("AERO", blockNumber, priceUsd)));
-      }
-      return blockTasks;
-    });
+    const blockTasks: Array<() => Promise<void>> = [];
+    if (!cachedKeys.has(`ETH:${blockNumber.toString()}`)) {
+      blockTasks.push(() =>
+        getEthPriceUsdAtBlock(blockNumber).then((priceUsd) =>
+          priceUsd === null ? Promise.resolve() : cachePrice("ETH", blockNumber, priceUsd)
+        )
+      );
+    }
+    if (!cachedKeys.has(`AERO:${blockNumber.toString()}`)) {
+      blockTasks.push(() =>
+        getAeroPriceUsdAtBlock(blockNumber).then((priceUsd) =>
+          priceUsd === null ? Promise.resolve() : cachePrice("AERO", blockNumber, priceUsd)
+        )
+      );
+    }
+    return blockTasks;
+  });
 
   await runWithConcurrency(tasks, PRICE_LOAD_CONCURRENCY);
 
