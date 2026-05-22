@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EXPLORER_TX_URL } from "@/lib/constants";
 import { formatNumber, shortAddress } from "@/lib/format";
 import type { HistoricalPricesByBlock } from "@/lib/historical-prices";
+import { impliedAeroPriceUsd, portfolioTotalUsd } from "@/lib/performance";
 
 export type TransactionTableRow = {
   id: string;
@@ -85,26 +86,6 @@ function tokenAmountUsd(amount: { amount?: string; symbol?: string }, prices?: {
   return undefined;
 }
 
-function impliedAeroPriceUsd(type: string, value: unknown) {
-  if (type !== "swap") return null;
-  if (!Array.isArray(value)) return null;
-
-  let aeroAmount = 0;
-  let usdcAmount = 0;
-
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const amount = item as { amount?: string; symbol?: string };
-    const numericAmount = Number(amount.amount);
-    if (!Number.isFinite(numericAmount)) continue;
-    if (amount.symbol === "AERO") aeroAmount += Math.abs(numericAmount);
-    if (amount.symbol === "USDC") usdcAmount += Math.abs(numericAmount);
-  }
-
-  if (aeroAmount <= 0 || usdcAmount <= 0) return null;
-  return usdcAmount / aeroAmount;
-}
-
 function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
   if (!Array.isArray(value) || value.length === 0) return "-";
   const rows = value
@@ -183,21 +164,6 @@ function wethPriceCell(value?: number | null, previousValue?: number | null) {
       {change}
     </div>
   );
-}
-
-function totalUsd(row: TransactionTableRow, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
-  const values = [
-    assetValueUsd("WETH", row.assets.weth, prices),
-    assetValueUsd("USDC", row.assets.usdc, prices),
-    assetValueUsd("AERO", row.assets.aero, prices),
-    assetValueUsd("ETH", row.assets.eth, prices),
-    assetValueUsd("WETH", row.assets.lpWeth, prices),
-    assetValueUsd("USDC", row.assets.lpUsdc, prices)
-  ];
-
-  if (values.some((value) => value === undefined)) return undefined;
-  if (values.every((value) => value === null)) return null;
-  return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 }
 
 export function TransactionsTable({ rows, initialPrices }: TransactionsTableProps) {
@@ -282,8 +248,8 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
                       impliedAeroPriceUsd(previousTransaction.type, previousTransaction.tokenAmounts) ?? previousBlockPrices.aeroPriceUsd
                   }
                 : undefined;
-              const currentWalletTotal = totalUsd(transaction, transactionPrices);
-              const previousWalletTotal = previousTransaction ? totalUsd(previousTransaction, previousPrices) : null;
+              const currentWalletTotal = portfolioTotalUsd(transaction, transactionPrices);
+              const previousWalletTotal = previousTransaction ? portfolioTotalUsd(previousTransaction, previousPrices) : null;
 
               return (
                 <tr key={transaction.id}>

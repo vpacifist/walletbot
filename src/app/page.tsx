@@ -21,6 +21,8 @@ import {
   type WalletAssetAmounts
 } from "@/lib/wallet-assets";
 import { logoutAction } from "./actions";
+import { DashboardTabs } from "./dashboard-tabs";
+import { GrowthChart } from "./growth-chart";
 import { SyncNowButton } from "./sync-now-button";
 import { SyncStatusLive } from "./sync-status-live";
 import { NarrowRangeRebalanceLive } from "./narrow-range-rebalance-live";
@@ -408,62 +410,79 @@ export default async function DashboardPage() {
           </div>
         </header>
 
-        <section className="panel section overview-panel">
-          <div className="overview-main">
-            <div className="section-head">
-              <div>
-                <h2>Narrow range swap guard</h2>
-                <p className="muted">Live WETH/USDC balance target for the tight 0.3% Uniswap v3 range.</p>
+        <DashboardTabs
+          overview={
+            <section className="panel section overview-panel">
+              <div className="overview-main">
+                <div className="section-head">
+                  <div>
+                    <h2>Narrow range swap guard</h2>
+                    <p className="muted">Live WETH/USDC balance target for the tight 0.3% Uniswap v3 range.</p>
+                  </div>
+                </div>
+                <NarrowRangeRebalanceLive />
               </div>
-            </div>
-            <NarrowRangeRebalanceLive />
-          </div>
-          <aside className="overview-sync">
-            <div className="section-title-row">
-              <h2>Sync status</h2>
-              {latestRun ? (
-                <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
-              ) : (
-                <span className="status">not started</span>
-              )}
-            </div>
-            <p className="muted">Polling worker imports wallet activity and refreshes position range state.</p>
-            <SyncStatusLive
-              initialRun={
-                latestRun
-                  ? {
-                      id: latestRun.id,
-                      status: latestRun.status,
-                      startedAt: latestRun.startedAt.toISOString(),
-                      finishedAt: latestRun.finishedAt?.toISOString() ?? null,
-                      transactionsSeen: latestRun.transactionsSeen,
-                      error: latestRun.error
-                    }
-                  : null
-              }
-            />
-          </aside>
-        </section>
-
-        <section className="panel section">
-          <div className="section-head">
-            <div>
-              <h2>CL positions</h2>
-              <p className="muted">Automatically discovered Uniswap v3 WETH/USDC NFT positions.</p>
-            </div>
-          </div>
-          <PositionsTable rows={positionRows} />
-        </section>
-
-        <section className="panel section">
-          <div className="section-head">
-            <div>
-              <h2>Transactions</h2>
-              <p className="muted">Normalized investor view backed by stored raw Blockscout/RPC payloads.</p>
-            </div>
-          </div>
-          <TransactionsTable rows={transactionRows} initialPrices={initialHistoricalPrices} />
-        </section>
+              <aside className="overview-sync">
+                <div className="section-title-row">
+                  <h2>Sync status</h2>
+                  {latestRun ? (
+                    <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
+                  ) : (
+                    <span className="status">not started</span>
+                  )}
+                </div>
+                <p className="muted">Polling worker imports wallet activity and refreshes position range state.</p>
+                <SyncStatusLive
+                  initialRun={
+                    latestRun
+                      ? {
+                          id: latestRun.id,
+                          status: latestRun.status,
+                          startedAt: latestRun.startedAt.toISOString(),
+                          finishedAt: latestRun.finishedAt?.toISOString() ?? null,
+                          transactionsSeen: latestRun.transactionsSeen,
+                          error: latestRun.error
+                        }
+                      : null
+                  }
+                />
+              </aside>
+            </section>
+          }
+          performance={
+            <section className="panel section">
+              <div className="section-head">
+                <div>
+                  <h2>Growth comparison</h2>
+                  <p className="muted">Portfolio growth is neutralized for deposits and withdrawals, then compared with WETH.</p>
+                </div>
+              </div>
+              <GrowthChart rows={transactionRows} initialPrices={initialHistoricalPrices} />
+            </section>
+          }
+          positions={
+            <section className="panel section">
+              <div className="section-head">
+                <div>
+                  <h2>CL positions</h2>
+                  <p className="muted">Automatically discovered Uniswap v3 WETH/USDC NFT positions.</p>
+                </div>
+              </div>
+              <PositionsTable rows={positionRows} />
+            </section>
+          }
+          transactions={
+            <section className="panel section">
+              <div className="section-head">
+                <div>
+                  <h2>Transactions</h2>
+                  <p className="muted">Normalized investor view backed by stored raw Blockscout/RPC payloads.</p>
+                </div>
+              </div>
+              <TransactionsTable rows={transactionRows} initialPrices={initialHistoricalPrices} />
+            </section>
+          }
+        />
       </div>
     </main>
   );
