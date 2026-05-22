@@ -15,6 +15,38 @@ function runPnpmStep(label, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+function spawnPnpm(label, args) {
+  console.log(`[dev] Starting ${label}`);
+  const command = commandForPnpm(args);
+  const child = spawn(command.command, command.args, { stdio: "inherit", shell: false });
+  child.on("exit", (code, signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[dev] ${label} exited${signal ? ` with ${signal}` : ` with code ${code ?? 0}`}`);
+    stopChildren(child);
+    process.exit(code ?? (signal ? 1 : 0));
+  });
+  return child;
+}
+
+function stopProcess(child) {
+  if (child.exitCode !== null || child.killed) return;
+  if (isWindows) {
+    spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", shell: false });
+    return;
+  }
+  child.kill("SIGTERM");
+}
+
+function stopChildren(except) {
+  for (const child of children) {
+    if (child !== except) stopProcess(child);
+  }
+}
+
+let shuttingDown = false;
+const children = [];
+
 runPnpmStep("Applying database migrations", ["db:deploy"]);
 
 if (process.env.WALLETBOT_DEV_SYNC !== "0") {
@@ -23,13 +55,24 @@ if (process.env.WALLETBOT_DEV_SYNC !== "0") {
   console.log("[dev] Skipping wallet data refresh because WALLETBOT_DEV_SYNC=0");
 }
 
-const devCommand = commandForPnpm(["exec", "next", "dev", "--hostname", "127.0.0.1", "--port", "3000"]);
-const child = spawn(devCommand.command, devCommand.args, { stdio: "inherit", shell: false });
+children.push(spawnPnpm("Next dev server", ["exec", "next", "dev", "--hostname", "127.0.0.1", "--port", "3000"]));
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exit(code ?? 0);
+if (process.env.WALLETBOT_DEV_WORKER !== "0") {
+  children.push(spawnPnpm("sync worker", ["worker"]));
+} else {
+  console.log("[dev] Skipping sync worker because WALLETBOT_DEV_WORKER=0");
+}
+
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopChildren();
+  process.exit(0);
+};
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+
+process.once("exit", () => {
+  stopChildren();
 });
