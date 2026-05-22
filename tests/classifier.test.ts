@@ -364,7 +364,7 @@ describe("classifyTransaction", () => {
 
     expect(result.type).toBe(TransactionType.swap);
     expect(result.status).toBe(ClassificationStatus.classified);
-    expect(result.protocol).toBe("Velora/ParaSwap");
+    expect(result.protocol).toBe("Velora / ParaSwap");
   });
 
   it("classifies Aerodrome Slipstream strategy increases as LP increases", () => {

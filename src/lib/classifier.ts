@@ -186,7 +186,7 @@ function swapProtocol(params: {
     return "Odos";
   }
   if (sameAddress(params.toAddress, CONTRACTS.veloraAugustusV6) || hasLogFromAddress(params.receipt, CONTRACTS.veloraAugustusV6)) {
-    return "Velora/ParaSwap";
+    return "Velora / ParaSwap";
   }
   if (params.isUniswapV3Swap) return "Uniswap v3";
 
