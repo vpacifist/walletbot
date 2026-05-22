@@ -23,7 +23,7 @@ import { logoutAction } from "./actions";
 import { SyncNowButton } from "./sync-now-button";
 import { SyncStatusLive } from "./sync-status-live";
 import { NarrowRangeRebalanceLive } from "./narrow-range-rebalance-live";
-import { PriceRangeVisual } from "./price-range-visual";
+import { PositionsTable, type PositionTableRow } from "./positions-table";
 import { TransactionsTable, type TransactionTableRow } from "./transactions-table";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +79,33 @@ function dprDisplay(earnedUsd: number, depositUsd: number, openedAt: Date, close
   const dpr = (earnedUsd / depositUsd / elapsedDays) * 100;
   const apr = dpr * 365;
   return { dpr: `${formatNumber(dpr, 3)}%`, apr: `APR ${formatNumber(apr, 2)}%` };
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function shortDate(date: Date, includeYear: boolean) {
+  const month = date.toLocaleString("en-US", { month: "short" }).toLowerCase();
+  return `${date.getDate()} ${month}${includeYear ? ` ${date.getFullYear()}` : ""}`;
+}
+
+function positionDateRange(openedAt: Date, closedAt?: Date) {
+  const endAt = closedAt ?? new Date();
+  if (dateKey(openedAt) === dateKey(endAt)) return shortDate(openedAt, true);
+
+  const sameMonth = openedAt.getFullYear() === endAt.getFullYear() && openedAt.getMonth() === endAt.getMonth();
+  if (sameMonth) return `${openedAt.getDate()}–${shortDate(endAt, true)}`;
+
+  return `${shortDate(openedAt, openedAt.getFullYear() !== endAt.getFullYear())}–${shortDate(endAt, true)}`;
+}
+
+function timeInRange(openedAt: Date, closedAt?: Date) {
+  const endAt = closedAt ?? new Date();
+  const totalMinutes = Math.max(0, Math.floor((endAt.getTime() - openedAt.getTime()) / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h${minutes}m`;
 }
 
 function uniswapPoolUrl(poolAddress?: string | null) {
@@ -263,6 +290,101 @@ export default async function DashboardPage() {
     )
   );
 
+  const positionRows: PositionTableRow[] = positions.map((position) => {
+    const closedSnapshot = closedSnapshotsByTokenId.get(position.tokenId);
+    const isClosed = position.status === "closed_or_zero_liquidity";
+    const currentPrice =
+      position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1);
+    const tickSpacing = tickSpacingForFee(position.fee);
+    const rangeCount = Math.max(1, Math.round((position.tickUpper - position.tickLower) / tickSpacing));
+    const tickLowerExtendedPrice = tickToWethUsdcPrice(position.tickLower - tickSpacing / 2, position.token0, position.token1);
+    const tickLowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
+    const tickUpperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
+    const tickUpperExtendedPrice = tickToWethUsdcPrice(position.tickUpper + tickSpacing / 2, position.token0, position.token1);
+    const lowerExtendedPrice =
+      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null ? null : Math.min(tickLowerExtendedPrice, tickUpperExtendedPrice);
+    const upperExtendedPrice =
+      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null ? null : Math.max(tickLowerExtendedPrice, tickUpperExtendedPrice);
+    const lowerPrice = tickLowerPrice === null || tickUpperPrice === null ? null : Math.min(tickLowerPrice, tickUpperPrice);
+    const upperPrice = tickLowerPrice === null || tickUpperPrice === null ? null : Math.max(tickLowerPrice, tickUpperPrice);
+    const historicalPrice = closedSnapshot ? (exitHistoricalPrices[closedSnapshot.blockNumber]?.ethPriceUsd ?? currentPrice) : null;
+    const currentPositionAmounts = {
+      weth: numberValue(position.wethAmount),
+      usdc: numberValue(position.usdcAmount)
+    };
+    const displayAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
+    const totalAmounts = closedSnapshot?.exitAmounts ?? currentPositionAmounts;
+    const depositAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
+    const earned = closedSnapshot?.earnedAmounts ?? feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
+    const valuationPrice = closedSnapshot
+      ? historicalPrice
+      : latestKnownBlock
+        ? (historicalPrices[latestKnownBlock.toString()]?.ethPriceUsd ?? currentPrice)
+        : currentPrice;
+    const depositUsd = lpAmountValueUsd(depositAmounts, valuationPrice);
+    const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
+    const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);
+    const displayedTotalUsd = closedSnapshot ? totalUsd : depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
+    const hodlAmounts = closedSnapshot?.hodlAmounts ?? chronologicalLpAssetsByPosition.get(position.tokenId) ?? depositAmounts;
+    const hodlUsd = lpAmountValueUsd(hodlAmounts, valuationPrice);
+    const pnlUsd = displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
+    const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
+    const poolUrl = uniswapPoolUrl(position.poolAddress);
+    const rate = depositUsd === null || earnedUsd === null ? null : dprDisplay(earnedUsd, depositUsd, openedAt, closedSnapshot?.closedAt);
+
+    return {
+      id: position.id,
+      tokenId: position.tokenId,
+      status: position.status,
+      statusClassName: statusClass(position.status),
+      statusLabel: statusLabel(position.status),
+      isClosed,
+      date: positionDateRange(openedAt, closedSnapshot?.closedAt),
+      timeInRange: timeInRange(openedAt, closedSnapshot?.closedAt),
+      priceRange: {
+        lowerExtendedPrice,
+        lowerPrice,
+        upperPrice,
+        upperExtendedPrice,
+        currentPrice,
+        lowerLabel: `Min ${formatUsd(lowerPrice)}`,
+        upperLabel: `Max ${formatUsd(upperPrice)}`,
+        rangeCount,
+        livePriceEndpoint: position.fee === 3000 ? "/api/rebalance?widthMultiplier=1" : undefined
+      },
+      positionAmounts: {
+        weth: formatNumber(displayAmounts.weth, 6),
+        usdc: formatNumber(displayAmounts.usdc, 2),
+        note: isClosed ? "at close" : null
+      },
+      deposit: {
+        total: formatUsd(depositUsd),
+        wethUsd: formatUsd(valuationPrice === null ? null : (depositAmounts.weth ?? 0) * valuationPrice),
+        usdcUsd: formatUsd(depositAmounts.usdc ?? 0),
+        note: isClosed ? "at close" : null
+      },
+      earned: {
+        total: formatUsd(earnedUsd),
+        weth: formatNumber(earned.weth, 6),
+        usdc: formatNumber(earned.usdc, 2),
+        note: isClosed ? "realized" : null
+      },
+      total: formatUsd(displayedTotalUsd),
+      totalNote: isClosed ? "at close" : null,
+      dpr: rate,
+      pnl: {
+        value: formatSignedUsd(pnlUsd),
+        className: pnlClass(pnlUsd),
+        note: "vs hold"
+      },
+      pool: {
+        fee: formatFee(position.fee),
+        address: shortAddress(position.poolAddress),
+        url: poolUrl ?? null
+      }
+    };
+  });
+
   return (
     <main className="page">
       <div className="shell">
@@ -329,200 +451,7 @@ export default async function DashboardPage() {
               <p className="muted">Automatically discovered Uniswap v3 WETH/USDC NFT positions.</p>
             </div>
           </div>
-          <div className="table-wrap">
-            <table className="positions-table">
-              <colgroup>
-                <col className="position-col-token" />
-                <col className="position-col-status" />
-                <col className="position-col-range" />
-                <col className="position-col-amounts" />
-                <col className="position-col-deposit" />
-                <col className="position-col-earned" />
-                <col className="position-col-total" />
-                <col className="position-col-dpr" />
-                <col className="position-col-pnl" />
-                <col className="position-col-pool" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Token ID</th>
-                  <th>Status</th>
-                  <th>Price range</th>
-                  <th>Position</th>
-                  <th>Deposit</th>
-                  <th>Earned</th>
-                  <th>Total</th>
-                  <th>DPR</th>
-                  <th>PnL</th>
-                  <th>Pool</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.length === 0 ? (
-                  <tr>
-                    <td colSpan={10}>No positions found yet.</td>
-                  </tr>
-                ) : (
-                  positions.map((position) => {
-                    const closedSnapshot = closedSnapshotsByTokenId.get(position.tokenId);
-                    const isClosed = position.status === "closed_or_zero_liquidity";
-                    const currentPrice =
-                      position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1);
-                    const tickSpacing = tickSpacingForFee(position.fee);
-                    const rangeCount = Math.max(1, Math.round((position.tickUpper - position.tickLower) / tickSpacing));
-                    const tickLowerExtendedPrice = tickToWethUsdcPrice(
-                      position.tickLower - tickSpacing / 2,
-                      position.token0,
-                      position.token1
-                    );
-                    const tickLowerPrice = tickToWethUsdcPrice(position.tickLower, position.token0, position.token1);
-                    const tickUpperPrice = tickToWethUsdcPrice(position.tickUpper, position.token0, position.token1);
-                    const tickUpperExtendedPrice = tickToWethUsdcPrice(
-                      position.tickUpper + tickSpacing / 2,
-                      position.token0,
-                      position.token1
-                    );
-                    const lowerExtendedPrice =
-                      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null
-                        ? null
-                        : Math.min(tickLowerExtendedPrice, tickUpperExtendedPrice);
-                    const upperExtendedPrice =
-                      tickLowerExtendedPrice === null || tickUpperExtendedPrice === null
-                        ? null
-                        : Math.max(tickLowerExtendedPrice, tickUpperExtendedPrice);
-                    const lowerPrice =
-                      tickLowerPrice === null || tickUpperPrice === null ? null : Math.min(tickLowerPrice, tickUpperPrice);
-                    const upperPrice =
-                      tickLowerPrice === null || tickUpperPrice === null ? null : Math.max(tickLowerPrice, tickUpperPrice);
-                    const historicalPrice = closedSnapshot ? (exitHistoricalPrices[closedSnapshot.blockNumber]?.ethPriceUsd ?? currentPrice) : null;
-                    const currentPositionAmounts = {
-                      weth: numberValue(position.wethAmount),
-                      usdc: numberValue(position.usdcAmount)
-                    };
-                    const displayAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
-                    const totalAmounts = closedSnapshot?.exitAmounts ?? currentPositionAmounts;
-                    const depositAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
-                    const earned = closedSnapshot?.earnedAmounts ?? feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
-                    const valuationPrice = closedSnapshot
-                      ? historicalPrice
-                      : latestKnownBlock
-                        ? (historicalPrices[latestKnownBlock.toString()]?.ethPriceUsd ?? currentPrice)
-                        : currentPrice;
-                    const depositUsd = lpAmountValueUsd(depositAmounts, valuationPrice);
-                    const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
-                    const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);
-                    const displayedTotalUsd = closedSnapshot ? totalUsd : depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
-                    const hodlAmounts = closedSnapshot?.hodlAmounts ?? chronologicalLpAssetsByPosition.get(position.tokenId) ?? depositAmounts;
-                    const hodlUsd = lpAmountValueUsd(hodlAmounts, valuationPrice);
-                    const pnlUsd = displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
-                    const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
-                    const poolUrl = uniswapPoolUrl(position.poolAddress);
-                    const rate =
-                      depositUsd === null || earnedUsd === null
-                        ? null
-                        : dprDisplay(earnedUsd, depositUsd, openedAt, closedSnapshot?.closedAt);
-
-                    return (
-                      <tr className={isClosed ? "position-row-closed" : undefined} key={position.id}>
-                        <td>
-                          <div className="token-cell">
-                            <span>#{position.tokenId}</span>
-                            {isClosed ? <span className="status historical">historical</span> : null}
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`status ${statusClass(position.status)}`}>{statusLabel(position.status)}</span>
-                        </td>
-                        <td>
-                          <div className="price-range-cell">
-                            <PriceRangeVisual
-                              lowerExtendedPrice={lowerExtendedPrice}
-                              lowerPrice={lowerPrice}
-                              upperPrice={upperPrice}
-                              upperExtendedPrice={upperExtendedPrice}
-                              currentPrice={currentPrice}
-                              lowerLabel={`Min ${formatUsd(lowerPrice)}`}
-                              upperLabel={`Max ${formatUsd(upperPrice)}`}
-                              rangeCount={rangeCount}
-                              livePriceEndpoint={position.fee === 3000 ? "/api/rebalance?widthMultiplier=1" : undefined}
-                            />
-                          </div>
-                        </td>
-                        <td>
-                          <div className="asset-cell position-amounts">
-                            <span>{formatNumber(displayAmounts.weth, 6)} WETH</span>
-                            <span>{formatNumber(displayAmounts.usdc, 2)} USDC</span>
-                            {isClosed ? <span className="historical-note">at close</span> : null}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="asset-cell deposit-cell">
-                            <strong>{formatUsd(depositUsd)}</strong>
-                            <span className="deposit-parts">
-                              <span>{formatUsd(valuationPrice === null ? null : (depositAmounts.weth ?? 0) * valuationPrice)}</span>
-                              <span>+ {formatUsd(depositAmounts.usdc ?? 0)}</span>
-                              {isClosed ? <span className="historical-note">at close</span> : null}
-                            </span>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="asset-cell">
-                            <strong>{formatUsd(earnedUsd)}</strong>
-                            {isClosed ? (
-                              <>
-                                <span>{formatNumber(earned.weth, 6)} WETH</span>
-                                <span>{formatNumber(earned.usdc, 2)} USDC</span>
-                                <span className="historical-note">realized</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>{formatNumber(earned.weth, 6)} WETH</span>
-                                <span>{formatNumber(earned.usdc, 2)} USDC</span>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="asset-cell">
-                            <strong className="total-cell">{formatUsd(displayedTotalUsd)}</strong>
-                            {isClosed ? <span className="historical-note">at close</span> : null}
-                          </div>
-                        </td>
-                        <td>
-                          {rate ? (
-                            <span className="dpr-cell">
-                              <span>{rate.dpr}</span>
-                              <span>{rate.apr}</span>
-                            </span>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td>
-                          <div className={`asset-cell pnl-cell ${pnlClass(pnlUsd)}`}>
-                            <strong>{formatSignedUsd(pnlUsd)}</strong>
-                            <span>vs hold</span>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="pool-cell">
-                            <strong>{formatFee(position.fee)}</strong>
-                            {poolUrl ? (
-                              <a className="pool-link" href={poolUrl} target="_blank" rel="noreferrer">
-                                {shortAddress(position.poolAddress)}
-                              </a>
-                            ) : (
-                              <span>{shortAddress(position.poolAddress)}</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+          <PositionsTable rows={positionRows} />
         </section>
 
         <section className="panel section">

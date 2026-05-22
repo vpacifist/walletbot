@@ -12,6 +12,7 @@
   --warning: #b06400;
   --shadow: 0 18px 45px rgba(24, 32, 27, 0.08);
   --shell-width: 1180px;
+  --positions-width: 1320px;
   --transactions-width: 1560px;
 }
 
@@ -45,9 +46,15 @@ input {
   margin: 0 auto;
 }
 
-.section:has(.transactions-wrap) {
-  margin-left: min(0px, calc((var(--shell-width) - min(var(--transactions-width), calc(100vw - 56px))) / 2));
-  margin-right: min(0px, calc((var(--shell-width) - min(var(--transactions-width), calc(100vw - 56px))) / 2));
+.section:has(.transactions-wrap),
+.section:has(.positions-wrap) {
+  --wide-table-width: var(--transactions-width);
+  margin-left: min(0px, calc((var(--shell-width) - min(var(--wide-table-width), calc(100vw - 56px))) / 2));
+  margin-right: min(0px, calc((var(--shell-width) - min(var(--wide-table-width), calc(100vw - 56px))) / 2));
+}
+
+.section:has(.positions-wrap) {
+  --wide-table-width: var(--positions-width);
 }
 
 .topbar {
@@ -534,7 +541,8 @@ input {
   overflow: auto;
 }
 
-.transactions-wrap {
+.transactions-wrap,
+.positions-wrap {
   max-height: min(68vh, 760px);
   border-top: 1px solid var(--border);
 }
@@ -546,16 +554,25 @@ table {
 }
 
 .positions-table {
-  min-width: 1048px;
+  width: var(--positions-width);
+  min-width: 1300px;
   table-layout: fixed;
 }
 
 .position-col-token {
-  width: 78px;
+  width: 92px;
 }
 
 .position-col-status {
   width: 116px;
+}
+
+.position-col-date {
+  width: 118px;
+}
+
+.position-col-time-range {
+  width: 100px;
 }
 
 .position-col-range {
@@ -617,6 +634,28 @@ td {
   border-right: 1px solid #cdd4cb;
 }
 
+.position-row-collapsible {
+  cursor: pointer;
+}
+
+.position-row-collapsible:focus-visible td {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.position-row-collapsible:not(.is-expanded) .position-full-cell > * {
+  display: none;
+}
+
+.position-row-collapsible:not(.is-expanded) .position-detail-lines,
+.position-row-collapsible:not(.is-expanded) .dpr-cell span:last-child,
+.position-row-collapsible:not(.is-expanded) .pnl-cell span,
+.position-row-collapsible:not(.is-expanded) .pool-cell span,
+.position-row-collapsible:not(.is-expanded) .pool-link,
+.position-row-collapsible:not(.is-expanded) .total-cell + .historical-note {
+  display: none;
+}
+
 .asset-cell {
   display: grid;
   gap: 3px;
@@ -627,6 +666,31 @@ td {
   display: grid;
   justify-items: start;
   gap: 5px;
+}
+
+.token-id-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.row-expand-marker {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--muted);
+  transition: transform 0.16s ease;
+}
+
+.position-row-collapsible.is-expanded .row-expand-marker {
+  transform: rotate(90deg);
+}
+
+.position-date-cell,
+.position-time-range-cell {
+  white-space: nowrap;
 }
 
 .price-stack,
@@ -984,7 +1048,8 @@ th {
   letter-spacing: 0;
 }
 
-.transactions-table th {
+.transactions-table th,
+.positions-table th {
   position: sticky;
   top: 0;
   z-index: 1;
