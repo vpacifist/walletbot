@@ -338,6 +338,35 @@ describe("classifyTransaction", () => {
     ]);
   });
 
+  it("classifies swaps sent through Velora Augustus V6", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.veloraAugustusV6,
+      method: "swapExactAmountIn",
+      receipt: {
+        logs: [
+          transferLog({
+            token: CONTRACTS.weth,
+            from: walletAddress,
+            to: CONTRACTS.veloraAugustusV6,
+            value: parseUnits("0.054401868321561382", 18)
+          }),
+          transferLog({
+            token: CONTRACTS.usdc,
+            from: CONTRACTS.veloraAugustusV6,
+            to: walletAddress,
+            value: parseUnits("115.830019", 6)
+          })
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.swap);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("Velora/ParaSwap");
+  });
+
   it("classifies Aerodrome Slipstream strategy increases as LP increases", () => {
     const result = classifyTransaction({
       walletAddress,

@@ -185,6 +185,9 @@ function swapProtocol(params: {
   if (sameAddress(params.toAddress, CONTRACTS.odosSmartOrderRouterV3) || hasLogFromAddress(params.receipt, CONTRACTS.odosSmartOrderRouterV3)) {
     return "Odos";
   }
+  if (sameAddress(params.toAddress, CONTRACTS.veloraAugustusV6) || hasLogFromAddress(params.receipt, CONTRACTS.veloraAugustusV6)) {
+    return "Velora/ParaSwap";
+  }
   if (params.isUniswapV3Swap) return "Uniswap v3";
 
   return "unknown";
