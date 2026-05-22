@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
 import { readHistoricalPrices } from "@/lib/historical-prices";
+import { sortPositionsForDisplay } from "@/lib/position-order";
 import { getUncollectedPositionFees } from "@/lib/uniswap-v3-fees";
 import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
@@ -164,7 +165,7 @@ export default async function DashboardPage() {
   });
   const latestKnownBlock = transactions[0]?.blockNumber;
   const [positions, latestRun, walletAmounts] = await Promise.all([
-    prisma.position.findMany({ orderBy: { updatedAt: "desc" } }),
+    prisma.position.findMany({ orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] }).then(sortPositionsForDisplay),
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
     getWalletAssetAmountsSnapshotAtBlock(getAddress(config.BASE_WALLET_ADDRESS), latestKnownBlock).catch(() => null)
   ]);
