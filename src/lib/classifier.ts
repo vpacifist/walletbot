@@ -4,6 +4,17 @@ import { erc20Abi, poolAbi, positionManagerAbi } from "./abi";
 import { CONTRACTS, SUPPORTED_TOKEN_SET, TOKEN_META } from "./constants";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const UNWRAP_WETH9_SELECTOR = "0x49404b7c";
+const wethWithdrawalAbi = [
+  {
+    type: "event",
+    name: "Withdrawal",
+    inputs: [
+      { indexed: true, name: "src", type: "address" },
+      { indexed: false, name: "wad", type: "uint256" }
+    ]
+  }
+] as const;
 
 export type TokenAmount = {
   token: string;
@@ -131,6 +142,89 @@ function extractTokenAmounts(receipt: TransactionReceipt, walletAddress: Address
     });
 }
 
+function nativeEthTokenAmount(params: { valueWei?: string | null; fromWallet: boolean; toWallet: boolean }): TokenAmount | null {
+  if (!params.valueWei) return null;
+
+  try {
+    const value = BigInt(params.valueWei);
+    if (value === 0n) return null;
+
+    return {
+      token: ZERO_ADDRESS,
+      symbol: "ETH",
+      rawAmount: value.toString(),
+      amount: formatUnits(value, 18),
+      direction: params.toWallet ? "in" : "out"
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readRawRecord(value: unknown) {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function decodedMulticallBytes(blockscout: Record<string, unknown>) {
+  const decodedInput = readRawRecord(blockscout.decoded_input);
+  const parameters = Array.isArray(decodedInput.parameters) ? decodedInput.parameters : [];
+  const dataParameter = parameters.find((parameter) => {
+    if (!parameter || typeof parameter !== "object") return false;
+    return (parameter as { name?: string }).name === "data";
+  });
+
+  if (!dataParameter || typeof dataParameter !== "object") return [];
+  const value = (dataParameter as { value?: unknown }).value;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function unwrapWeth9Recipients(blockscout: Record<string, unknown>) {
+  return decodedMulticallBytes(blockscout)
+    .filter((callData) => callData.toLowerCase().startsWith(UNWRAP_WETH9_SELECTOR))
+    .map((callData) => `0x${callData.slice(-40)}`.toLowerCase());
+}
+
+function extractNativeEthFromWethWithdrawals(params: {
+  receipt: TransactionReceipt;
+  walletAddress: Address;
+  blockscout?: unknown;
+}): TokenAmount[] {
+  const wallet = params.walletAddress.toLowerCase();
+  const blockscout = readRawRecord(params.blockscout);
+  const sawUnwrapToWallet = unwrapWeth9Recipients(blockscout).includes(wallet);
+  let amount = 0n;
+
+  for (const log of params.receipt.logs) {
+    if (log.address.toLowerCase() !== CONTRACTS.weth.toLowerCase()) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: wethWithdrawalAbi,
+        data: log.data,
+        topics: log.topics
+      });
+
+      if (parsed.eventName === "Withdrawal" && (parsed.args.src.toLowerCase() === wallet || sawUnwrapToWallet)) {
+        amount += parsed.args.wad;
+      }
+    } catch {
+      // Not a WETH withdrawal event.
+    }
+  }
+
+  if (amount === 0n) return [];
+
+  return [
+    {
+      token: ZERO_ADDRESS,
+      symbol: "ETH",
+      rawAmount: amount.toString(),
+      amount: formatUnits(amount, 18),
+      direction: "in"
+    }
+  ];
+}
+
 function hasUniswapV3SwapEvent(receipt: TransactionReceipt, poolAddresses?: ReadonlySet<string>) {
   if (!poolAddresses || poolAddresses.size === 0) return false;
 
@@ -170,6 +264,9 @@ function swapProtocol(params: {
   receipt: TransactionReceipt;
   isUniswapV3Swap: boolean;
 }) {
+  if (sameAddress(params.toAddress, CONTRACTS.weth)) {
+    return "WETH";
+  }
   if (sameAddress(params.toAddress, CONTRACTS.zeroExSettler) || hasLogFromAddress(params.receipt, CONTRACTS.zeroExSettler)) {
     return "Matcha/0x v2";
   }
@@ -198,16 +295,21 @@ export function classifyTransaction(params: {
   fromAddress: Address;
   toAddress?: Address | null;
   method?: string | null;
+  nativeValueWei?: string | null;
+  blockscout?: unknown;
   receipt: TransactionReceipt;
   uniswapV3PoolAddresses?: ReadonlySet<string>;
 }): ClassificationResult {
   const lpEvent = classifyByPositionManagerEvents(params.receipt);
-  const tokenAmounts = extractTokenAmounts(params.receipt, params.walletAddress);
   const isUniswapV3Swap = hasUniswapV3SwapEvent(params.receipt, params.uniswapV3PoolAddresses);
   const lowerWallet = params.walletAddress.toLowerCase();
   const fromWallet = params.fromAddress.toLowerCase() === lowerWallet;
   const toWallet = params.toAddress?.toLowerCase() === lowerWallet;
   const method = params.method?.toLowerCase();
+  const tokenAmounts = extractTokenAmounts(params.receipt, params.walletAddress);
+  const nativeAmount = nativeEthTokenAmount({ valueWei: params.nativeValueWei, fromWallet, toWallet });
+  if (nativeAmount && (fromWallet || toWallet)) tokenAmounts.push(nativeAmount);
+  tokenAmounts.push(...extractNativeEthFromWethWithdrawals({ receipt: params.receipt, walletAddress: params.walletAddress, blockscout: params.blockscout }));
 
   const usdcAmount = tokenAmounts.find((amount) => amount.symbol === "USDC");
   const usdEstimate = usdcAmount?.amount;

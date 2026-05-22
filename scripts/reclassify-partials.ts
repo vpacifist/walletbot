@@ -7,7 +7,7 @@ import { applyPositionLifecycleClassification } from "../src/lib/lp-lifecycle";
 import { getWethUsdcUniswapV3PoolAddresses } from "../src/lib/uniswap-v3";
 
 type RawRecord = {
-  blockscout?: { method?: string | null };
+  blockscout?: { method?: string | null; value?: string | null };
   receipt?: unknown;
 };
 
@@ -43,6 +43,8 @@ async function main() {
       fromAddress: getAddress(transaction.fromAddress),
       toAddress: transaction.toAddress ? getAddress(transaction.toAddress) : null,
       method: raw.blockscout?.method,
+      nativeValueWei: raw.blockscout?.value,
+      blockscout: raw.blockscout,
       receipt: raw.receipt as never,
       uniswapV3PoolAddresses
     });

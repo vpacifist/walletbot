@@ -57,6 +57,8 @@ export async function syncWalletOnce() {
         fromAddress,
         toAddress,
         method: tx.method,
+        nativeValueWei: tx.value,
+        blockscout: tx,
         receipt,
         uniswapV3PoolAddresses
       });

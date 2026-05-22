@@ -104,6 +104,50 @@ describe("wallet asset transaction states", () => {
     expect(delta.usdc).toBe(0.078962);
   });
 
+  it("credits LP decrease WETH unwraps as native ETH received by the wallet", () => {
+    const withdrawalTopics = encodeEventTopics({
+      abi: wethWithdrawalAbi,
+      eventName: "Withdrawal",
+      args: { src: CONTRACTS.nonfungiblePositionManager }
+    });
+    const walletAddressWord = walletAddress.toLowerCase().slice(2).padStart(64, "0");
+    const delta = getTransactionAssetDelta(
+      {
+        fromAddress: walletAddress,
+        toAddress: CONTRACTS.nonfungiblePositionManager,
+        type: "lp_decrease",
+        tokenAmounts: [],
+        raw: {
+          blockscout: {
+            value: "0",
+            decoded_input: {
+              parameters: [
+                {
+                  name: "data",
+                  value: [`0x49404b7c${"0".repeat(64)}${walletAddressWord}`]
+                }
+              ]
+            }
+          },
+          receipt: {
+            gasUsed: "0",
+            effectiveGasPrice: "0",
+            logs: [
+              {
+                address: CONTRACTS.weth,
+                data: encodeAbiParameters([{ type: "uint256" }], [parseUnits("3.5305877339550573", 18)]),
+                topics: withdrawalTopics
+              }
+            ]
+          }
+        }
+      },
+      walletAddress
+    );
+
+    expect(delta.eth).toBeCloseTo(3.5305877339550573);
+  });
+
   it("moves LP deposits into LP balances and portfolio total", () => {
     const transaction = {
       fromAddress: walletAddress,

@@ -227,12 +227,10 @@ function unwrapWeth9Recipients(blockscout: Record<string, unknown>) {
 }
 
 function unwrappedWethAmount(transaction: TransactionAssetSource, walletAddress: Address) {
-  if (transaction.type !== "lp_exit") return 0;
-
   const raw = readRawRecord(transaction.raw);
   const blockscout = readRawRecord(raw.blockscout);
   const wallet = walletAddress.toLowerCase();
-  if (!unwrapWeth9Recipients(blockscout).includes(wallet)) return 0;
+  const isLpUnwrapToWallet = transaction.type?.startsWith("lp_") && unwrapWeth9Recipients(blockscout).includes(wallet);
 
   const receipt = readRawRecord(raw.receipt);
   const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
@@ -250,7 +248,9 @@ function unwrappedWethAmount(transaction: TransactionAssetSource, walletAddress:
         data: record.data,
         topics: record.topics
       });
-      if (parsed.eventName === "Withdrawal") amount += toNumber(parsed.args.wad, 18);
+      if (parsed.eventName === "Withdrawal" && (parsed.args.src.toLowerCase() === wallet || isLpUnwrapToWallet)) {
+        amount += toNumber(parsed.args.wad, 18);
+      }
     } catch {
       // Not a WETH withdrawal event.
     }

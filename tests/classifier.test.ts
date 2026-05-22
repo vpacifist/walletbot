@@ -8,6 +8,17 @@ import { CONTRACTS } from "@/lib/constants";
 describe("classifyTransaction", () => {
   const walletAddress = "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45";
   const poolAddress = "0x1111111111111111111111111111111111111111";
+  const zeroAddress = "0x0000000000000000000000000000000000000000";
+  const wethWithdrawalAbi = [
+    {
+      type: "event",
+      name: "Withdrawal",
+      inputs: [
+        { indexed: true, name: "src", type: "address" },
+        { indexed: false, name: "wad", type: "uint256" }
+      ]
+    }
+  ] as const;
 
   function transferLog(params: { token: `0x${string}`; from: `0x${string}`; to: `0x${string}`; value: bigint }) {
     const topics = encodeEventTopics({
@@ -149,6 +160,44 @@ describe("classifyTransaction", () => {
     expect(result.relatedPositionTokenId).toBe("70762805");
   });
 
+  it("includes native ETH received from LP WETH unwraps in token amounts", () => {
+    const withdrawalTopics = encodeEventTopics({
+      abi: wethWithdrawalAbi,
+      eventName: "Withdrawal",
+      args: { src: CONTRACTS.nonfungiblePositionManager }
+    });
+    const walletAddressWord = walletAddress.toLowerCase().slice(2).padStart(64, "0");
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.nonfungiblePositionManager,
+      method: "multicall",
+      blockscout: {
+        decoded_input: {
+          parameters: [
+            {
+              name: "data",
+              value: [`0x49404b7c${"0".repeat(64)}${walletAddressWord}`]
+            }
+          ]
+        }
+      },
+      receipt: {
+        logs: [
+          {
+            address: CONTRACTS.weth,
+            data: encodeAbiParameters([{ type: "uint256" }], [parseUnits("3.5305877339550573", 18)]),
+            topics: withdrawalTopics
+          },
+          decreaseLiquidityLog()
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.lp_decrease);
+    expect(result.tokenAmounts).toMatchObject([{ symbol: "ETH", amount: "3.5305877339550573", direction: "in" }]);
+  });
+
   it("classifies NftFarmStrategy deposit calls as lp_deposit before withdrawal heuristics", () => {
     const result = classifyTransaction({
       walletAddress,
@@ -223,6 +272,34 @@ describe("classifyTransaction", () => {
     expect(result.type).toBe(TransactionType.swap);
     expect(result.status).toBe(ClassificationStatus.classified);
     expect(result.protocol).toBe("0x");
+  });
+
+  it("classifies native ETH wrapping as a swap instead of a WETH deposit", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: CONTRACTS.weth,
+      method: "deposit",
+      nativeValueWei: parseUnits("3.5", 18).toString(),
+      receipt: {
+        logs: [
+          transferLog({
+            token: CONTRACTS.weth,
+            from: zeroAddress,
+            to: walletAddress,
+            value: parseUnits("3.5", 18)
+          })
+        ]
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.swap);
+    expect(result.status).toBe(ClassificationStatus.classified);
+    expect(result.protocol).toBe("WETH");
+    expect(result.tokenAmounts).toMatchObject([
+      { symbol: "WETH", amount: "3.5", direction: "in" },
+      { symbol: "ETH", amount: "3.5", direction: "out" }
+    ]);
   });
 
   it("classifies swaps sent through 0x Settler as Matcha/0x v2", () => {
