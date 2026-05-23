@@ -21,6 +21,7 @@ import {
   type WalletAssetAmounts
 } from "@/lib/wallet-assets";
 import { logoutAction } from "./actions";
+import { BrandLogo } from "./brand-logo";
 import { DashboardTabs } from "./dashboard-tabs";
 import { GrowthChart } from "./growth-chart";
 import { SyncNowButton } from "./sync-now-button";
@@ -403,6 +404,7 @@ export default async function DashboardPage() {
       <div className="shell">
         <header className="topbar">
           <div className="brand">
+            <BrandLogo />
             <div>
               <h1>WalletBot</h1>
               <p>
@@ -411,18 +413,20 @@ export default async function DashboardPage() {
             </div>
           </div>
           <div className="actions">
-            <div className="header-sync-status">
-              <div className="section-title-row">
-                <h2>Sync status</h2>
-                {latestRun ? (
-                  <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
-                ) : (
-                  <span className="status">not started</span>
-                )}
+            <div className="sync-cluster">
+              <div className="header-sync-status">
+                <div className="section-title-row">
+                  <h2>Sync status</h2>
+                  {latestRun ? (
+                    <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
+                  ) : (
+                    <span className="status">not started</span>
+                  )}
+                </div>
+                <SyncStatusLive initialRun={initialSyncRun} />
               </div>
-              <SyncStatusLive initialRun={initialSyncRun} />
+              <SyncNowButton />
             </div>
-            <SyncNowButton />
             <form action={logoutAction}>
               <button className="button" type="submit">
                 Log out

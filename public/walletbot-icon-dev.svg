@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">WalletBot DEV icon</title>
+  <desc id="desc">Compact WalletBot robot wallet icon with a DEV badge.</desc>
+  <circle cx="32" cy="32" r="30" fill="#111a20"/>
+  <path d="M32 19v-5" fill="none" stroke="#43d5b0" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="12" r="3.4" fill="#43d5b0"/>
+  <path d="M21 25h23c5.8 0 10.5 4.7 10.5 10.5v3.8H46c-3.1 0-5.6 2.5-5.6 5.6s2.5 5.6 5.6 5.6h8.5v1.1c0 4-3.2 7.2-7.2 7.2H21c-5.8 0-10.5-4.7-10.5-10.5V35.5C10.5 29.7 15.2 25 21 25Z" fill="#ffffff"/>
+  <rect x="22" y="30.8" width="23.5" height="13" rx="6.5" fill="#17242a"/>
+  <circle cx="27.6" cy="37.3" r="3" fill="#43d5b0"/>
+  <circle cx="40" cy="37.3" r="3" fill="#43d5b0"/>
+  <path d="M45.6 40.9H58c2 0 3.5 1.6 3.5 3.5v1.1c0 2-1.6 3.5-3.5 3.5H45.6c-2.2 0-4.1-1.8-4.1-4.1s1.9-4 4.1-4Z" fill="#ffffff"/>
+  <path d="M46.2 43h11.2c1 0 1.8.8 1.8 1.8v.5c0 1-.8 1.8-1.8 1.8H46.2c-1.1 0-2.1-.9-2.1-2.1s1-2 2.1-2Z" fill="#17242a"/>
+  <circle cx="47.2" cy="45.1" r="1.35" fill="#43d5b0"/>
+  <g>
+    <rect x="2" y="42.5" width="38" height="18.5" rx="4" fill="#ffd84d"/>
+    <text x="21" y="56.1" fill="#0b0d0f" font-family="Arial, Helvetica, sans-serif" font-size="13.5" font-weight="900" text-anchor="middle">DEV</text>
+  </g>
+</svg>

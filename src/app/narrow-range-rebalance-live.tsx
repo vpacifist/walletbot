@@ -10,6 +10,8 @@ type RangeSelection = {
   upperExtensionIntervals: number;
 };
 
+const DEFAULT_RANGE_SELECTION: RangeSelection = { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+
 type RebalanceData = {
   wallet: {
     weth: number | null;
@@ -88,9 +90,9 @@ function priceOffsetPercent(price: number | null | undefined, boundaryPrice: num
 }
 
 function readStoredRangeSelection(): RangeSelection {
-  if (typeof window === "undefined") return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+  if (typeof window === "undefined") return DEFAULT_RANGE_SELECTION;
   const stored = window.localStorage.getItem(RANGE_WIDTH_STORAGE_KEY);
-  if (!stored) return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+  if (!stored) return DEFAULT_RANGE_SELECTION;
 
   try {
     const parsed = JSON.parse(stored) as Partial<RangeSelection>;
@@ -98,7 +100,7 @@ function readStoredRangeSelection(): RangeSelection {
     const upperExtensionIntervals = clampRangeExtension(parsed.upperExtensionIntervals);
     return { lowerExtensionIntervals, upperExtensionIntervals };
   } catch {
-    return { lowerExtensionIntervals: 0, upperExtensionIntervals: 0 };
+    return DEFAULT_RANGE_SELECTION;
   }
 }
 
@@ -149,11 +151,15 @@ async function writeClipboardText(text: string) {
 }
 
 export function NarrowRangeRebalanceLive() {
-  const [rangeSelection, setRangeSelection] = useState<RangeSelection>(readStoredRangeSelection);
+  const [rangeSelection, setRangeSelection] = useState<RangeSelection>(DEFAULT_RANGE_SELECTION);
   const [data, setData] = useState<RebalanceData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [priceCopyState, setPriceCopyState] = useState<"idle" | "min" | "max" | "failed">("idle");
+
+  useEffect(() => {
+    setRangeSelection(readStoredRangeSelection());
+  }, []);
 
   useEffect(() => {
     let active = true;
