@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { isAuthenticated } from "@/lib/auth";
+import { BrandLogo } from "../brand-logo";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   if (await isAuthenticated()) redirect("/");
@@ -9,6 +10,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="login">
       <form className="panel login-card" action="/api/auth/login" method="post">
         <div className="brand">
+          <BrandLogo />
           <div>
             <h1>WalletBot</h1>
             <p>Private Base liquidity monitor</p>
