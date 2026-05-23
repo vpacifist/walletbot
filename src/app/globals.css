@@ -69,6 +69,7 @@ input {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 240px;
 }
 
 .mark {
@@ -100,6 +101,28 @@ input {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.header-sync-status {
+  display: grid;
+  gap: 3px;
+  min-width: 230px;
+  max-width: 360px;
+  padding-right: 4px;
+}
+
+.header-sync-status h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.header-sync-status .muted {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sync-action {
@@ -223,26 +246,6 @@ input {
   z-index: 1;
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-
-.overview-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(260px, 0.9fr);
-  gap: 22px;
-}
-
-.overview-main {
-  min-width: 0;
-}
-
-.overview-sync {
-  min-width: 0;
-  border-left: 1px solid var(--border);
-  padding-left: 22px;
-}
-
-.overview-sync .muted {
-  max-width: 360px;
 }
 
 .growth-layout {
@@ -1363,15 +1366,21 @@ th {
     align-items: stretch;
   }
 
-  .overview-panel {
-    grid-template-columns: 1fr;
+  .brand {
+    min-width: 0;
   }
 
-  .overview-sync {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-    padding-left: 0;
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .header-sync-status {
+    width: 100%;
+    max-width: none;
+  }
+
+  .header-sync-status .muted {
+    white-space: normal;
   }
 
   .tabs {

@@ -171,6 +171,16 @@ export default async function DashboardPage() {
     prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
     getWalletAssetAmountsSnapshotAtBlock(getAddress(config.BASE_WALLET_ADDRESS), latestKnownBlock).catch(() => null)
   ]);
+  const initialSyncRun = latestRun
+    ? {
+        id: latestRun.id,
+        status: latestRun.status,
+        startedAt: latestRun.startedAt.toISOString(),
+        finishedAt: latestRun.finishedAt?.toISOString() ?? null,
+        transactionsSeen: latestRun.transactionsSeen,
+        error: latestRun.error
+      }
+    : null;
 
   const approvalsByTransactionId = mapApprovalsToTransactions(transactions);
   const visibleTransactions = transactions.filter((transaction) => !isApprovalTransaction(transaction));
@@ -401,6 +411,17 @@ export default async function DashboardPage() {
             </div>
           </div>
           <div className="actions">
+            <div className="header-sync-status">
+              <div className="section-title-row">
+                <h2>Sync status</h2>
+                {latestRun ? (
+                  <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
+                ) : (
+                  <span className="status">not started</span>
+                )}
+              </div>
+              <SyncStatusLive initialRun={initialSyncRun} />
+            </div>
             <SyncNowButton />
             <form action={logoutAction}>
               <button className="button" type="submit">
@@ -413,40 +434,13 @@ export default async function DashboardPage() {
         <DashboardTabs
           overview={
             <section className="panel section overview-panel">
-              <div className="overview-main">
-                <div className="section-head">
-                  <div>
-                    <h2>Narrow range swap guard</h2>
-                    <p className="muted">Live WETH/USDC balance target for the tight 0.3% Uniswap v3 range.</p>
-                  </div>
+              <div className="section-head">
+                <div>
+                  <h2>Narrow range swap guard</h2>
+                  <p className="muted">Live WETH/USDC balance target for the tight 0.3% Uniswap v3 range.</p>
                 </div>
-                <NarrowRangeRebalanceLive />
               </div>
-              <aside className="overview-sync">
-                <div className="section-title-row">
-                  <h2>Sync status</h2>
-                  {latestRun ? (
-                    <span className={`status ${statusClass(latestRun.status)}`}>{statusLabel(latestRun.status)}</span>
-                  ) : (
-                    <span className="status">not started</span>
-                  )}
-                </div>
-                <p className="muted">Polling worker imports wallet activity and refreshes position range state.</p>
-                <SyncStatusLive
-                  initialRun={
-                    latestRun
-                      ? {
-                          id: latestRun.id,
-                          status: latestRun.status,
-                          startedAt: latestRun.startedAt.toISOString(),
-                          finishedAt: latestRun.finishedAt?.toISOString() ?? null,
-                          transactionsSeen: latestRun.transactionsSeen,
-                          error: latestRun.error
-                        }
-                      : null
-                  }
-                />
-              </aside>
+              <NarrowRangeRebalanceLive />
             </section>
           }
           performance={
