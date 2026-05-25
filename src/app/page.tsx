@@ -31,6 +31,7 @@ import { SyncStatusLive } from "./sync-status-live";
 import { NarrowRangeRebalanceLive } from "./narrow-range-rebalance-live";
 import { PositionsTable, type PositionTableRow } from "./positions-table";
 import { TransactionsTable, type TransactionTableRow } from "./transactions-table";
+import { TripleRangeGuideLive } from "./triple-range-guide-live";
 
 export const dynamic = "force-dynamic";
 
@@ -186,6 +187,7 @@ function DashboardLoadingTabs() {
   return (
     <DashboardTabs
       overview={<DashboardPanelLoading title="Narrow range swap guard" detail="Loading live wallet balances and pool range." />}
+      tripleGuide={<DashboardPanelLoading title="Triple range guide" detail="Loading adjacent range positions and capital split." />}
       performance={<DashboardPanelLoading title="Growth comparison" detail="Loading cached historical prices and transaction states." />}
       positions={<DashboardPanelLoading title="CL positions" detail="Loading positions, fees, and valuation snapshots." />}
       transactions={<DashboardPanelLoading title="Transactions" detail="Loading normalized transaction rows." />}
@@ -554,6 +556,17 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
                 </div>
               </div>
               <NarrowRangeRebalanceLive />
+            </section>
+          }
+          tripleGuide={
+            <section className="panel section">
+              <div className="section-head">
+                <div>
+                  <h2>Triple range guide</h2>
+                  <p className="muted">Three adjacent narrow WETH/USDC ranges with one working interval and two token-only guards.</p>
+                </div>
+              </div>
+              <TripleRangeGuideLive />
             </section>
           }
           performance={

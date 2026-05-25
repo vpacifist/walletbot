@@ -451,6 +451,10 @@ input {
   overflow-wrap: anywhere;
 }
 
+.hero-metric .muted {
+  overflow-wrap: anywhere;
+}
+
 .copy-metric {
   display: inline-grid;
   grid-template-columns: minmax(0, auto) 0 0;
@@ -766,6 +770,239 @@ input {
     -1px 0 0 rgba(255, 255, 255, 0.65);
 }
 
+.triple-guide-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.triple-ladder {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.triple-ladder-axis {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(3, minmax(72px, 1fr));
+  min-height: 242px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.triple-ladder-segment {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(86px, max-content) minmax(104px, max-content);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 16px 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.triple-ladder-segment:last-of-type {
+  border-bottom: 0;
+}
+
+.triple-ladder-segment::before {
+  content: "";
+  position: absolute;
+  inset: 10px auto 10px 0;
+  width: 5px;
+  border-radius: 0 999px 999px 0;
+}
+
+.triple-ladder-segment.lower::before {
+  background: var(--accent-2);
+}
+
+.triple-ladder-segment.active::before {
+  background: var(--accent);
+}
+
+.triple-ladder-segment.upper::before {
+  background: var(--warning);
+}
+
+.triple-ladder-segment-label,
+.triple-ladder-price-labels {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.triple-ladder-segment-label strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.triple-ladder-segment-label span,
+.triple-ladder-price-labels span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triple-ladder-price-labels {
+  text-align: right;
+}
+
+.triple-ladder-marker {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-right: 14px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(50%);
+}
+
+.triple-ladder-marker::before {
+  content: "";
+  flex: 1 1 auto;
+  height: 2px;
+  background: #18201b;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.82);
+}
+
+.triple-ladder-marker span,
+.triple-ladder-marker small {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(24, 32, 27, 0.1);
+  white-space: nowrap;
+}
+
+.triple-ladder-marker small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.triple-ladder-loading {
+  min-height: 242px;
+  background: linear-gradient(90deg, #e5eae3, #f4f6f2, #e5eae3);
+  background-size: 180% 100%;
+  animation: price-loading 1.2s ease-in-out infinite;
+}
+
+.triple-range-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.triple-range-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.triple-range-card.lower {
+  border-top: 4px solid var(--accent-2);
+}
+
+.triple-range-card.active {
+  border-top: 4px solid var(--accent);
+}
+
+.triple-range-card.upper {
+  border-top: 4px solid var(--warning);
+}
+
+.triple-range-card.skeleton {
+  min-height: 174px;
+  background: linear-gradient(90deg, #e5eae3, #f4f6f2, #e5eae3);
+  background-size: 180% 100%;
+  animation: price-loading 1.2s ease-in-out infinite;
+}
+
+.triple-range-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.triple-range-card-head strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.triple-range-band {
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.triple-range-band span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.triple-range-metrics {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.triple-range-metrics span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.triple-range-metrics span:first-child {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.triple-guide-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.triple-action-list {
+  display: grid;
+  gap: 8px;
+}
+
+.triple-action {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
 
 .table-wrap {
   overflow: auto;
@@ -1467,6 +1704,56 @@ th {
 
   .metric-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .triple-range-strip,
+  .triple-guide-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .triple-ladder {
+    padding: 10px;
+  }
+
+  .triple-ladder-axis {
+    grid-template-rows: repeat(3, minmax(104px, 1fr));
+  }
+
+  .triple-ladder-segment {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 12px 12px 16px;
+  }
+
+  .triple-ladder-segment-label {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .triple-ladder-price-labels {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .triple-ladder-segment > .status {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+
+  .triple-ladder-marker {
+    justify-content: flex-start;
+    gap: 5px;
+    padding-right: 8px;
+  }
+
+  .triple-ladder-marker span,
+  .triple-ladder-marker small {
+    max-width: 126px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .loading-grid {

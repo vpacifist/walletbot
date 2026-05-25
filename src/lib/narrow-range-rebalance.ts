@@ -4,8 +4,8 @@ import { createBaseClient } from "./chain";
 import { CONTRACTS, TOKEN_META } from "./constants";
 import { getWalletAssetAmountsSnapshot } from "./wallet-assets";
 
-const WETH_USDC_NARROW_FEE = 3000;
-const WETH_USDC_NARROW_TICK_SPACING = 60;
+export const WETH_USDC_NARROW_FEE = 3000;
+export const WETH_USDC_NARROW_TICK_SPACING = 60;
 export const WETH_USDC_RANGE_WIDTH_MULTIPLIERS = [1, 2, 3, 4, 5] as const;
 export type WethUsdcRangeWidthMultiplier = (typeof WETH_USDC_RANGE_WIDTH_MULTIPLIERS)[number];
 export const WETH_USDC_RANGE_EXTENSION_INTERVALS = [0, 1, 2, 3, 4] as const;
@@ -48,7 +48,7 @@ export type NarrowRangeRebalance = {
   updatedAt: string;
 };
 
-function priceFromTick(params: { tick: number; token0: Address; token1: Address; baseToken: Address; quoteToken: Address }) {
+export function priceFromTick(params: { tick: number; token0: Address; token1: Address; baseToken: Address; quoteToken: Address }) {
   const token0Meta = TOKEN_META[params.token0.toLowerCase()];
   const token1Meta = TOKEN_META[params.token1.toLowerCase()];
   if (!token0Meta || !token1Meta) return null;
