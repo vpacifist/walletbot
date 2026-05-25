@@ -349,6 +349,24 @@ describe("classifyTransaction", () => {
     expect(result.tokenAmounts).toEqual([]);
   });
 
+  it("does not classify zero-value wallet contract calls as withdrawals", () => {
+    const result = classifyTransaction({
+      walletAddress,
+      fromAddress: walletAddress,
+      toAddress: "0xF308BAc6D1234e30998628E466956E46A1f06f29",
+      method: "setNftSettings",
+      nativeValueWei: "0",
+      receipt: {
+        status: "success",
+        logs: []
+      } as never
+    });
+
+    expect(result.type).toBe(TransactionType.unknown);
+    expect(result.status).toBe(ClassificationStatus.unknown);
+    expect(result.tokenAmounts).toEqual([]);
+  });
+
   it("tracks AERO transfers so AERO to USDC is classified as a swap", () => {
     const result = classifyTransaction({
       walletAddress,

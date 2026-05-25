@@ -377,7 +377,7 @@ export function classifyTransaction(params: {
     };
   }
 
-  if (fromWallet || tokenAmounts.some((amount) => amount.direction === "out")) {
+  if (tokenAmounts.some((amount) => amount.direction === "out")) {
     return {
       type: TransactionType.withdrawal,
       status: ClassificationStatus.classified,

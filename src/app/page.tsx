@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { getAddress } from "viem";
 import { isAuthenticated } from "@/lib/auth";
 import { isApprovalTransaction, mapApprovalsToTransactions } from "@/lib/approvals";
@@ -158,10 +160,117 @@ type ClosedPositionSnapshot = {
   hodlAmounts: LpAssetAmounts;
 };
 
+function DashboardPanelLoading({ title, detail }: { title: string; detail: string }) {
+  return (
+    <section className="panel section dashboard-loading-panel" aria-busy="true">
+      <div className="section-head">
+        <div>
+          <div className="loading-title-row">
+            <h2>{title}</h2>
+            <span className="status">loading</span>
+          </div>
+          <p className="muted">{detail}</p>
+        </div>
+      </div>
+      <div className="loading-grid" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
+function DashboardLoadingTabs() {
+  return (
+    <DashboardTabs
+      overview={<DashboardPanelLoading title="Narrow range swap guard" detail="Loading live wallet balances and pool range." />}
+      performance={<DashboardPanelLoading title="Growth comparison" detail="Loading cached historical prices and transaction states." />}
+      positions={<DashboardPanelLoading title="CL positions" detail="Loading positions, fees, and valuation snapshots." />}
+      transactions={<DashboardPanelLoading title="Transactions" detail="Loading normalized transaction rows." />}
+    />
+  );
+}
+
+function DashboardPageLoading({ config }: { config: ReturnType<typeof getConfig> }) {
+  return (
+    <main className="page">
+      <div className="shell">
+        <header className="topbar">
+          <div className="brand">
+            <BrandLogo />
+            <div>
+              <h1>WalletBot</h1>
+              <p>
+                Base wallet {shortAddress(config.BASE_WALLET_ADDRESS)} · WETH/USDC Uniswap v3
+              </p>
+            </div>
+          </div>
+          <div className="actions">
+            <div className="sync-cluster">
+              <div className="header-sync-status">
+                <div className="section-title-row">
+                  <h2>Sync status</h2>
+                  <span className="status">loading</span>
+                </div>
+                <SyncStatusLive initialRun={null} />
+              </div>
+              <SyncNowButton />
+            </div>
+            <form action={logoutAction}>
+              <button className="button" type="submit">
+                Log out
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <DashboardLoadingTabs />
+      </div>
+    </main>
+  );
+}
+
+function DashboardLoadError({ message }: { message: string }) {
+  return (
+    <section className="panel section dashboard-loading-panel" role="status">
+      <div className="section-head">
+        <div>
+          <div className="loading-title-row">
+            <h2>Dashboard data unavailable</h2>
+            <span className="status bad">error</span>
+          </div>
+          <p className="muted">{message}</p>
+        </div>
+      </div>
+      <Link className="button primary" href="/">
+        Retry
+      </Link>
+    </section>
+  );
+}
+
 export default async function DashboardPage() {
   if (!(await isAuthenticated())) redirect("/login");
 
   const config = getConfig();
+  return (
+    <Suspense fallback={<DashboardPageLoading config={config} />}>
+      <DashboardContent config={config} />
+    </Suspense>
+  );
+}
+
+async function DashboardContent({ config }: { config: ReturnType<typeof getConfig> }) {
+  try {
+    return await DashboardContentInner({ config });
+  } catch (error) {
+    return <DashboardLoadError message={error instanceof Error ? error.message : "Unable to load dashboard data."} />;
+  }
+}
+
+async function DashboardContentInner({ config }: { config: ReturnType<typeof getConfig> }) {
   const transactions = await prisma.transaction.findMany({
     orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
     take: 80
