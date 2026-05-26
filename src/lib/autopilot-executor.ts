@@ -1,5 +1,8 @@
+import { encodeFunctionData, getAddress, parseUnits, type Address } from "viem";
+import { swapRouter02Abi } from "./abi";
 import { createAutopilotExecutionPreview, type AutopilotExecutionPreview } from "./autopilot-execution-preview";
-import { CONTRACTS } from "./constants";
+import { getConfig } from "./config";
+import { CONTRACTS, TOKEN_META } from "./constants";
 
 type TransactionIntent =
   | {
@@ -17,6 +20,10 @@ type TransactionIntent =
       expectedAmountOut: number | null;
       minAmountOut: number | null;
       slippageBps: number;
+      tokenInAddress: Address;
+      tokenOutAddress: Address;
+      amountInRaw: string;
+      minAmountOutRaw: string | null;
       description: string;
     }
   | {
@@ -46,6 +53,14 @@ export type AutopilotDryRunExecution = {
     detail: string;
   }>;
   intents: TransactionIntent[];
+  calls: Array<{
+    intent: string;
+    status: "prepared" | "blocked";
+    target: string;
+    functionName: string | null;
+    dataPreview: string | null;
+    reason: string;
+  }>;
   telegramSummary: string;
 };
 
@@ -69,6 +84,14 @@ function formatUsd(value: number) {
 
 function minAmountOut(amountOut: number) {
   return amountOut * (1 - SLIPPAGE_BPS / 10_000);
+}
+
+function tokenDecimals(address: string) {
+  return TOKEN_META[address.toLowerCase()]?.decimals ?? 18;
+}
+
+function rawAmount(amount: number, tokenAddress: string) {
+  return parseUnits(amount.toFixed(tokenDecimals(tokenAddress)), tokenDecimals(tokenAddress)).toString();
 }
 
 function intentSummary(intent: TransactionIntent) {
@@ -119,6 +142,10 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         expectedAmountOut: quote?.amountOut ?? null,
         minAmountOut: quote ? minAmountOut(quote.amountOut) : null,
         slippageBps: SLIPPAGE_BPS,
+        tokenInAddress: step.quoteRequest.tokenIn,
+        tokenOutAddress: step.quoteRequest.tokenOut,
+        amountInRaw: rawAmount(step.quoteRequest.amountIn, step.quoteRequest.tokenIn),
+        minAmountOutRaw: quote ? rawAmount(minAmountOut(quote.amountOut), step.quoteRequest.tokenOut) : null,
         description: step.detail
       };
     }
@@ -140,6 +167,80 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
   return intents.sort((left, right) => priority[left.kind] - priority[right.kind]);
 }
 
+function buildCalls(intents: TransactionIntent[]) {
+  return intents.map((intent, index) => {
+    if (intent.kind === "swap_exact_input") {
+      if (!intent.minAmountOutRaw) {
+        return {
+          intent: `${index + 1}. swap_exact_input`,
+          status: "blocked" as const,
+          target: CONTRACTS.uniswapV3SwapRouter02,
+          functionName: "exactInputSingle",
+          dataPreview: null,
+          reason: "Swap calldata requires an available quote and amountOutMinimum."
+        };
+      }
+
+      const data = encodeFunctionData({
+        abi: swapRouter02Abi,
+        functionName: "exactInputSingle",
+        args: [
+          {
+            tokenIn: intent.tokenInAddress,
+            tokenOut: intent.tokenOutAddress,
+            fee: 3000,
+            recipient: getAddress(getConfig().BASE_WALLET_ADDRESS),
+            deadline: BigInt(Math.floor(Date.now() / 1000) + 120),
+            amountIn: BigInt(intent.amountInRaw),
+            amountOutMinimum: BigInt(intent.minAmountOutRaw),
+            sqrtPriceLimitX96: 0n
+          }
+        ]
+      });
+
+      return {
+        intent: `${index + 1}. swap_exact_input`,
+        status: "prepared" as const,
+        target: CONTRACTS.uniswapV3SwapRouter02,
+        functionName: "exactInputSingle",
+        dataPreview: `${data.slice(0, 18)}...${data.slice(-8)}`,
+        reason: "Calldata prepared for dry-run review; simulation and submission remain disabled."
+      };
+    }
+
+    if (intent.kind === "close_position") {
+      return {
+        intent: `${index + 1}. close_position`,
+        status: "blocked" as const,
+        target: CONTRACTS.nonfungiblePositionManager,
+        functionName: null,
+        dataPreview: null,
+        reason: "Close calldata needs live liquidity, fee collection amounts, and final recipient parameters."
+      };
+    }
+
+    if (intent.kind === "mint_position") {
+      return {
+        intent: `${index + 1}. mint_position`,
+        status: "blocked" as const,
+        target: CONTRACTS.nonfungiblePositionManager,
+        functionName: null,
+        dataPreview: null,
+        reason: "Mint calldata needs token amount split after close/swap and approval checks."
+      };
+    }
+
+    return {
+      intent: `${index + 1}. manual_review`,
+      status: "blocked" as const,
+      target: intent.target,
+      functionName: null,
+      dataPreview: null,
+      reason: "Manual review required before calldata can be prepared."
+    };
+  });
+}
+
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
   return [
     "Executor dry run",
@@ -154,6 +255,9 @@ function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegra
     "",
     "Transaction intents",
     ...execution.intents.map((intent, index) => `${index + 1}. ${intentSummary(intent)}`),
+    "",
+    "Calldata / simulation",
+    ...execution.calls.map((call) => `${statusIcon(call.status === "prepared")} ${call.intent}: ${call.functionName ?? "not prepared"} @ ${call.target}${call.dataPreview ? ` | ${call.dataPreview}` : ""} - ${call.reason}`),
     "",
     "Execution mode: dry run only. No on-chain transactions were sent."
   ].join("\n");
@@ -184,12 +288,14 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
     detail: step.detail
   }));
   const intents = buildIntents(preview);
+  const calls = buildCalls(intents);
   const executionWithoutTelegram = {
     planId: preview.planId,
     status: checks.every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
     checks,
     operations,
-    intents
+    intents,
+    calls
   };
 
   return {
