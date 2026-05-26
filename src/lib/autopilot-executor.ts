@@ -79,6 +79,7 @@ type ClosePositionState =
 
 type BuildExecutionOptions = {
   closePositions?: Record<string, ClosePositionState>;
+  nftApprovals?: Record<string, NftApprovalState>;
   allowances?: Record<string, bigint>;
   pool?: {
     currentTick: number;
@@ -108,6 +109,23 @@ type AtomicRebalanceCall = {
   dataPreview: string | null;
   reason: string;
 };
+
+type NftApprovalState =
+  | {
+      status: "approved";
+      tokenId: string;
+      detail: string;
+    }
+  | {
+      status: "not_approved";
+      tokenId: string;
+      detail: string;
+    }
+  | {
+      status: "unavailable";
+      tokenId: string;
+      detail: string;
+    };
 
 function simulation(status: ExecutionCall["simulation"]["status"], detail: string): ExecutionCall["simulation"] {
   return { status, detail };
@@ -640,6 +658,38 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
   };
 }
 
+function buildApprovalChecks(intents: TransactionIntent[], options: BuildExecutionOptions = {}) {
+  const closeIntents = intents.filter((intent): intent is Extract<TransactionIntent, { kind: "close_position" }> => intent.kind === "close_position");
+  if (closeIntents.length === 0 || !options.nftApprovals) return [];
+
+  if (!getConfig().AUTOPILOT_REBALANCER_ADDRESS) {
+    return [
+      {
+        label: "Rebalancer contract",
+        ok: false,
+        detail: "AUTOPILOT_REBALANCER_ADDRESS is not configured"
+      }
+    ];
+  }
+
+  return closeIntents.map((intent) => {
+    const approval = options.nftApprovals?.[intent.tokenId];
+    if (!approval) {
+      return {
+        label: `NFT approval #${intent.tokenId}`,
+        ok: false,
+        detail: "Approval state was not checked"
+      };
+    }
+
+    return {
+      label: `NFT approval #${intent.tokenId}`,
+      ok: approval.status === "approved",
+      detail: approval.detail
+    };
+  });
+}
+
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
   return [
     "Executor dry run",
@@ -693,6 +743,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
     detail: step.detail
   }));
   const intents = buildIntents(preview);
+  const approvalChecks = buildApprovalChecks(intents, options);
   const calls = buildCalls(intents, {
     ...options,
     pool: options.pool ?? preview.pool
@@ -703,8 +754,8 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   });
   const executionWithoutTelegram = {
     planId: preview.planId,
-    status: checks.every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
-    checks,
+    status: [...checks, ...approvalChecks].every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
+    checks: [...checks, ...approvalChecks],
     operations,
     intents,
     calls,
@@ -750,6 +801,50 @@ async function fetchAllowance(token: Address) {
       args: [getAddress(getConfig().BASE_WALLET_ADDRESS), CONTRACTS.nonfungiblePositionManager]
     })
     .catch(() => 0n);
+}
+
+async function fetchNftApproval(tokenId: string): Promise<NftApprovalState> {
+  const rebalancerAddress = getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  if (!rebalancerAddress) {
+    return {
+      status: "unavailable",
+      tokenId,
+      detail: "AUTOPILOT_REBALANCER_ADDRESS is not configured"
+    };
+  }
+
+  try {
+    const owner = getAddress(getConfig().BASE_WALLET_ADDRESS);
+    const operator = getAddress(rebalancerAddress);
+    const [approved, approvedForAll] = await Promise.all([
+      createBaseClient().readContract({
+        address: CONTRACTS.nonfungiblePositionManager,
+        abi: positionManagerAbi,
+        functionName: "getApproved",
+        args: [BigInt(tokenId)]
+      }),
+      createBaseClient().readContract({
+        address: CONTRACTS.nonfungiblePositionManager,
+        abi: positionManagerAbi,
+        functionName: "isApprovedForAll",
+        args: [owner, operator]
+      })
+    ]);
+    const isApproved = approvedForAll || approved.toLowerCase() === operator.toLowerCase();
+    return {
+      status: isApproved ? "approved" : "not_approved",
+      tokenId,
+      detail: isApproved
+        ? `Rebalancer ${operator} is approved for this NFT`
+        : `Rebalancer ${operator} is not approved for position #${tokenId}`
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      tokenId,
+      detail: shortError(error)
+    };
+  }
 }
 
 function shouldSimulateIndependentCall(call: ExecutionCall) {
@@ -799,13 +894,15 @@ async function simulatePreparedCalls(calls: ExecutionCall[]) {
 export async function createAutopilotDryRunExecution(planId: string) {
   const preview = await createAutopilotExecutionPreview(planId);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
-  const [closeStates, wethAllowance, usdcAllowance] = await Promise.all([
+  const [closeStates, nftApprovals, wethAllowance, usdcAllowance] = await Promise.all([
     Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId))),
+    Promise.all(closeTokenIds.map((tokenId) => fetchNftApproval(tokenId))),
     fetchAllowance(CONTRACTS.weth),
     fetchAllowance(CONTRACTS.usdc)
   ]);
   const execution = buildAutopilotDryRunExecution(preview, {
     closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
+    nftApprovals: Object.fromEntries(nftApprovals.map((state) => [state.tokenId, state])),
     allowances: {
       [allowanceKey(CONTRACTS.weth)]: wethAllowance,
       [allowanceKey(CONTRACTS.usdc)]: usdcAllowance

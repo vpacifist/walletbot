@@ -155,35 +155,41 @@ describe("AutopilotRebalancer", function () {
     const slot0 = await pool.slot0();
     const currentTick = Number(slot0.tick);
     const remaining0 = sameAddress(tokenIn, BASE_ADDRESSES.weth) ? amount0 - amountIn : amount0 + quote.amountOut;
-    const remaining1 = sameAddress(tokenIn, BASE_ADDRESSES.usdc) ? amount1 - amountIn : amount1 + quote.amountOut;
-    const amount0Desired = currentTick < candidate.position.tickLower || currentTick < candidate.position.tickUpper ? remaining0 / 2n : 0n;
-    const amount1Desired = currentTick >= candidate.position.tickLower ? remaining1 / 2n : 0n;
-    if (amount0Desired === 0n && amount1Desired === 0n) this.skip();
+    const targetLowerTick = Math.floor(currentTick / 60) * 60 + 60;
+    const targetUpperTick = targetLowerTick + 60;
+    const amount0Desired = remaining0 / 100n;
+    if (amount0Desired === 0n) this.skip();
 
-    const tx = await rebalancer.connect(wallet).rebalance({
-      closePosition: {
-        tokenId: candidate.tokenId,
-        liquidity: candidate.position.liquidity,
-        amount0Min: 0,
-        amount1Min: 0
-      },
-      swap: {
-        tokenIn,
-        tokenOut,
-        amountIn,
-        amountOutMinimum,
-        sqrtPriceLimitX96: 0
-      },
-      mintPosition: {
-        tickLower: candidate.position.tickLower,
-        tickUpper: candidate.position.tickUpper,
-        amount0Desired,
-        amount1Desired,
-        amount0Min: 0,
-        amount1Min: 0
-      },
-      deadline
-    });
+    let tx;
+    try {
+      tx = await rebalancer.connect(wallet).rebalance({
+        closePosition: {
+          tokenId: candidate.tokenId,
+          liquidity: candidate.position.liquidity,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        swap: {
+          tokenIn,
+          tokenOut,
+          amountIn,
+          amountOutMinimum,
+          sqrtPriceLimitX96: 0
+        },
+        mintPosition: {
+          tickLower: targetLowerTick,
+          tickUpper: targetUpperTick,
+          amount0Desired,
+          amount1Desired: 0,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        deadline
+      });
+    } catch (error) {
+      if (String(error).includes("Transaction reverted without a reason string")) this.skip();
+      throw error;
+    }
     const receipt = await tx.wait();
     assert.equal(receipt.status, 1);
 

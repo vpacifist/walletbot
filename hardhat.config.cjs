@@ -3,7 +3,7 @@ const { loadEnvConfig } = require("@next/env");
 
 loadEnvConfig(process.cwd());
 
-const { BASE_RPC_URL } = process.env;
+const { BASE_RPC_URL, BASE_DEPLOYER_PRIVATE_KEY } = process.env;
 
 /** @type {import("hardhat/config").HardhatUserConfig} */
 module.exports = {
@@ -29,6 +29,10 @@ module.exports = {
             url: BASE_RPC_URL
           }
         }
-      : {}
+      : {},
+    base: {
+      url: BASE_RPC_URL || "http://127.0.0.1:8545",
+      accounts: BASE_DEPLOYER_PRIVATE_KEY ? [BASE_DEPLOYER_PRIVATE_KEY] : []
+    }
   }
 };
