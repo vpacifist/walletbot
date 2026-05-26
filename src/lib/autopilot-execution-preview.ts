@@ -14,8 +14,16 @@ export type AutopilotExecutionPreview = {
     detail: string;
   }>;
   steps: Array<{
+    type: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>["actions"][number]["type"];
     label: string;
+    sourceLabel: string;
     detail: string;
+    estimatedCostUsd: number;
+    tokenId?: string;
+    lowerTick?: number;
+    upperTick?: number;
+    budgetUsd?: number;
+    quoteRequest?: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>["actions"][number]["quoteRequest"];
   }>;
   quote: SwapQuoteResult;
   telegramSummary: string;
@@ -131,8 +139,16 @@ export function buildAutopilotExecutionPreview(
   ];
   const reasons = checks.filter((check) => !check.ok).map((check) => check.label);
   const steps = currentPlan.actions.map((action) => ({
+    type: action.type,
     label: actionStepLabel(action.type),
-    detail: action.detail
+    sourceLabel: action.label,
+    detail: action.detail,
+    estimatedCostUsd: action.estimatedCostUsd,
+    tokenId: action.tokenId,
+    lowerTick: action.lowerTick,
+    upperTick: action.upperTick,
+    budgetUsd: action.budgetUsd,
+    quoteRequest: action.quoteRequest
   }));
   const previewWithoutTelegram = {
     planId: record.id,

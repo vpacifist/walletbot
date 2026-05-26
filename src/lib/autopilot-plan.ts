@@ -47,6 +47,10 @@ export type AutopilotPlan = {
     label: string;
     detail: string;
     estimatedCostUsd: number;
+    tokenId?: string;
+    lowerTick?: number;
+    upperTick?: number;
+    budgetUsd?: number;
     quoteRequest?: {
       tokenIn: Address;
       tokenOut: Address;
@@ -236,7 +240,8 @@ function buildActions(guide: TripleRangeGuide, immediateCostUsd: number, reversa
       type: "close",
       label: `Review stale range #${leftover.tokenId}`,
       detail: leftover.suggestedUse,
-      estimatedCostUsd: immediateCostUsd
+      estimatedCostUsd: immediateCostUsd,
+      tokenId: leftover.tokenId
     });
   }
   for (const segment of guide.segments.filter((item) => item.state === "missing")) {
@@ -244,7 +249,10 @@ function buildActions(guide: TripleRangeGuide, immediateCostUsd: number, reversa
       type: "mint",
       label: `Mint ${segment.label.toLowerCase()}`,
       detail: `Target ticks ${segment.lowerTick} - ${segment.upperTick}, budget ${formatUsd(segment.targetUsd)}.`,
-      estimatedCostUsd: immediateCostUsd
+      estimatedCostUsd: immediateCostUsd,
+      lowerTick: segment.lowerTick,
+      upperTick: segment.upperTick,
+      budgetUsd: segment.targetUsd
     });
   }
   if (immediateCostUsd > 0) {

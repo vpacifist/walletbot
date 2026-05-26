@@ -17,12 +17,37 @@ function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecu
     ],
     steps: [
       {
+        type: "close",
         label: "Close/review stale range",
-        detail: "Close and swap WETH to USDC for the new lower guard"
+        sourceLabel: "Review stale range #5187240",
+        detail: "Close and swap WETH to USDC for the new lower guard",
+        estimatedCostUsd: 3.88,
+        tokenId: "5187240"
       },
       {
+        type: "mint",
+        label: "Prepare mint",
+        sourceLabel: "Mint lower guard",
+        detail: "Target ticks -199920 - -199860, budget $2,464.26.",
+        estimatedCostUsd: 3.88,
+        lowerTick: -199920,
+        upperTick: -199860,
+        budgetUsd: 2464.26
+      },
+      {
+        type: "partial_swap",
         label: "Prepare partial swap",
-        detail: "Estimated immediate cost is $3.88; current reversal debt is $0."
+        sourceLabel: "Use partial swap only",
+        detail: "Estimated immediate cost is $3.88; current reversal debt is $0.",
+        estimatedCostUsd: 3.88,
+        quoteRequest: {
+          tokenIn: "0x4200000000000000000000000000000000000006",
+          tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          fee: 3000,
+          amountIn: 1,
+          spendSymbol: "WETH",
+          receiveSymbol: "USDC"
+        }
       }
     ],
     quote: {
@@ -54,6 +79,10 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.status).toBe("validated");
     expect(execution.telegramSummary).toContain("Executor dry run");
     expect(execution.telegramSummary).toContain("Status: validated");
+    expect(execution.intents).toHaveLength(3);
+    expect(execution.telegramSummary).toContain("Close position #5187240");
+    expect(execution.telegramSummary).toContain("Swap 1 WETH");
+    expect(execution.telegramSummary).toContain("Mint -199920 - -199860");
     expect(execution.telegramSummary).toContain("No on-chain transactions were sent.");
   });
 
