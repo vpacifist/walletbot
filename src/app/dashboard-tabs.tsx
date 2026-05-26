@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 type DashboardTabsProps = {
   overview: ReactNode;
+  autopilot: ReactNode;
   tripleGuide: ReactNode;
   performance: ReactNode;
   positions: ReactNode;
@@ -12,6 +13,7 @@ type DashboardTabsProps = {
 
 const TABS = [
   { id: "overview", label: "Overview" },
+  { id: "autopilot", label: "Autopilot" },
   { id: "tripleGuide", label: "Triple range" },
   { id: "performance", label: "Growth" },
   { id: "positions", label: "Positions" },
@@ -20,9 +22,9 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-export function DashboardTabs({ overview, tripleGuide, performance, positions, transactions }: DashboardTabsProps) {
+export function DashboardTabs({ overview, autopilot, tripleGuide, performance, positions, transactions }: DashboardTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
-  const panels = { overview, tripleGuide, performance, positions, transactions };
+  const panels = { overview, autopilot, tripleGuide, performance, positions, transactions };
 
   return (
     <>

@@ -139,3 +139,23 @@ model HistoricalTokenPrice {
   @@unique([token, blockNumber])
   @@index([token])
 }
+
+model RebalancePlan {
+  id              String    @id @default(cuid())
+  planKey         String
+  status          String    @default("pending")
+  mode            String
+  state           String
+  title           String
+  summary         String
+  payload         Json
+  telegramChatId  String?
+  telegramMessageId String?
+  decidedAt       DateTime?
+  decisionNote    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([planKey, status])
+  @@index([status, createdAt])
+}

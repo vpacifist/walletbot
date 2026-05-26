@@ -1087,6 +1087,163 @@ input {
   font-size: 13px;
 }
 
+.autopilot-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.autopilot-timeline {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.autopilot-step {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.autopilot-step span {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.autopilot-step.is-active span {
+  background: var(--accent-2);
+}
+
+.autopilot-step.is-current {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.autopilot-step.is-current span {
+  background: var(--accent);
+}
+
+.autopilot-economics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.autopilot-economics > div,
+.autopilot-range,
+.autopilot-action {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.autopilot-economics .asset-metric {
+  display: grid;
+  gap: 3px;
+}
+
+.autopilot-ladder {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.autopilot-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, max-content);
+  gap: 10px;
+  align-items: start;
+  border-top-width: 4px;
+}
+
+.autopilot-range.lower {
+  border-top-color: var(--accent-2);
+}
+
+.autopilot-range.active {
+  border-top-color: var(--accent);
+}
+
+.autopilot-range.upper {
+  border-top-color: var(--warning);
+}
+
+.autopilot-range strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 18px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.autopilot-range span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.autopilot-range .status {
+  justify-self: end;
+}
+
+.autopilot-range .muted {
+  grid-column: 1 / -1;
+}
+
+.autopilot-range.skeleton {
+  min-height: 128px;
+  border-top-width: 1px;
+  background: var(--skeleton-gradient);
+  background-size: 180% 100%;
+  animation: price-loading 1.2s ease-in-out infinite;
+}
+
+.autopilot-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.autopilot-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.autopilot-action strong {
+  display: block;
+  font-size: 14px;
+}
+
+.autopilot-action > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.autopilot-action.good strong {
+  color: var(--accent);
+}
+
+.autopilot-action.warn strong {
+  color: var(--warning);
+}
+
+.autopilot-action.bad strong {
+  color: var(--danger);
+}
+
 .table-wrap {
   overflow: auto;
 }
@@ -1790,8 +1947,16 @@ th {
   }
 
   .triple-range-strip,
-  .triple-guide-metrics {
+  .triple-guide-metrics,
+  .autopilot-economics,
+  .autopilot-ladder {
     grid-template-columns: 1fr;
+  }
+
+  .autopilot-timeline {
+    grid-template-columns: repeat(5, minmax(76px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .triple-ladder {

@@ -1,12 +1,25 @@
 import { PositionStatus } from "@prisma/client";
 import { Telegraf } from "telegraf";
 import { getAddress } from "viem";
+import { getOrCreatePendingAutopilotPlan } from "./autopilot-service";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
 import { getWalletAssetSnapshot } from "./wallet-assets";
 
 const LOW_NATIVE_ETH_THRESHOLD_USD = 10;
+
+function autopilotKeyboard(planId: string) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Approve", callback_data: `ap:approve:${planId}` },
+        { text: "Skip", callback_data: `ap:skip:${planId}` },
+        { text: "Pause", callback_data: `ap:pause:${planId}` }
+      ]
+    ]
+  };
+}
 
 export function isOutOfRange(status: PositionStatus) {
   return status === PositionStatus.above_range || status === PositionStatus.below_range;
@@ -45,17 +58,32 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
     if (existing) continue;
 
     const direction = position.status === PositionStatus.above_range ? "above range" : "below range";
-    await bot.telegram.sendMessage(
+    const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID }).catch(() => null);
+    const planSummary = autopilotPlan ? ["", "Autopilot plan", autopilotPlan.plan.telegramSummary, "", `Plan id: ${autopilotPlan.record.id}`].join("\n") : "";
+
+    const message = await bot.telegram.sendMessage(
       TELEGRAM_CHAT_ID,
       [
         `Uniswap v3 WETH/USDC position #${position.tokenId} is ${direction}.`,
         `Wallet: ${shortAddress(position.wallet.address)}`,
         `Tick: ${position.currentTick ?? "unknown"} | Range: ${position.tickLower} - ${position.tickUpper}`,
-        position.poolAddress ? `Pool: ${shortAddress(position.poolAddress)}` : undefined
+        position.poolAddress ? `Pool: ${shortAddress(position.poolAddress)}` : undefined,
+        planSummary || undefined
       ]
         .filter(Boolean)
-        .join("\n")
+        .join("\n"),
+      autopilotPlan ? { reply_markup: autopilotKeyboard(autopilotPlan.record.id) } : undefined
     );
+
+    if (autopilotPlan) {
+      await prisma.rebalancePlan.update({
+        where: { id: autopilotPlan.record.id },
+        data: {
+          telegramChatId: String(message.chat.id),
+          telegramMessageId: String(message.message_id)
+        }
+      });
+    }
 
     await prisma.telegramEvent.create({
       data: {

@@ -23,6 +23,7 @@ import {
   type WalletAssetAmounts
 } from "@/lib/wallet-assets";
 import { logoutAction } from "./actions";
+import { AutopilotPlanLive } from "./autopilot-plan-live";
 import { BrandLogo } from "./brand-logo";
 import { DashboardTabs } from "./dashboard-tabs";
 import { GrowthChart } from "./growth-chart";
@@ -187,6 +188,7 @@ function DashboardLoadingTabs() {
   return (
     <DashboardTabs
       overview={<DashboardPanelLoading title="Narrow range swap guard" detail="Loading live wallet balances and pool range." />}
+      autopilot={<DashboardPanelLoading title="Autopilot plan" detail="Loading current strategy state, risk gates, and rebalance economics." />}
       tripleGuide={<DashboardPanelLoading title="Triple range guide" detail="Loading adjacent range positions and capital split." />}
       performance={<DashboardPanelLoading title="Growth comparison" detail="Loading cached historical prices and transaction states." />}
       positions={<DashboardPanelLoading title="CL positions" detail="Loading positions, fees, and valuation snapshots." />}
@@ -556,6 +558,17 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
                 </div>
               </div>
               <NarrowRangeRebalanceLive />
+            </section>
+          }
+          autopilot={
+            <section className="panel section">
+              <div className="section-head">
+                <div>
+                  <h2>Autopilot plan</h2>
+                  <p className="muted">Decision state, planned range actions, immediate rebalance cost, and reversal-debt guardrails.</p>
+                </div>
+              </div>
+              <AutopilotPlanLive />
             </section>
           }
           tripleGuide={
