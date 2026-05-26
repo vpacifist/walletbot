@@ -152,11 +152,37 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "5187240",
           detail: "AUTOPILOT_REBALANCER_ADDRESS is not configured"
         }
-      }
+      },
+      rebalancerAddress: ""
     });
 
     expect(execution.status).toBe("blocked");
     expect(execution.telegramSummary).toContain("BLOCKED Rebalancer contract");
+  });
+
+  it("reports ready NFT approval in the atomic rebalancer message", () => {
+    const execution = buildAutopilotDryRunExecution(preview(), {
+      closePositions: {
+        "5187240": {
+          status: "available",
+          tokenId: "5187240",
+          liquidity: 123n,
+          tokensOwed0: 4n,
+          tokensOwed1: 5n
+        }
+      },
+      nftApprovals: {
+        "5187240": {
+          status: "approved",
+          tokenId: "5187240",
+          detail: "Rebalancer is approved for this NFT"
+        }
+      },
+      rebalancerAddress: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0"
+    });
+
+    expect(execution.telegramSummary).toContain("NFT approval is ready");
+    expect(execution.telegramSummary).not.toContain("requires NFT approval");
   });
 
   it("prepares simulation-only mint calldata when allowances cover desired amounts", () => {

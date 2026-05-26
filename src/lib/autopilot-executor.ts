@@ -80,6 +80,7 @@ type ClosePositionState =
 type BuildExecutionOptions = {
   closePositions?: Record<string, ClosePositionState>;
   nftApprovals?: Record<string, NftApprovalState>;
+  rebalancerAddress?: Address | "";
   allowances?: Record<string, bigint>;
   pool?: {
     currentTick: number;
@@ -543,9 +544,10 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
   const closeIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "close_position" }> => intent.kind === "close_position");
   const swapIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input");
   const mintIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "mint_position" }> => intent.kind === "mint_position");
-  const target = getConfig().AUTOPILOT_REBALANCER_ADDRESS
-    ? getAddress(getConfig().AUTOPILOT_REBALANCER_ADDRESS)
-    : "AUTOPILOT_REBALANCER_ADDRESS not configured";
+  const configuredRebalancer = options.rebalancerAddress ?? getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  const target = configuredRebalancer ? getAddress(configuredRebalancer) : "AUTOPILOT_REBALANCER_ADDRESS not configured";
+  const approvalStates = closeIntent ? [options.nftApprovals?.[closeIntent.tokenId]].filter(Boolean) : [];
+  const approvalReady = approvalStates.length > 0 && approvalStates.every((approval) => approval?.status === "approved");
 
   if (!closeIntent || !swapIntent || !mintIntent) {
     return {
@@ -652,9 +654,9 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     functionName: "rebalance",
     data,
     dataPreview: dataPreview(data),
-    reason: getConfig().AUTOPILOT_REBALANCER_ADDRESS
-      ? "Single-call contract calldata prepared for dry-run review; live execution still disabled and requires NFT approval to the rebalancer."
-      : "Single-call contract calldata prepared, but live execution needs AUTOPILOT_REBALANCER_ADDRESS and NFT approval to the rebalancer."
+    reason: configuredRebalancer
+      ? `Single-call contract calldata prepared for dry-run review; live execution still disabled; ${approvalReady ? "NFT approval is ready." : "NFT approval still needs to be checked."}`
+      : "Single-call contract calldata prepared, but live execution needs AUTOPILOT_REBALANCER_ADDRESS."
   };
 }
 
@@ -662,7 +664,8 @@ function buildApprovalChecks(intents: TransactionIntent[], options: BuildExecuti
   const closeIntents = intents.filter((intent): intent is Extract<TransactionIntent, { kind: "close_position" }> => intent.kind === "close_position");
   if (closeIntents.length === 0 || !options.nftApprovals) return [];
 
-  if (!getConfig().AUTOPILOT_REBALANCER_ADDRESS) {
+  const configuredRebalancer = options.rebalancerAddress ?? getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  if (!configuredRebalancer) {
     return [
       {
         label: "Rebalancer contract",
