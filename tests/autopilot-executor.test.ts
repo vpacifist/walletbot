@@ -90,6 +90,25 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("No on-chain transactions were sent.");
   });
 
+  it("prepares simulation-only close calldata when live position state is available", () => {
+    const execution = buildAutopilotDryRunExecution(preview(), {
+      closePositions: {
+        "5187240": {
+          status: "available",
+          tokenId: "5187240",
+          liquidity: 123n,
+          tokensOwed0: 4n,
+          tokensOwed1: 5n
+        }
+      }
+    });
+
+    expect(execution.calls.map((call) => call.functionName)).toEqual(["decreaseLiquidity", "collect", "exactInputSingle", null]);
+    expect(execution.calls.slice(0, 2).map((call) => call.status)).toEqual(["prepared", "prepared"]);
+    expect(execution.telegramSummary).toContain("close_position.decreaseLiquidity");
+    expect(execution.telegramSummary).toContain("Simulation-only calldata prepared for full live liquidity 123");
+  });
+
   it("blocks execution when a required quote is unavailable", () => {
     const execution = buildAutopilotDryRunExecution(
       preview({
