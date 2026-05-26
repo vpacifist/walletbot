@@ -3,7 +3,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    environment: "node"
+    environment: "node",
+    exclude: ["node_modules/**", "dist/**", ".next/**", "artifacts/**", "cache/**", "contracts/test/**"]
   },
   resolve: {
     alias: {

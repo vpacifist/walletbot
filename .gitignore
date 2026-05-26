@@ -4,6 +4,8 @@
 node_modules
 coverage
 dist
+artifacts
+cache
 *.log
 *.tsbuildinfo
 prisma/migrations/dev.db
