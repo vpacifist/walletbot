@@ -19,6 +19,15 @@ async function main() {
   let lowEthCheckTimeout: ReturnType<typeof setTimeout> | undefined;
 
   if (bot) {
+    await bot.telegram
+      .setMyCommands([
+        { command: "autopilot", description: "Show current autopilot plan" },
+        { command: "status", description: "Show wallet sync and position status" },
+        { command: "positions", description: "Show latest WETH/USDC positions" }
+      ])
+      .then(() => console.log("Telegram bot commands registered"))
+      .catch((error) => console.error("Telegram bot command registration failed", error));
+
     void bot
       .launch()
       .then(() => console.log("Telegram bot launched"))
