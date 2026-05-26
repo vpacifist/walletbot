@@ -90,9 +90,18 @@ type ExecutionCall = {
   status: "prepared" | "blocked";
   target: string;
   functionName: string | null;
+  data: `0x${string}` | null;
   dataPreview: string | null;
   reason: string;
+  simulation: {
+    status: "not_run" | "simulated" | "failed" | "skipped";
+    detail: string;
+  };
 };
+
+function simulation(status: ExecutionCall["simulation"]["status"], detail: string): ExecutionCall["simulation"] {
+  return { status, detail };
+}
 
 function statusIcon(ok: boolean) {
   return ok ? "OK" : "BLOCKED";
@@ -221,8 +230,10 @@ function buildCloseCalls(intent: Extract<TransactionIntent, { kind: "close_posit
         status: "blocked" as const,
         target: CONTRACTS.nonfungiblePositionManager,
         functionName: null,
+        data: null,
         dataPreview: null,
-        reason: "Close calldata needs live position state from NonfungiblePositionManager.positions(tokenId)."
+        reason: "Close calldata needs live position state from NonfungiblePositionManager.positions(tokenId).",
+        simulation: simulation("skipped", "Call is not prepared.")
       }
     ];
   }
@@ -234,8 +245,10 @@ function buildCloseCalls(intent: Extract<TransactionIntent, { kind: "close_posit
         status: "blocked" as const,
         target: CONTRACTS.nonfungiblePositionManager,
         functionName: null,
+        data: null,
         dataPreview: null,
-        reason: state.reason
+        reason: state.reason,
+        simulation: simulation("skipped", "Call is not prepared.")
       }
     ];
   }
@@ -247,8 +260,10 @@ function buildCloseCalls(intent: Extract<TransactionIntent, { kind: "close_posit
         status: "blocked" as const,
         target: CONTRACTS.nonfungiblePositionManager,
         functionName: null,
+        data: null,
         dataPreview: null,
-        reason: `Position #${intent.tokenId} has zero live liquidity.`
+        reason: `Position #${intent.tokenId} has zero live liquidity.`,
+        simulation: simulation("skipped", "Call is not prepared.")
       }
     ];
   }
@@ -287,16 +302,20 @@ function buildCloseCalls(intent: Extract<TransactionIntent, { kind: "close_posit
       status: "prepared" as const,
       target: CONTRACTS.nonfungiblePositionManager,
       functionName: "decreaseLiquidity",
+      data: decreaseData,
       dataPreview: dataPreview(decreaseData),
-      reason: `Simulation-only calldata prepared for full live liquidity ${state.liquidity.toString()}; min amounts are 0 for dry-run only.`
+      reason: `Simulation-only calldata prepared for full live liquidity ${state.liquidity.toString()}; min amounts are 0 for dry-run only.`,
+      simulation: simulation("not_run", "Simulation has not run yet.")
     },
     {
       intent: `${intentLabel}.collect`,
       status: "prepared" as const,
       target: CONTRACTS.nonfungiblePositionManager,
       functionName: "collect",
+      data: collectData,
       dataPreview: dataPreview(collectData),
-      reason: `Simulation-only calldata prepared with max collection; currently owed ${state.tokensOwed0.toString()} token0 / ${state.tokensOwed1.toString()} token1 before decrease.`
+      reason: `Simulation-only calldata prepared with max collection; currently owed ${state.tokensOwed0.toString()} token0 / ${state.tokensOwed1.toString()} token1 before decrease.`,
+      simulation: simulation("not_run", "Simulation has not run yet.")
     }
   ];
 }
@@ -356,8 +375,10 @@ function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position
       status: "blocked",
       target: CONTRACTS.nonfungiblePositionManager,
       functionName: null,
+      data: null,
       dataPreview: null,
-      reason: "Mint calldata needs live pool price and a valid target range."
+      reason: "Mint calldata needs live pool price and a valid target range.",
+      simulation: simulation("skipped", "Call is not prepared.")
     };
   }
 
@@ -369,8 +390,10 @@ function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position
       status: "blocked",
       target: CONTRACTS.nonfungiblePositionManager,
       functionName: null,
+      data: null,
       dataPreview: null,
-      reason: "Mint calldata needs WETH/USDC allowance checks."
+      reason: "Mint calldata needs WETH/USDC allowance checks.",
+      simulation: simulation("skipped", "Call is not prepared.")
     };
   }
 
@@ -384,8 +407,10 @@ function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position
       status: "blocked",
       target: CONTRACTS.nonfungiblePositionManager,
       functionName: "mint",
+      data: null,
       dataPreview: null,
-      reason: `Missing approval: ${missing.join("; ")}.`
+      reason: `Missing approval: ${missing.join("; ")}.`,
+      simulation: simulation("skipped", "Call is not prepared.")
     };
   }
 
@@ -414,8 +439,10 @@ function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position
     status: "prepared",
     target: CONTRACTS.nonfungiblePositionManager,
     functionName: "mint",
+    data,
     dataPreview: dataPreview(data),
-    reason: `Simulation-only calldata prepared with amount0Desired ${amounts.amount0.toString()} / amount1Desired ${amounts.amount1.toString()}.`
+    reason: `Simulation-only calldata prepared with amount0Desired ${amounts.amount0.toString()} / amount1Desired ${amounts.amount1.toString()}.`,
+    simulation: simulation("not_run", "Simulation has not run yet.")
   };
 }
 
@@ -428,8 +455,10 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
           status: "blocked" as const,
           target: CONTRACTS.uniswapV3SwapRouter02,
           functionName: "exactInputSingle",
+          data: null,
           dataPreview: null,
-          reason: "Swap calldata requires an available quote and amountOutMinimum."
+          reason: "Swap calldata requires an available quote and amountOutMinimum.",
+          simulation: simulation("skipped", "Call is not prepared.")
         };
       }
 
@@ -455,8 +484,10 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
         status: "prepared" as const,
         target: CONTRACTS.uniswapV3SwapRouter02,
         functionName: "exactInputSingle",
+        data,
         dataPreview: dataPreview(data),
-        reason: "Calldata prepared for dry-run review; simulation and submission remain disabled."
+        reason: "Calldata prepared for dry-run review; simulation and submission remain disabled.",
+        simulation: simulation("not_run", "Simulation has not run yet.")
       };
     }
 
@@ -473,8 +504,10 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
       status: "blocked" as const,
       target: intent.target,
       functionName: null,
+      data: null,
       dataPreview: null,
-      reason: "Manual review required before calldata can be prepared."
+      reason: "Manual review required before calldata can be prepared.",
+      simulation: simulation("skipped", "Call is not prepared.")
     };
   });
 }
@@ -496,6 +529,9 @@ function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegra
     "",
     "Calldata / simulation",
     ...execution.calls.map((call) => `${statusIcon(call.status === "prepared")} ${call.intent}: ${call.functionName ?? "not prepared"} @ ${call.target}${call.dataPreview ? ` | ${call.dataPreview}` : ""} - ${call.reason}`),
+    "",
+    "eth_call simulation",
+    ...execution.calls.map((call) => `${call.simulation.status.toUpperCase()} ${call.intent}: ${call.simulation.detail}`),
     "",
     "Execution mode: dry run only. No on-chain transactions were sent."
   ].join("\n");
@@ -580,6 +616,50 @@ async function fetchAllowance(token: Address) {
     .catch(() => 0n);
 }
 
+function shouldSimulateIndependentCall(call: ExecutionCall) {
+  return call.status === "prepared" && (call.functionName === "decreaseLiquidity" || call.functionName === "collect");
+}
+
+async function simulatePreparedCalls(calls: ExecutionCall[]) {
+  const client = createBaseClient();
+  const account = getAddress(getConfig().BASE_WALLET_ADDRESS);
+
+  return Promise.all(
+    calls.map(async (call) => {
+      if (call.status !== "prepared" || !call.data) {
+        return {
+          ...call,
+          simulation: simulation("skipped", call.simulation.detail)
+        };
+      }
+
+      if (!shouldSimulateIndependentCall(call)) {
+        return {
+          ...call,
+          simulation: simulation("skipped", "Skipped to avoid a false negative; this call depends on prior transaction effects.")
+        };
+      }
+
+      try {
+        await client.call({
+          account,
+          to: getAddress(call.target),
+          data: call.data
+        });
+        return {
+          ...call,
+          simulation: simulation("simulated", "eth_call succeeded against current chain state.")
+        };
+      } catch (error) {
+        return {
+          ...call,
+          simulation: simulation("failed", shortError(error))
+        };
+      }
+    })
+  );
+}
+
 export async function createAutopilotDryRunExecution(planId: string) {
   const preview = await createAutopilotExecutionPreview(planId);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
@@ -588,11 +668,33 @@ export async function createAutopilotDryRunExecution(planId: string) {
     fetchAllowance(CONTRACTS.weth),
     fetchAllowance(CONTRACTS.usdc)
   ]);
-  return buildAutopilotDryRunExecution(preview, {
+  const execution = buildAutopilotDryRunExecution(preview, {
     closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
     allowances: {
       [allowanceKey(CONTRACTS.weth)]: wethAllowance,
       [allowanceKey(CONTRACTS.usdc)]: usdcAllowance
     }
   });
+  const calls = await simulatePreparedCalls(execution.calls);
+  const simulationFailed = calls.some((call) => call.simulation.status === "failed");
+  const executionWithSimulation = {
+    ...execution,
+    status: execution.status === "validated" && simulationFailed ? ("blocked" as const) : execution.status,
+    checks: simulationFailed
+      ? [
+          ...execution.checks,
+          {
+            label: "eth_call simulation",
+            ok: false,
+            detail: "At least one independent prepared call failed simulation"
+          }
+        ]
+      : execution.checks,
+    calls
+  };
+
+  return {
+    ...executionWithSimulation,
+    telegramSummary: buildTelegramSummary(executionWithSimulation)
+  };
 }

@@ -89,6 +89,7 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.calls.map((call) => call.status)).toEqual(["blocked", "prepared", "blocked"]);
     expect(execution.calls[1].functionName).toBe("exactInputSingle");
     expect(execution.telegramSummary).toContain("Calldata / simulation");
+    expect(execution.telegramSummary).toContain("eth_call simulation");
     expect(execution.telegramSummary).toContain("Close position #5187240");
     expect(execution.telegramSummary).toContain("Swap 1 WETH");
     expect(execution.telegramSummary).toContain("Mint -199920 - -199860");
