@@ -471,7 +471,6 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
             tokenOut: intent.tokenOutAddress,
             fee: 3000,
             recipient: getAddress(getConfig().BASE_WALLET_ADDRESS),
-            deadline: BigInt(Math.floor(Date.now() / 1000) + 120),
             amountIn: BigInt(intent.amountInRaw),
             amountOutMinimum: BigInt(intent.minAmountOutRaw),
             sqrtPriceLimitX96: 0n

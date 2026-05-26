@@ -48,7 +48,6 @@ interface ISwapRouter02 {
         address tokenOut;
         uint24 fee;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
@@ -176,7 +175,6 @@ contract AutopilotRebalancer {
                 tokenOut: params.swap.tokenOut,
                 fee: POOL_FEE,
                 recipient: address(this),
-                deadline: params.deadline,
                 amountIn: params.swap.amountIn,
                 amountOutMinimum: params.swap.amountOutMinimum,
                 sqrtPriceLimitX96: params.swap.sqrtPriceLimitX96

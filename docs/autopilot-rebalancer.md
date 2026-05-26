@@ -17,6 +17,7 @@ Before use:
 - Approve or transfer required WETH/USDC only if the execution path needs extra wallet funds.
 - Keep Telegram approval and uncovered-debt guardrails in the off-chain planner.
 - Simulate `rebalance` with the exact params immediately before sending.
+- Base SwapRouter02 uses the `exactInputSingle` params shape without `deadline`; the contract-level deadline still guards the full rebalance.
 
 Hard constraints in the contract:
 
