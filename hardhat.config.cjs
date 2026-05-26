@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 require("@nomicfoundation/hardhat-ethers");
 const { loadEnvConfig } = require("@next/env");
 

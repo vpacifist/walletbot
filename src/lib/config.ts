@@ -16,7 +16,15 @@ const envSchema = z.object({
   TELEGRAM_CHAT_ID: z.string().optional().default(""),
   APP_PASSWORD: z.string().min(8).default("change-me-now"),
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(180),
-  NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot")
+  NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot"),
+  AUTOPILOT_LIVE_EXECUTION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === "true" || value === "1"),
+  BASE_WALLET_PRIVATE_KEY: z
+    .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{64}$/)])
+    .optional()
+    .default("")
 });
 
 let cachedConfig: z.infer<typeof envSchema> | undefined;

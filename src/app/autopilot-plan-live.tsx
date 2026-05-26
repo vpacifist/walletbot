@@ -52,6 +52,12 @@ type AutopilotPlan = {
     estimatedCostUsd: number;
   }>;
   updatedAt: string;
+  dbRecord?: {
+    id: string;
+    status: string;
+    decisionNote: string | null;
+    txHash: string | null;
+  } | null;
 };
 
 const STATE_ORDER: AutopilotPlan["state"][] = ["idle", "armed", "confirming", "ready", "cooldown"];
@@ -104,6 +110,24 @@ function shortError(message: string) {
   return `${message.slice(0, 177)}...`;
 }
 
+function dbStatusTone(status?: string) {
+  if (status === "completed") return "good";
+  if (status === "failed") return "bad";
+  if (status === "executing") return "warn";
+  if (status === "approved") return "good";
+  return "muted";
+}
+
+function dbStatusLabel(status?: string) {
+  if (status === "completed") return "Ребалансировка успешно выполнена";
+  if (status === "failed") return "Сбой трансляции транзакции";
+  if (status === "executing") return "Отправка на блокчейн...";
+  if (status === "approved") return "План одобрен и готов к отправке";
+  if (status === "skipped") return "План пропущен";
+  if (status === "paused") return "Работа приостановлена";
+  return `Статус плана: ${status}`;
+}
+
 export function AutopilotPlanLive() {
   const [data, setData] = useState<AutopilotPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +162,7 @@ export function AutopilotPlanLive() {
         }
       } finally {
         window.clearTimeout(abortId);
-        if (active) timeoutId = setTimeout(poll, 60_000);
+        if (active) timeoutId = setTimeout(poll, 15_000);
       }
     };
 
@@ -158,6 +182,26 @@ export function AutopilotPlanLive() {
 
   return (
     <div className="autopilot-grid">
+      {data?.dbRecord && data.dbRecord.status !== "pending" && (
+        <div className={`autopilot-execution-banner ${dbStatusTone(data.dbRecord.status)}`} style={{ gridColumn: "1 / -1", marginBottom: "1rem" }}>
+          <div>
+            <strong>{dbStatusLabel(data.dbRecord.status)}</strong>
+            <p className="muted" style={{ margin: "0.2rem 0 0 0" }}>{data.dbRecord.decisionNote}</p>
+          </div>
+          {data.dbRecord.txHash && (
+            <a
+              href={`https://base.blockscout.com/tx/${data.dbRecord.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center" }}
+            >
+              Blockscout ↗
+            </a>
+          )}
+        </div>
+      )}
+
       <div className="rebalance-primary">
         <div className={`hero-metric ${error && !data ? "bad" : statusTone}`}>
           <p className="metric-label">Autopilot state</p>

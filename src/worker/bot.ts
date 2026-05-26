@@ -1,4 +1,5 @@
 import { Context, Telegraf } from "telegraf";
+import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
@@ -8,6 +9,7 @@ import { shortAddress } from "@/lib/format";
 
 const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
 const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
+const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 
 function assertAllowedChat(ctx: Context) {
   const expected = getConfig().TELEGRAM_CHAT_ID;
@@ -31,6 +33,13 @@ function autopilotKeyboard(planId: string) {
 function autopilotExecutionKeyboard(planId: string) {
   return {
     inline_keyboard: [[{ text: "Run executor dry-run", callback_data: `ap:execute:${planId}` }]]
+  };
+}
+
+function autopilotLiveKeyboard(planId: string) {
+  if (!getConfig().AUTOPILOT_LIVE_EXECUTION_ENABLED) return undefined;
+  return {
+    inline_keyboard: [[{ text: "Execute live transaction", callback_data: `ap:execute_live:${planId}` }]]
   };
 }
 
@@ -154,10 +163,43 @@ export function createBot() {
     try {
       await ctx.answerCbQuery("Executor dry-run started");
       const execution = await createAutopilotDryRunExecution(planId);
-      await ctx.reply(execution.telegramSummary);
+      const liveKeyboard = execution.status === "validated" ? autopilotLiveKeyboard(planId) : undefined;
+      await ctx.reply(execution.telegramSummary, {
+        reply_markup: liveKeyboard
+      });
     } catch (error) {
       await ctx.answerCbQuery("Executor dry-run failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Executor dry-run failed: ${error.message}` : "Executor dry-run failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_LIVE_EXECUTE_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Broadcasting transaction...");
+      await ctx.reply("Sending atomic rebalance transaction to Base. Please wait...");
+
+      const result = await broadcastAutopilotRebalance(planId);
+
+      if (result.success && result.txHash) {
+        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+        await ctx.reply(
+          [
+            "**Transaction executed successfully on-chain!**",
+            `Tx Hash: \`${result.txHash}\``,
+            `[View on Blockscout](${explorerUrl})`
+          ].join("\n"),
+          { parse_mode: "Markdown" }
+        );
+      } else {
+        await ctx.reply(`**On-chain execution failed:**\n${result.error || "Unknown error"}`);
+      }
+    } catch (error) {
+      await ctx.answerCbQuery("Live execution failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed.");
     }
   });
 

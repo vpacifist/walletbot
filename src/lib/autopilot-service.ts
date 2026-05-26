@@ -194,7 +194,7 @@ export async function recordAutopilotPlanDecision(id: string, decision: "approve
       decidedAt: new Date(),
       decisionNote:
         decision === "approved"
-          ? "Approved in Telegram. On-chain execution is not enabled yet."
+          ? "Approved in Telegram. Executor dry-run is ready."
           : decision === "skipped"
             ? "Skipped in Telegram."
             : "Paused in Telegram."
