@@ -338,3 +338,70 @@ export const swapRouter02Abi = [
     outputs: [{ name: "amountOut", type: "uint256" }]
   }
 ] as const;
+
+export const autopilotRebalancerAbi = [
+  {
+    type: "function",
+    name: "rebalance",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          {
+            name: "closePosition",
+            type: "tuple",
+            components: [
+              { name: "tokenId", type: "uint256" },
+              { name: "liquidity", type: "uint128" },
+              { name: "amount0Min", type: "uint256" },
+              { name: "amount1Min", type: "uint256" }
+            ]
+          },
+          {
+            name: "swap",
+            type: "tuple",
+            components: [
+              { name: "tokenIn", type: "address" },
+              { name: "tokenOut", type: "address" },
+              { name: "amountIn", type: "uint256" },
+              { name: "amountOutMinimum", type: "uint256" },
+              { name: "sqrtPriceLimitX96", type: "uint160" }
+            ]
+          },
+          {
+            name: "mintPosition",
+            type: "tuple",
+            components: [
+              { name: "tickLower", type: "int24" },
+              { name: "tickUpper", type: "int24" },
+              { name: "amount0Desired", type: "uint256" },
+              { name: "amount1Desired", type: "uint256" },
+              { name: "amount0Min", type: "uint256" },
+              { name: "amount1Min", type: "uint256" }
+            ]
+          },
+          { name: "deadline", type: "uint256" }
+        ]
+      }
+    ],
+    outputs: [
+      { name: "mintedTokenId", type: "uint256" },
+      { name: "mintedLiquidity", type: "uint128" },
+      { name: "swapAmountOut", type: "uint256" }
+    ]
+  },
+  {
+    type: "event",
+    name: "Rebalanced",
+    inputs: [
+      { indexed: true, name: "closedTokenId", type: "uint256" },
+      { indexed: true, name: "mintedTokenId", type: "uint256" },
+      { indexed: false, name: "swapAmountOut", type: "uint256" },
+      { indexed: false, name: "mintedLiquidity", type: "uint128" },
+      { indexed: false, name: "mintedAmount0", type: "uint256" },
+      { indexed: false, name: "mintedAmount1", type: "uint256" }
+    ]
+  }
+] as const;
