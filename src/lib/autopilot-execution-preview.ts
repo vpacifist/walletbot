@@ -1,7 +1,7 @@
 import { type RebalancePlan } from "@prisma/client";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { prisma } from "./db";
-import { quoteExactInputSingle, type SwapQuote } from "./uniswap-v3-quoter";
+import { quoteExactInputSingle, type SwapQuote, type SwapQuoteRequest } from "./uniswap-v3-quoter";
 
 export type AutopilotExecutionPreview = {
   planId: string;
@@ -17,12 +17,17 @@ export type AutopilotExecutionPreview = {
     label: string;
     detail: string;
   }>;
-  quote: SwapQuote | null;
+  quote: SwapQuoteResult;
   telegramSummary: string;
 };
 
 const MAX_IMMEDIATE_COST_USD = 10;
 const MAX_REVERSAL_DEBT_USD = 25;
+
+type SwapQuoteResult =
+  | { status: "not_requested" }
+  | { status: "available"; data: SwapQuote }
+  | { status: "unavailable"; request: SwapQuoteRequest; reason: string };
 
 function formatUsd(value: number) {
   return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
@@ -30,6 +35,15 @@ function formatUsd(value: number) {
 
 function statusIcon(ok: boolean) {
   return ok ? "OK" : "BLOCKED";
+}
+
+function shortError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("Status: 429") || message.toLowerCase().includes("too many requests")) {
+    return "RPC rate limit while requesting quote. Try approving again in a few minutes.";
+  }
+  if (message.length <= 180) return message;
+  return `${message.slice(0, 177)}...`;
 }
 
 function actionStepLabel(type: string) {
@@ -42,6 +56,18 @@ function actionStepLabel(type: string) {
 }
 
 function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegramSummary">) {
+  const quoteText =
+    preview.quote.status === "available"
+      ? [
+          `${preview.quote.data.source}: ${preview.quote.data.amountIn.toLocaleString("en-US", { maximumFractionDigits: preview.quote.data.spendSymbol === "USDC" ? 2 : 6 })} ${preview.quote.data.spendSymbol}`,
+          `-> ${preview.quote.data.amountOut.toLocaleString("en-US", { maximumFractionDigits: preview.quote.data.receiveSymbol === "USDC" ? 2 : 6 })} ${preview.quote.data.receiveSymbol}`,
+          `Effective WETH price: ${formatUsd(preview.quote.data.effectivePrice)}`,
+          `Gas estimate: ${preview.quote.data.gasEstimate}`
+        ].join("\n")
+      : preview.quote.status === "unavailable"
+        ? `Quote unavailable: ${preview.quote.reason}`
+        : "No quote request in this plan.";
+
   return [
     "Execution preview (dry run)",
     `Plan id: ${preview.planId}`,
@@ -55,14 +81,7 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
     ...preview.steps.map((step, index) => `${index + 1}. ${step.label}: ${step.detail}`),
     "",
     "Quote",
-    preview.quote
-      ? [
-          `${preview.quote.source}: ${preview.quote.amountIn.toLocaleString("en-US", { maximumFractionDigits: preview.quote.spendSymbol === "USDC" ? 2 : 6 })} ${preview.quote.spendSymbol}`,
-          `-> ${preview.quote.amountOut.toLocaleString("en-US", { maximumFractionDigits: preview.quote.receiveSymbol === "USDC" ? 2 : 6 })} ${preview.quote.receiveSymbol}`,
-          `Effective WETH price: ${formatUsd(preview.quote.effectivePrice)}`,
-          `Gas estimate: ${preview.quote.gasEstimate}`
-        ].join("\n")
-      : "No quote request in this plan.",
+    quoteText,
     "",
     "No on-chain transactions were sent."
   ]
@@ -74,7 +93,7 @@ export function buildAutopilotExecutionPreview(
   record: Pick<RebalancePlan, "id" | "status" | "planKey">,
   currentPlanKey: string,
   currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>,
-  quote: SwapQuote | null = null
+  quote: SwapQuoteResult = { status: "not_requested" }
 ) {
   const isApproved = record.status === "approved";
   const isFresh = currentPlanKey === record.planKey;
@@ -137,6 +156,10 @@ export async function createAutopilotExecutionPreview(planId: string): Promise<A
 
   const currentPlan = await getCurrentAutopilotPlan();
   const quoteRequest = currentPlan.actions.find((action) => action.type === "partial_swap" && action.quoteRequest)?.quoteRequest;
-  const quote = quoteRequest ? await quoteExactInputSingle(quoteRequest) : null;
+  const quote: SwapQuoteResult = quoteRequest
+    ? await quoteExactInputSingle(quoteRequest)
+        .then((data): SwapQuoteResult => ({ status: "available", data }))
+        .catch((error): SwapQuoteResult => ({ status: "unavailable", request: quoteRequest, reason: shortError(error) }))
+    : { status: "not_requested" };
   return buildAutopilotExecutionPreview(record, autopilotPlanKey(currentPlan), currentPlan, quote);
 }

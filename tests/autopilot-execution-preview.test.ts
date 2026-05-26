@@ -53,21 +53,43 @@ describe("buildAutopilotExecutionPreview", () => {
 
   it("includes quote-only output when a quote is available", () => {
     const preview = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", plan(), {
-      tokenIn: "0x4200000000000000000000000000000000000006",
-      tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      fee: 3000,
-      amountIn: 1,
-      spendSymbol: "WETH",
-      receiveSymbol: "USDC",
-      amountInRaw: "1000000000000000000",
-      amountOut: 2090,
-      amountOutRaw: "2090000000",
-      effectivePrice: 2090,
-      gasEstimate: "120000",
-      source: "Uniswap QuoterV2"
+      status: "available",
+      data: {
+        tokenIn: "0x4200000000000000000000000000000000000006",
+        tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        fee: 3000,
+        amountIn: 1,
+        spendSymbol: "WETH",
+        receiveSymbol: "USDC",
+        amountInRaw: "1000000000000000000",
+        amountOut: 2090,
+        amountOutRaw: "2090000000",
+        effectivePrice: 2090,
+        gasEstimate: "120000",
+        source: "Uniswap QuoterV2"
+      }
     });
 
     expect(preview.telegramSummary).toContain("Uniswap QuoterV2");
     expect(preview.telegramSummary).toContain("Effective WETH price: $2,090");
+  });
+
+  it("keeps the preview usable when quote retrieval fails", () => {
+    const preview = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", plan(), {
+      status: "unavailable",
+      request: {
+        tokenIn: "0x4200000000000000000000000000000000000006",
+        tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        fee: 3000,
+        amountIn: 1,
+        spendSymbol: "WETH",
+        receiveSymbol: "USDC"
+      },
+      reason: "RPC rate limit while requesting quote. Try approving again in a few minutes."
+    });
+
+    expect(preview.status).toBe("ready");
+    expect(preview.telegramSummary).toContain("Quote unavailable");
+    expect(preview.telegramSummary).toContain("No on-chain transactions were sent.");
   });
 });
