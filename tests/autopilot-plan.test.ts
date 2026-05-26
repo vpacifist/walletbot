@@ -53,6 +53,45 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.economics.reversalDebtUsd).toBeGreaterThan(100);
   });
 
+  it("credits collected and uncollected fees against reversal debt", () => {
+    const plan = calculateAutopilotPlan({
+      positions: [
+        position({ id: "active", tokenId: "1", tickLower: -199860, tickUpper: -199800, status: PositionStatus.in_range }),
+        position({ id: "upper", tokenId: "2", tickLower: -199800, tickUpper: -199740, status: PositionStatus.above_range })
+      ],
+      transactions: [
+        {
+          timestamp: new Date("2026-05-25T21:00:00.000Z"),
+          hash: "0xswap",
+          protocol: "Matcha/0x v2",
+          type: TransactionType.swap,
+          tokenAmounts: [
+            { symbol: "WETH", amount: "1", direction: "in" },
+            { symbol: "USDC", amount: "2200", direction: "out" }
+          ]
+        },
+        {
+          timestamp: new Date("2026-05-25T21:30:00.000Z"),
+          hash: "0xcollect",
+          protocol: "Uniswap v3",
+          type: TransactionType.lp_collect,
+          tokenAmounts: [{ symbol: "USDC", amount: "12", direction: "in" }]
+        }
+      ],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -199845,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc,
+      uncollectedFeeCreditUsd: 5
+    });
+
+    expect(plan.economics.collectedFeesSinceLastSwapUsd).toBe(12);
+    expect(plan.economics.uncollectedFeesUsd).toBe(5);
+    expect(plan.economics.feeCreditUsd).toBe(17);
+    expect(plan.economics.uncoveredReversalDebtUsd).toBeLessThan(plan.economics.reversalDebtUsd + plan.economics.immediateCostUsd);
+  });
+
   it("plans missing ranges without treating a balanced ladder as executable", () => {
     const plan = calculateAutopilotPlan({
       positions: [

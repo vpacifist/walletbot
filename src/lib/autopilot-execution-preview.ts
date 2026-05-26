@@ -30,7 +30,7 @@ export type AutopilotExecutionPreview = {
 };
 
 const MAX_IMMEDIATE_COST_USD = 10;
-const MAX_REVERSAL_DEBT_USD = 25;
+const MAX_UNCOVERED_DEBT_USD = 10;
 
 export type SwapQuoteResult =
   | { status: "not_requested" }
@@ -107,7 +107,7 @@ export function buildAutopilotExecutionPreview(
   const isFresh = currentPlanKey === record.planKey;
   const hasAction = currentPlan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
   const costOk = currentPlan.economics.immediateCostUsd <= MAX_IMMEDIATE_COST_USD;
-  const reversalDebtOk = currentPlan.economics.reversalDebtUsd <= MAX_REVERSAL_DEBT_USD;
+  const uncoveredDebtOk = currentPlan.economics.uncoveredReversalDebtUsd <= MAX_UNCOVERED_DEBT_USD;
   const notIdle = currentPlan.state !== "idle";
 
   const checks = [
@@ -132,9 +132,9 @@ export function buildAutopilotExecutionPreview(
       detail: `${formatUsd(currentPlan.economics.immediateCostUsd)} <= ${formatUsd(MAX_IMMEDIATE_COST_USD)}`
     },
     {
-      label: "Reversal debt",
-      ok: reversalDebtOk,
-      detail: `${formatUsd(currentPlan.economics.reversalDebtUsd)} <= ${formatUsd(MAX_REVERSAL_DEBT_USD)}`
+      label: "Uncovered debt",
+      ok: uncoveredDebtOk,
+      detail: `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(MAX_UNCOVERED_DEBT_USD)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
     }
   ];
   const reasons = checks.filter((check) => !check.ok).map((check) => check.label);

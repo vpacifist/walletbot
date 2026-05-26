@@ -23,6 +23,10 @@ function plan(input: Partial<AutopilotPlan> = {}): AutopilotPlan {
       estimatedSlippageUsd: 2.9,
       estimatedGasUsd: 0.1,
       reversalDebtUsd: 0,
+      feeCreditUsd: 0,
+      collectedFeesSinceLastSwapUsd: 0,
+      uncollectedFeesUsd: 0,
+      uncoveredReversalDebtUsd: 3,
       feesNeededToReverseUsd: 3,
       lastDirectionalSwap: null
     },

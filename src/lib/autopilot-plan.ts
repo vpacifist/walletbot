@@ -28,6 +28,10 @@ export type AutopilotPlan = {
     estimatedSlippageUsd: number;
     estimatedGasUsd: number;
     reversalDebtUsd: number;
+    feeCreditUsd: number;
+    collectedFeesSinceLastSwapUsd: number;
+    uncollectedFeesUsd: number;
+    uncoveredReversalDebtUsd: number;
     feesNeededToReverseUsd: number;
     lastDirectionalSwap: DirectionalSwap | null;
   };
@@ -142,6 +146,21 @@ function latestDirectionalSwap(transactions: Pick<Transaction, "timestamp" | "ha
     if (swap) return swap;
   }
   return null;
+}
+
+function collectedFeesSinceLastSwapUsd(
+  transactions: Pick<Transaction, "timestamp" | "tokenAmounts" | "type">[],
+  lastSwap: DirectionalSwap | null,
+  currentPrice: number
+) {
+  if (!lastSwap) return 0;
+  const checkpoint = new Date(lastSwap.timestamp).getTime();
+  return transactions.reduce((sum, transaction) => {
+    if (transaction.type !== "lp_collect" || transaction.timestamp.getTime() <= checkpoint) return sum;
+    const weth = tokenAmount(transaction.tokenAmounts, "WETH");
+    const usdc = tokenAmount(transaction.tokenAmounts, "USDC");
+    return sum + weth * currentPrice + usdc;
+  }, 0);
 }
 
 function reversalDebtUsd(lastSwap: DirectionalSwap | null, currentPrice: number) {
@@ -282,6 +301,8 @@ function buildTelegramSummary(plan: Omit<AutopilotPlan, "telegramSummary">) {
     `Next: ${firstAction?.label ?? "No action"}`,
     `Immediate cost: ${formatUsd(plan.economics.immediateCostUsd)}`,
     `Reversal debt: ${formatUsd(plan.economics.reversalDebtUsd)}`,
+    `Fee credit: ${formatUsd(plan.economics.feeCreditUsd)}`,
+    `Uncovered debt: ${formatUsd(plan.economics.uncoveredReversalDebtUsd)}`,
     `Auto mode: ${plan.mode}`
   ].join("\n");
 }
@@ -296,6 +317,7 @@ export function calculateAutopilotPlan(params: {
   token1: Address;
   mode?: AutopilotMode;
   updatedAt?: Date;
+  uncollectedFeeCreditUsd?: number;
 }): AutopilotPlan {
   const price = priceFromTick({
     tick: params.currentTick,
@@ -319,9 +341,13 @@ export function calculateAutopilotPlan(params: {
   });
   const lastSwap = latestDirectionalSwap(params.transactions);
   const debt = reversalDebtUsd(lastSwap, price);
+  const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);
+  const uncollectedFeeCredit = params.uncollectedFeeCreditUsd ?? 0;
+  const feeCredit = collectedFeeCredit + uncollectedFeeCredit;
   const swapNotionalUsd = estimateSwapNotionalUsd(guide);
   const estimatedSlippageUsd = swapNotionalUsd * (ESTIMATED_SLIPPAGE_PERCENT / 100);
   const immediateCostUsd = swapNotionalUsd > 0 ? estimatedSlippageUsd + ESTIMATED_GAS_USD : 0;
+  const uncoveredReversalDebtUsd = Math.max(0, debt + immediateCostUsd - feeCredit);
   const state = chooseState(guide, params.positions);
   const severity = guide.recommendation.severity;
   const actions = buildActions(guide, immediateCostUsd, debt);
@@ -350,7 +376,11 @@ export function calculateAutopilotPlan(params: {
       estimatedSlippageUsd,
       estimatedGasUsd: swapNotionalUsd > 0 ? ESTIMATED_GAS_USD : 0,
       reversalDebtUsd: debt,
-      feesNeededToReverseUsd: immediateCostUsd + debt,
+      feeCreditUsd: feeCredit,
+      collectedFeesSinceLastSwapUsd: collectedFeeCredit,
+      uncollectedFeesUsd: uncollectedFeeCredit,
+      uncoveredReversalDebtUsd,
+      feesNeededToReverseUsd: uncoveredReversalDebtUsd,
       lastDirectionalSwap: lastSwap
     },
     ladder: guide.segments.map((segment) => ({

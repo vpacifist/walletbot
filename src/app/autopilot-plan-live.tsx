@@ -22,6 +22,10 @@ type AutopilotPlan = {
     estimatedSlippageUsd: number;
     estimatedGasUsd: number;
     reversalDebtUsd: number;
+    feeCreditUsd: number;
+    collectedFeesSinceLastSwapUsd: number;
+    uncollectedFeesUsd: number;
+    uncoveredReversalDebtUsd: number;
     feesNeededToReverseUsd: number;
     lastDirectionalSwap: {
       timestamp: string;
@@ -194,7 +198,14 @@ export function AutopilotPlanLive() {
         <div className="asset-metric">
           <p className="metric-label">Reversal debt</p>
           <span className="metric-value">{formatUsd(data?.economics.reversalDebtUsd)}</span>
-          <span>{formatUsd(data?.economics.feesNeededToReverseUsd)} fees needed before reversal</span>
+          <span>{formatUsd(data?.economics.uncoveredReversalDebtUsd)} uncovered after fees</span>
+        </div>
+        <div className="asset-metric">
+          <p className="metric-label">Fee credit</p>
+          <span className="metric-value">{formatUsd(data?.economics.feeCreditUsd)}</span>
+          <span>
+            {formatUsd(data?.economics.collectedFeesSinceLastSwapUsd)} collected - {formatUsd(data?.economics.uncollectedFeesUsd)} uncollected
+          </span>
         </div>
         <div className="asset-metric">
           <p className="metric-label">Last directional swap</p>

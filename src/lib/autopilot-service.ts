@@ -8,6 +8,7 @@ import { getConfig } from "./config";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
+import { getUncollectedPositionFees } from "./uniswap-v3-fees";
 import { getWalletAssetAmountsSnapshot } from "./wallet-assets";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
@@ -75,7 +76,7 @@ export async function getCurrentAutopilotPlan() {
   const pool = livePool ?? latestSyncedPoolSnapshot(positions);
   if (!pool) throw new Error("No live or synced WETH/USDC 0.3% pool tick available");
 
-  return calculateAutopilotPlan({
+  const basePlan = calculateAutopilotPlan({
     positions,
     transactions,
     walletWeth: wallet.weth,
@@ -83,6 +84,33 @@ export async function getCurrentAutopilotPlan() {
     currentTick: pool.currentTick,
     token0: pool.token0,
     token1: pool.token1
+  });
+
+  if (!basePlan.economics.lastDirectionalSwap) return basePlan;
+
+  const uncollectedFeeAmounts = await Promise.all(
+    positions
+      .filter(activeNarrowPosition)
+      .map((position) =>
+        getUncollectedPositionFees({
+          tokenId: position.tokenId,
+          token0: position.token0,
+          token1: position.token1,
+          walletAddress
+        }).catch(() => ({ weth: 0, usdc: 0 }))
+      )
+  );
+  const uncollectedFeeCreditUsd = uncollectedFeeAmounts.reduce((sum, fees) => sum + fees.weth * basePlan.pool.price + fees.usdc, 0);
+
+  return calculateAutopilotPlan({
+    positions,
+    transactions,
+    walletWeth: wallet.weth,
+    walletUsdc: wallet.usdc,
+    currentTick: pool.currentTick,
+    token0: pool.token0,
+    token1: pool.token1,
+    uncollectedFeeCreditUsd
   });
 }
 
@@ -98,7 +126,13 @@ function planKeyInput(plan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>)
       status: segment.status,
       plannedAction: segment.plannedAction
     })),
-    actions: plan.actions.map((action) => ({ type: action.type, label: action.label }))
+    actions: plan.actions.map((action) => ({ type: action.type, label: action.label })),
+    economics: {
+      immediateCostUsd: Math.round(plan.economics.immediateCostUsd * 100),
+      reversalDebtUsd: Math.round(plan.economics.reversalDebtUsd * 100),
+      feeCreditUsd: Math.round(plan.economics.feeCreditUsd * 100),
+      uncoveredReversalDebtUsd: Math.round(plan.economics.uncoveredReversalDebtUsd * 100)
+    }
   };
 }
 
