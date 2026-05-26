@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { buildAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { type AutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
+import { CONTRACTS } from "@/lib/constants";
 
 function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecutionPreview {
   return {
     planId: "plan",
     status: "ready",
     title: "Execution preview ready",
+    pool: {
+      currentTick: -199687,
+      price: 2128.81
+    },
     reasons: [],
     checks: [
       {
@@ -107,6 +112,21 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.calls.slice(0, 2).map((call) => call.status)).toEqual(["prepared", "prepared"]);
     expect(execution.telegramSummary).toContain("close_position.decreaseLiquidity");
     expect(execution.telegramSummary).toContain("Simulation-only calldata prepared for full live liquidity 123");
+  });
+
+  it("prepares simulation-only mint calldata when allowances cover desired amounts", () => {
+    const execution = buildAutopilotDryRunExecution(preview(), {
+      allowances: {
+        [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
+        [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
+      }
+    });
+
+    const swapCall = execution.calls.find((call) => call.functionName === "exactInputSingle");
+    const mintCall = execution.calls.find((call) => call.functionName === "mint");
+    expect(swapCall?.status).toBe("prepared");
+    expect(mintCall?.status).toBe("prepared");
+    expect(execution.telegramSummary).toContain("amount0Desired");
   });
 
   it("blocks execution when a required quote is unavailable", () => {

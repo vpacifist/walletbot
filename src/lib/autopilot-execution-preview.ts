@@ -7,6 +7,10 @@ export type AutopilotExecutionPreview = {
   planId: string;
   status: "ready" | "blocked";
   title: string;
+  pool: {
+    currentTick: number;
+    price: number;
+  };
   reasons: string[];
   checks: Array<{
     label: string;
@@ -154,6 +158,10 @@ export function buildAutopilotExecutionPreview(
     planId: record.id,
     status: reasons.length === 0 ? ("ready" as const) : ("blocked" as const),
     title: reasons.length === 0 ? "Execution preview ready" : "Execution preview blocked",
+    pool: {
+      currentTick: currentPlan.pool.currentTick,
+      price: currentPlan.pool.price
+    },
     reasons,
     checks,
     steps,

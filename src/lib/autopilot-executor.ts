@@ -1,9 +1,10 @@
 import { encodeFunctionData, getAddress, parseUnits, type Address } from "viem";
-import { positionManagerAbi, swapRouter02Abi } from "./abi";
+import { erc20Abi, positionManagerAbi, swapRouter02Abi } from "./abi";
 import { createAutopilotExecutionPreview, type AutopilotExecutionPreview } from "./autopilot-execution-preview";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS, TOKEN_META } from "./constants";
+import { priceFromTick, WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
 
 type TransactionIntent =
   | {
@@ -77,6 +78,11 @@ type ClosePositionState =
 
 type BuildExecutionOptions = {
   closePositions?: Record<string, ClosePositionState>;
+  allowances?: Record<string, bigint>;
+  pool?: {
+    currentTick: number;
+    price: number;
+  };
 };
 
 type ExecutionCall = {
@@ -114,6 +120,10 @@ function tokenDecimals(address: string) {
 
 function rawAmount(amount: number, tokenAddress: string) {
   return parseUnits(amount.toFixed(tokenDecimals(tokenAddress)), tokenDecimals(tokenAddress)).toString();
+}
+
+function rawAmountBigInt(amount: number, tokenAddress: string) {
+  return BigInt(rawAmount(amount, tokenAddress));
 }
 
 function intentSummary(intent: TransactionIntent) {
@@ -291,6 +301,124 @@ function buildCloseCalls(intent: Extract<TransactionIntent, { kind: "close_posit
   ];
 }
 
+function allowanceKey(token: Address) {
+  return `${token.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`;
+}
+
+function mintDesiredAmounts(intent: Extract<TransactionIntent, { kind: "mint_position" }>, pool?: BuildExecutionOptions["pool"]) {
+  const token0 = getAddress(CONTRACTS.weth);
+  const token1 = getAddress(CONTRACTS.usdc);
+  const price = pool?.price;
+  if (!pool || !price || price <= 0) return null;
+
+  if (pool.currentTick < intent.lowerTick) {
+    return {
+      token0,
+      token1,
+      amount0: rawAmountBigInt(intent.budgetUsd / price, token0),
+      amount1: 0n
+    };
+  }
+
+  if (pool.currentTick >= intent.upperTick) {
+    return {
+      token0,
+      token1,
+      amount0: 0n,
+      amount1: rawAmountBigInt(intent.budgetUsd, token1)
+    };
+  }
+
+  const lowerPrice = priceFromTick({ tick: intent.lowerTick, token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+  const upperPrice = priceFromTick({ tick: intent.upperTick, token0, token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc });
+  if (!lowerPrice || !upperPrice || lowerPrice <= 0 || upperPrice <= price) return null;
+
+  const sqrtPrice = Math.sqrt(price);
+  const sqrtLower = Math.sqrt(lowerPrice);
+  const sqrtUpper = Math.sqrt(upperPrice);
+  const usdcPerWethRatio = (sqrtPrice * sqrtUpper * (sqrtPrice - sqrtLower)) / (sqrtUpper - sqrtPrice);
+  const weth = intent.budgetUsd / (price + usdcPerWethRatio);
+  const usdc = intent.budgetUsd - weth * price;
+
+  return {
+    token0,
+    token1,
+    amount0: rawAmountBigInt(weth, token0),
+    amount1: rawAmountBigInt(usdc, token1)
+  };
+}
+
+function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position" }>, index: number, options: BuildExecutionOptions): ExecutionCall {
+  const amounts = mintDesiredAmounts(intent, options.pool);
+  if (!amounts) {
+    return {
+      intent: `${index + 1}. mint_position`,
+      status: "blocked",
+      target: CONTRACTS.nonfungiblePositionManager,
+      functionName: null,
+      dataPreview: null,
+      reason: "Mint calldata needs live pool price and a valid target range."
+    };
+  }
+
+  const allowance0 = options.allowances?.[allowanceKey(amounts.token0)];
+  const allowance1 = options.allowances?.[allowanceKey(amounts.token1)];
+  if (allowance0 === undefined || allowance1 === undefined) {
+    return {
+      intent: `${index + 1}. mint_position`,
+      status: "blocked",
+      target: CONTRACTS.nonfungiblePositionManager,
+      functionName: null,
+      dataPreview: null,
+      reason: "Mint calldata needs WETH/USDC allowance checks."
+    };
+  }
+
+  const missing = [
+    allowance0 < amounts.amount0 ? `WETH allowance ${allowance0.toString()} < desired ${amounts.amount0.toString()}` : null,
+    allowance1 < amounts.amount1 ? `USDC allowance ${allowance1.toString()} < desired ${amounts.amount1.toString()}` : null
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    return {
+      intent: `${index + 1}. mint_position`,
+      status: "blocked",
+      target: CONTRACTS.nonfungiblePositionManager,
+      functionName: "mint",
+      dataPreview: null,
+      reason: `Missing approval: ${missing.join("; ")}.`
+    };
+  }
+
+  const data = encodeFunctionData({
+    abi: positionManagerAbi,
+    functionName: "mint",
+    args: [
+      {
+        token0: amounts.token0,
+        token1: amounts.token1,
+        fee: WETH_USDC_NARROW_FEE,
+        tickLower: intent.lowerTick,
+        tickUpper: intent.upperTick,
+        amount0Desired: amounts.amount0,
+        amount1Desired: amounts.amount1,
+        amount0Min: (amounts.amount0 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
+        amount1Min: (amounts.amount1 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
+        recipient: getAddress(getConfig().BASE_WALLET_ADDRESS),
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
+      }
+    ]
+  });
+
+  return {
+    intent: `${index + 1}. mint_position`,
+    status: "prepared",
+    target: CONTRACTS.nonfungiblePositionManager,
+    functionName: "mint",
+    dataPreview: dataPreview(data),
+    reason: `Simulation-only calldata prepared with amount0Desired ${amounts.amount0.toString()} / amount1Desired ${amounts.amount1.toString()}.`
+  };
+}
+
 function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions = {}): ExecutionCall[] {
   return intents.flatMap((intent, index) => {
     if (intent.kind === "swap_exact_input") {
@@ -337,14 +465,7 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
     }
 
     if (intent.kind === "mint_position") {
-      return {
-        intent: `${index + 1}. mint_position`,
-        status: "blocked" as const,
-        target: CONTRACTS.nonfungiblePositionManager,
-        functionName: null,
-        dataPreview: null,
-        reason: "Mint calldata needs token amount split after close/swap and approval checks."
-      };
+      return buildMintCall(intent, index, options);
     }
 
     return {
@@ -405,7 +526,10 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
     detail: step.detail
   }));
   const intents = buildIntents(preview);
-  const calls = buildCalls(intents, options);
+  const calls = buildCalls(intents, {
+    ...options,
+    pool: options.pool ?? preview.pool
+  });
   const executionWithoutTelegram = {
     planId: preview.planId,
     status: checks.every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
@@ -445,11 +569,30 @@ async function fetchClosePositionState(tokenId: string): Promise<ClosePositionSt
   }
 }
 
+async function fetchAllowance(token: Address) {
+  return createBaseClient()
+    .readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [getAddress(getConfig().BASE_WALLET_ADDRESS), CONTRACTS.nonfungiblePositionManager]
+    })
+    .catch(() => 0n);
+}
+
 export async function createAutopilotDryRunExecution(planId: string) {
   const preview = await createAutopilotExecutionPreview(planId);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
-  const closeStates = await Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId)));
+  const [closeStates, wethAllowance, usdcAllowance] = await Promise.all([
+    Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId))),
+    fetchAllowance(CONTRACTS.weth),
+    fetchAllowance(CONTRACTS.usdc)
+  ]);
   return buildAutopilotDryRunExecution(preview, {
-    closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state]))
+    closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
+    allowances: {
+      [allowanceKey(CONTRACTS.weth)]: wethAllowance,
+      [allowanceKey(CONTRACTS.usdc)]: usdcAllowance
+    }
   });
 }
