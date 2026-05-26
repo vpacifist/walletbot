@@ -26,6 +26,18 @@ Use the lightweight health endpoint instead:
 Invoke-WebRequest -Uri "http://localhost:3000/api/health" -UseBasicParsing -TimeoutSec 10
 ```
 
+## Telegram bot and worker
+
+Telegram commands such as `/status`, `/positions`, and `/autopilot` are handled by the worker process, not by the Next.js dev server.
+
+`pnpm dev` starts both the Next.js dev server and the worker. `pnpm dev:no-sync` starts only the web UI and will not answer Telegram commands. If `pnpm build` was run, the safe Prisma generate path may stop existing WalletBot Next/worker Node processes; restart the worker before testing Telegram commands:
+
+```powershell
+Start-Process -FilePath "pnpm.cmd" -ArgumentList "worker" -WorkingDirectory "C:\projects\walletbot" -WindowStyle Hidden
+```
+
+When testing any Telegram command or notification behavior, verify a worker is running in addition to the web health check.
+
 ## UI verification tools
 
 For browser/UI verification, first try to use the Codex Browser plugin / in-app browser when it is callable. If the Browser MCP tools are not exposed in the current session, do not stop to ask the user to reconfigure plugins. Use Playwright from the local project as the fallback and state that fallback briefly in the work log or final answer.

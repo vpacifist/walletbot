@@ -27,14 +27,27 @@ docker compose up -d postgres
 pnpm db:migrate
 ```
 
-4. Run the web app and worker in two terminals:
+4. Run the web app and worker:
 
 ```powershell
 pnpm dev
+```
+
+`pnpm dev` starts both the Next.js dev server and the sync/Telegram worker. The web UI is available at `http://localhost:3000`.
+
+For UI-only work, this command starts only Next.js:
+
+```powershell
+pnpm dev:no-sync
+```
+
+When using `dev:no-sync`, Telegram commands will not answer unless the worker is running separately:
+
+```powershell
 pnpm worker
 ```
 
-The web UI is available at `http://localhost:3000`.
+Production-build verification runs the safe Prisma generate path and may stop local WalletBot Next/worker processes before building. After `pnpm build`, restart `pnpm dev` or start `pnpm worker` again before testing Telegram commands such as `/autopilot`.
 
 ## VPS deployment shape
 
