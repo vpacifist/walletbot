@@ -89,6 +89,7 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.calls.map((call) => call.status)).toEqual(["blocked", "prepared", "blocked"]);
     expect(execution.calls[1].functionName).toBe("exactInputSingle");
     expect(execution.telegramSummary).toContain("Calldata / simulation");
+    expect(execution.telegramSummary).toContain("Atomic rebalancer");
     expect(execution.telegramSummary).toContain("eth_call simulation");
     expect(execution.telegramSummary).toContain("Close position #5187240");
     expect(execution.telegramSummary).toContain("Swap 1 WETH");
@@ -113,6 +114,25 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.calls.slice(0, 2).map((call) => call.status)).toEqual(["prepared", "prepared"]);
     expect(execution.telegramSummary).toContain("close_position.decreaseLiquidity");
     expect(execution.telegramSummary).toContain("Simulation-only calldata prepared for full live liquidity 123");
+  });
+
+  it("prepares atomic rebalancer calldata when close, swap, and mint params are available", () => {
+    const execution = buildAutopilotDryRunExecution(preview(), {
+      closePositions: {
+        "5187240": {
+          status: "available",
+          tokenId: "5187240",
+          liquidity: 123n,
+          tokensOwed0: 4n,
+          tokensOwed1: 5n
+        }
+      }
+    });
+
+    expect(execution.atomicCall.status).toBe("prepared");
+    expect(execution.atomicCall.functionName).toBe("rebalance");
+    expect(execution.atomicCall.dataPreview).toMatch(/^0x/);
+    expect(execution.telegramSummary).toContain("Single-call contract calldata prepared");
   });
 
   it("prepares simulation-only mint calldata when allowances cover desired amounts", () => {

@@ -1,5 +1,5 @@
 import { encodeFunctionData, getAddress, parseUnits, type Address } from "viem";
-import { erc20Abi, positionManagerAbi, swapRouter02Abi } from "./abi";
+import { autopilotRebalancerAbi, erc20Abi, positionManagerAbi, swapRouter02Abi } from "./abi";
 import { createAutopilotExecutionPreview, type AutopilotExecutionPreview } from "./autopilot-execution-preview";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
@@ -56,6 +56,7 @@ export type AutopilotDryRunExecution = {
   }>;
   intents: TransactionIntent[];
   calls: ExecutionCall[];
+  atomicCall: AtomicRebalanceCall;
   telegramSummary: string;
 };
 
@@ -97,6 +98,15 @@ type ExecutionCall = {
     status: "not_run" | "simulated" | "failed" | "skipped";
     detail: string;
   };
+};
+
+type AtomicRebalanceCall = {
+  status: "prepared" | "blocked";
+  target: string;
+  functionName: "rebalance";
+  data: `0x${string}` | null;
+  dataPreview: string | null;
+  reason: string;
 };
 
 function simulation(status: ExecutionCall["simulation"]["status"], detail: string): ExecutionCall["simulation"] {
@@ -511,6 +521,125 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
   });
 }
 
+function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildExecutionOptions = {}): AtomicRebalanceCall {
+  const closeIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "close_position" }> => intent.kind === "close_position");
+  const swapIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input");
+  const mintIntent = intents.find((intent): intent is Extract<TransactionIntent, { kind: "mint_position" }> => intent.kind === "mint_position");
+  const target = getConfig().AUTOPILOT_REBALANCER_ADDRESS
+    ? getAddress(getConfig().AUTOPILOT_REBALANCER_ADDRESS)
+    : "AUTOPILOT_REBALANCER_ADDRESS not configured";
+
+  if (!closeIntent || !swapIntent || !mintIntent) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: "Atomic rebalance requires close, swap, and mint intents in the same approved plan."
+    };
+  }
+
+  const closeState = options.closePositions?.[closeIntent.tokenId];
+  if (!closeState) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: "Atomic rebalance needs live liquidity for the close position."
+    };
+  }
+
+  if (closeState.status === "unavailable") {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: closeState.reason
+    };
+  }
+
+  if (closeState.liquidity <= 0n) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: `Position #${closeIntent.tokenId} has zero live liquidity.`
+    };
+  }
+
+  if (!swapIntent.minAmountOutRaw) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: "Atomic rebalance needs an available swap quote and amountOutMinimum."
+    };
+  }
+
+  const mintAmounts = mintDesiredAmounts(mintIntent, options.pool);
+  if (!mintAmounts) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: "Atomic rebalance needs live pool price and a valid target mint range."
+    };
+  }
+
+  const data = encodeFunctionData({
+    abi: autopilotRebalancerAbi,
+    functionName: "rebalance",
+    args: [
+      {
+        closePosition: {
+          tokenId: BigInt(closeIntent.tokenId),
+          liquidity: closeState.liquidity,
+          amount0Min: 0n,
+          amount1Min: 0n
+        },
+        swap: {
+          tokenIn: swapIntent.tokenInAddress,
+          tokenOut: swapIntent.tokenOutAddress,
+          amountIn: BigInt(swapIntent.amountInRaw),
+          amountOutMinimum: BigInt(swapIntent.minAmountOutRaw),
+          sqrtPriceLimitX96: 0n
+        },
+        mintPosition: {
+          tickLower: mintIntent.lowerTick,
+          tickUpper: mintIntent.upperTick,
+          amount0Desired: mintAmounts.amount0,
+          amount1Desired: mintAmounts.amount1,
+          amount0Min: (mintAmounts.amount0 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
+          amount1Min: (mintAmounts.amount1 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n
+        },
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
+      }
+    ]
+  });
+
+  return {
+    status: "prepared",
+    target,
+    functionName: "rebalance",
+    data,
+    dataPreview: dataPreview(data),
+    reason: getConfig().AUTOPILOT_REBALANCER_ADDRESS
+      ? "Single-call contract calldata prepared for dry-run review; live execution still disabled and requires NFT approval to the rebalancer."
+      : "Single-call contract calldata prepared, but live execution needs AUTOPILOT_REBALANCER_ADDRESS and NFT approval to the rebalancer."
+  };
+}
+
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
   return [
     "Executor dry run",
@@ -528,6 +657,9 @@ function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegra
     "",
     "Calldata / simulation",
     ...execution.calls.map((call) => `${statusIcon(call.status === "prepared")} ${call.intent}: ${call.functionName ?? "not prepared"} @ ${call.target}${call.dataPreview ? ` | ${call.dataPreview}` : ""} - ${call.reason}`),
+    "",
+    "Atomic rebalancer",
+    `${statusIcon(execution.atomicCall.status === "prepared")} ${execution.atomicCall.functionName} @ ${execution.atomicCall.target}${execution.atomicCall.dataPreview ? ` | ${execution.atomicCall.dataPreview}` : ""} - ${execution.atomicCall.reason}`,
     "",
     "eth_call simulation",
     ...execution.calls.map((call) => `${call.simulation.status.toUpperCase()} ${call.intent}: ${call.simulation.detail}`),
@@ -565,13 +697,18 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
     ...options,
     pool: options.pool ?? preview.pool
   });
+  const atomicCall = buildAtomicRebalanceCall(intents, {
+    ...options,
+    pool: options.pool ?? preview.pool
+  });
   const executionWithoutTelegram = {
     planId: preview.planId,
     status: checks.every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
     checks,
     operations,
     intents,
-    calls
+    calls,
+    atomicCall
   };
 
   return {

@@ -7,6 +7,10 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   BASE_WALLET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   BASE_RPC_URL: z.string().url(),
+  AUTOPILOT_REBALANCER_ADDRESS: z
+    .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{40}$/)])
+    .optional()
+    .default(""),
   BLOCKSCOUT_BASE_URL: z.string().url().default("https://base.blockscout.com"),
   TELEGRAM_BOT_TOKEN: z.string().optional().default(""),
   TELEGRAM_CHAT_ID: z.string().optional().default(""),
