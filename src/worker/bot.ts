@@ -1,4 +1,5 @@
 import { Context, Telegraf } from "telegraf";
+import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
@@ -120,11 +121,15 @@ export function createBot() {
         [
           `Autopilot plan ${decisionLabel(record.status).toLowerCase()}.`,
           `Plan id: ${record.id}`,
-          record.status === "approved" ? "Execution is not enabled yet. This only records approval for the next executor step." : undefined
+          record.status === "approved" ? "Preparing dry-run execution preview." : undefined
         ]
           .filter(Boolean)
           .join("\n")
       );
+      if (record.status === "approved") {
+        const preview = await createAutopilotExecutionPreview(record.id);
+        await ctx.reply(preview.telegramSummary);
+      }
     } catch (error) {
       await ctx.answerCbQuery("Plan update failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Autopilot plan update failed: ${error.message}` : "Autopilot plan update failed.");
