@@ -70,4 +70,25 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.state).toBe("confirming");
     expect(plan.actions.some((action) => action.type === "mint")).toBe(true);
   });
+
+  it("attaches a quote request for stale WETH reused as a lower guard", () => {
+    const plan = calculateAutopilotPlan({
+      positions: [
+        position({ id: "active", tokenId: "1", tickLower: -199860, tickUpper: -199800, status: PositionStatus.in_range }),
+        position({ id: "upper", tokenId: "2", tickLower: -199800, tickUpper: -199740, status: PositionStatus.above_range }),
+        position({ id: "stale", tokenId: "3", tickLower: -199740, tickUpper: -199680, status: PositionStatus.below_range })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -199845,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+    const partialSwap = plan.actions.find((action) => action.type === "partial_swap");
+
+    expect(partialSwap?.quoteRequest?.spendSymbol).toBe("WETH");
+    expect(partialSwap?.quoteRequest?.receiveSymbol).toBe("USDC");
+    expect(partialSwap?.quoteRequest?.amountIn).toBeGreaterThan(0);
+  });
 });

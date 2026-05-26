@@ -47,6 +47,14 @@ export type AutopilotPlan = {
     label: string;
     detail: string;
     estimatedCostUsd: number;
+    quoteRequest?: {
+      tokenIn: Address;
+      tokenOut: Address;
+      fee: number;
+      amountIn: number;
+      spendSymbol: "WETH" | "USDC";
+      receiveSymbol: "WETH" | "USDC";
+    };
   }>;
   telegramSummary: string;
   updatedAt: string;
@@ -186,6 +194,37 @@ function chooseTitle(state: AutopilotState, guide: TripleRangeGuide) {
   return guide.recommendation.title;
 }
 
+function partialSwapQuoteRequest(guide: TripleRangeGuide): AutopilotPlan["actions"][number]["quoteRequest"] {
+  const staleLower = guide.leftovers.find((leftover) => leftover.suggestedUse.includes("WETH to USDC"));
+  const staleUpper = guide.leftovers.find((leftover) => leftover.suggestedUse.includes("USDC to WETH"));
+  const missingLowerBudget = guide.segments.find((segment) => segment.role === "lower" && segment.state === "missing")?.targetUsd ?? 0;
+  const missingUpperBudget = guide.segments.find((segment) => segment.role === "upper" && segment.state === "missing")?.targetUsd ?? 0;
+
+  if (staleLower && staleLower.weth > 0 && missingLowerBudget > 0) {
+    return {
+      tokenIn: CONTRACTS.weth,
+      tokenOut: CONTRACTS.usdc,
+      fee: WETH_USDC_NARROW_FEE,
+      amountIn: Math.min(staleLower.weth, missingLowerBudget / guide.pool.price),
+      spendSymbol: "WETH",
+      receiveSymbol: "USDC"
+    };
+  }
+
+  if (staleUpper && staleUpper.usdc > 0 && missingUpperBudget > 0) {
+    return {
+      tokenIn: CONTRACTS.usdc,
+      tokenOut: CONTRACTS.weth,
+      fee: WETH_USDC_NARROW_FEE,
+      amountIn: Math.min(staleUpper.usdc, missingUpperBudget),
+      spendSymbol: "USDC",
+      receiveSymbol: "WETH"
+    };
+  }
+
+  return undefined;
+}
+
 function buildActions(guide: TripleRangeGuide, immediateCostUsd: number, reversalDebt: number): AutopilotPlan["actions"] {
   if (guide.recommendation.severity === "good") {
     return [{ type: "hold", label: "Hold current ladder", detail: "All three ranges are present and close to target.", estimatedCostUsd: 0 }];
@@ -209,11 +248,13 @@ function buildActions(guide: TripleRangeGuide, immediateCostUsd: number, reversa
     });
   }
   if (immediateCostUsd > 0) {
+    const quoteRequest = partialSwapQuoteRequest(guide);
     actions.push({
       type: "partial_swap",
       label: "Use partial swap only",
       detail: `Estimated immediate cost is ${formatUsd(immediateCostUsd)}; current reversal debt is ${formatUsd(reversalDebt)}.`,
-      estimatedCostUsd: immediateCostUsd
+      estimatedCostUsd: immediateCostUsd,
+      quoteRequest
     });
   }
 

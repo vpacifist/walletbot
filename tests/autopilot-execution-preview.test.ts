@@ -40,6 +40,7 @@ describe("buildAutopilotExecutionPreview", () => {
 
     expect(preview.status).toBe("ready");
     expect(preview.telegramSummary).toContain("Status: ready");
+    expect(preview.telegramSummary).toContain("No quote request in this plan.");
     expect(preview.telegramSummary).toContain("No on-chain transactions were sent.");
   });
 
@@ -48,5 +49,25 @@ describe("buildAutopilotExecutionPreview", () => {
 
     expect(preview.status).toBe("blocked");
     expect(preview.reasons).toContain("Live plan freshness");
+  });
+
+  it("includes quote-only output when a quote is available", () => {
+    const preview = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", plan(), {
+      tokenIn: "0x4200000000000000000000000000000000000006",
+      tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      fee: 3000,
+      amountIn: 1,
+      spendSymbol: "WETH",
+      receiveSymbol: "USDC",
+      amountInRaw: "1000000000000000000",
+      amountOut: 2090,
+      amountOutRaw: "2090000000",
+      effectivePrice: 2090,
+      gasEstimate: "120000",
+      source: "Uniswap QuoterV2"
+    });
+
+    expect(preview.telegramSummary).toContain("Uniswap QuoterV2");
+    expect(preview.telegramSummary).toContain("Effective WETH price: $2,090");
   });
 });

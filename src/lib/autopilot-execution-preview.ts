@@ -1,6 +1,7 @@
 import { type RebalancePlan } from "@prisma/client";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { prisma } from "./db";
+import { quoteExactInputSingle, type SwapQuote } from "./uniswap-v3-quoter";
 
 export type AutopilotExecutionPreview = {
   planId: string;
@@ -16,6 +17,7 @@ export type AutopilotExecutionPreview = {
     label: string;
     detail: string;
   }>;
+  quote: SwapQuote | null;
   telegramSummary: string;
 };
 
@@ -52,6 +54,16 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
     "Steps",
     ...preview.steps.map((step, index) => `${index + 1}. ${step.label}: ${step.detail}`),
     "",
+    "Quote",
+    preview.quote
+      ? [
+          `${preview.quote.source}: ${preview.quote.amountIn.toLocaleString("en-US", { maximumFractionDigits: preview.quote.spendSymbol === "USDC" ? 2 : 6 })} ${preview.quote.spendSymbol}`,
+          `-> ${preview.quote.amountOut.toLocaleString("en-US", { maximumFractionDigits: preview.quote.receiveSymbol === "USDC" ? 2 : 6 })} ${preview.quote.receiveSymbol}`,
+          `Effective WETH price: ${formatUsd(preview.quote.effectivePrice)}`,
+          `Gas estimate: ${preview.quote.gasEstimate}`
+        ].join("\n")
+      : "No quote request in this plan.",
+    "",
     "No on-chain transactions were sent."
   ]
     .filter((line) => line !== undefined)
@@ -61,7 +73,8 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
 export function buildAutopilotExecutionPreview(
   record: Pick<RebalancePlan, "id" | "status" | "planKey">,
   currentPlanKey: string,
-  currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>
+  currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>,
+  quote: SwapQuote | null = null
 ) {
   const isApproved = record.status === "approved";
   const isFresh = currentPlanKey === record.planKey;
@@ -108,7 +121,8 @@ export function buildAutopilotExecutionPreview(
     title: reasons.length === 0 ? "Execution preview ready" : "Execution preview blocked",
     reasons,
     checks,
-    steps
+    steps,
+    quote
   };
 
   return {
@@ -122,5 +136,7 @@ export async function createAutopilotExecutionPreview(planId: string): Promise<A
   if (!record) throw new Error("Rebalance plan not found");
 
   const currentPlan = await getCurrentAutopilotPlan();
-  return buildAutopilotExecutionPreview(record, autopilotPlanKey(currentPlan), currentPlan);
+  const quoteRequest = currentPlan.actions.find((action) => action.type === "partial_swap" && action.quoteRequest)?.quoteRequest;
+  const quote = quoteRequest ? await quoteExactInputSingle(quoteRequest) : null;
+  return buildAutopilotExecutionPreview(record, autopilotPlanKey(currentPlan), currentPlan, quote);
 }
