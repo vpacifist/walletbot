@@ -24,7 +24,7 @@ export type AutopilotExecutionPreview = {
 const MAX_IMMEDIATE_COST_USD = 10;
 const MAX_REVERSAL_DEBT_USD = 25;
 
-type SwapQuoteResult =
+export type SwapQuoteResult =
   | { status: "not_requested" }
   | { status: "available"; data: SwapQuote }
   | { status: "unavailable"; request: SwapQuoteRequest; reason: string };

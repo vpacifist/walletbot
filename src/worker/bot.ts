@@ -1,11 +1,13 @@
 import { Context, Telegraf } from "telegraf";
+import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { shortAddress } from "@/lib/format";
 
-const AUTOPILOT_ACTION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
+const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
+const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
 
 function assertAllowedChat(ctx: Context) {
   const expected = getConfig().TELEGRAM_CHAT_ID;
@@ -23,6 +25,12 @@ function autopilotKeyboard(planId: string) {
         { text: "Pause", callback_data: `ap:pause:${planId}` }
       ]
     ]
+  };
+}
+
+function autopilotExecutionKeyboard(planId: string) {
+  return {
+    inline_keyboard: [[{ text: "Run executor dry-run", callback_data: `ap:execute:${planId}` }]]
   };
 }
 
@@ -106,7 +114,7 @@ export function createBot() {
     }
   });
 
-  bot.action(AUTOPILOT_ACTION_PATTERN, async (ctx) => {
+  bot.action(AUTOPILOT_DECISION_PATTERN, async (ctx) => {
     if (!assertAllowedChat(ctx)) return;
 
     const match = ctx.match;
@@ -128,11 +136,28 @@ export function createBot() {
       );
       if (record.status === "approved") {
         const preview = await createAutopilotExecutionPreview(record.id);
-        await ctx.reply(preview.telegramSummary);
+        await ctx.reply(preview.telegramSummary, {
+          reply_markup: preview.status === "ready" ? autopilotExecutionKeyboard(record.id) : undefined
+        });
       }
     } catch (error) {
       await ctx.answerCbQuery("Plan update failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Autopilot plan update failed: ${error.message}` : "Autopilot plan update failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_EXECUTE_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Executor dry-run started");
+      const execution = await createAutopilotDryRunExecution(planId);
+      await ctx.reply(execution.telegramSummary);
+    } catch (error) {
+      await ctx.answerCbQuery("Executor dry-run failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Executor dry-run failed: ${error.message}` : "Executor dry-run failed.");
     }
   });
 
