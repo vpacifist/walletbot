@@ -87,7 +87,7 @@ function intentSummary(intent: TransactionIntent) {
 }
 
 function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
-  return preview.steps.map((step): TransactionIntent => {
+  const intents = preview.steps.map((step): TransactionIntent => {
     if (step.type === "close" && step.tokenId) {
       return {
         kind: "close_position",
@@ -129,6 +129,15 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
       description: `${step.sourceLabel}: ${step.detail}`
     };
   });
+
+  const priority: Record<TransactionIntent["kind"], number> = {
+    close_position: 0,
+    swap_exact_input: 1,
+    mint_position: 2,
+    manual_review: 3
+  };
+
+  return intents.sort((left, right) => priority[left.kind] - priority[right.kind]);
 }
 
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {

@@ -80,6 +80,7 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("Executor dry run");
     expect(execution.telegramSummary).toContain("Status: validated");
     expect(execution.intents).toHaveLength(3);
+    expect(execution.intents.map((intent) => intent.kind)).toEqual(["close_position", "swap_exact_input", "mint_position"]);
     expect(execution.telegramSummary).toContain("Close position #5187240");
     expect(execution.telegramSummary).toContain("Swap 1 WETH");
     expect(execution.telegramSummary).toContain("Mint -199920 - -199860");
