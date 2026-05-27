@@ -179,4 +179,34 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions[2].lowerTick).toBe(-199860);
     expect(plan.actions[2].upperTick).toBe(-199620);
   });
+
+  it("does not recenter a small-capital position while it is still in range", () => {
+    const plan = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "5199548",
+          tickLower: -200100,
+          tickUpper: -199860,
+          status: PositionStatus.in_range,
+          wethAmount: "0.24",
+          usdcAmount: "500"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -200080,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    expect(plan.state).toBe("idle");
+    expect(plan.actions).toHaveLength(1);
+    expect(plan.actions[0].type).toBe("hold");
+    expect(plan.actions[0].tokenId).toBe("5199548");
+    expect(plan.economics.immediateCostUsd).toBe(0);
+    expect(plan.economics.uncoveredReversalDebtUsd).toBe(0);
+  });
 });

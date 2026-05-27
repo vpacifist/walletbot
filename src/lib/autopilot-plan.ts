@@ -506,14 +506,16 @@ function calculateSmallCapitalPlan(params: {
     preferredPosition?.tickUpper === target.upperTick &&
     currentWidth === strategy.targetWidthTicks;
   const hasExtraPositions = activePositions.length > 1;
+  const shouldHoldCurrentRange =
+    preferredPosition?.status === "in_range" && currentWidth === strategy.targetWidthTicks && !hasExtraPositions;
   const lastSwap = latestDirectionalSwap(params.transactions);
   const debt = reversalDebtUsd(lastSwap, price);
   const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);
   const uncollectedFeeCredit = params.uncollectedFeeCreditUsd ?? 0;
   const feeCredit = collectedFeeCredit + uncollectedFeeCredit;
   const swapNotionalUsd = quoteRequest ? (quoteRequest.spendSymbol === "WETH" ? quoteRequest.amountIn * price : quoteRequest.amountIn) : 0;
-  const estimatedSlippageUsd = swapNotionalUsd * (ESTIMATED_SLIPPAGE_PERCENT / 100);
-  const immediateCostUsd = preferredPosition && !isTargetRange ? estimatedSlippageUsd + ESTIMATED_GAS_USD : 0;
+  const estimatedSlippageUsd = preferredPosition && !isTargetRange && !shouldHoldCurrentRange ? swapNotionalUsd * (ESTIMATED_SLIPPAGE_PERCENT / 100) : 0;
+  const immediateCostUsd = preferredPosition && !isTargetRange && !shouldHoldCurrentRange ? estimatedSlippageUsd + ESTIMATED_GAS_USD : 0;
   const uncoveredReversalDebtUsd = Math.max(0, debt + immediateCostUsd - feeCredit);
   const mode = params.mode ?? DEFAULT_MODE;
   const targetRange = `${target.lowerTick} - ${target.upperTick}`;
@@ -530,8 +532,11 @@ function calculateSmallCapitalPlan(params: {
         ? priceFromTick({ tick: preferredPosition.tickUpper, token0: params.token0, token1: params.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc })
         : targetUpperPrice,
       tokenId: preferredPosition?.tokenId ?? null,
-      status: preferredPosition ? (isTargetRange && !hasExtraPositions ? "ok" : "warn") : "missing",
-      plannedAction: isTargetRange && !hasExtraPositions ? "Keep single 240-tick test range" : "Do not build guard ranges; prepare one 240-tick range"
+      status: preferredPosition ? ((isTargetRange && !hasExtraPositions) || shouldHoldCurrentRange ? "ok" : "warn") : "missing",
+      plannedAction:
+        (isTargetRange && !hasExtraPositions) || shouldHoldCurrentRange
+          ? "Keep current 240-tick test range until breakout"
+          : "Do not build guard ranges; prepare one 240-tick range"
     }
   ];
   const actions: AutopilotPlan["actions"] = [];
@@ -542,6 +547,14 @@ function calculateSmallCapitalPlan(params: {
       label: "Hold single test range",
       detail: "The active position matches the 240-tick small-capital test preset.",
       estimatedCostUsd: 0
+    });
+  } else if (shouldHoldCurrentRange) {
+    actions.push({
+      type: "hold",
+      label: "Hold current in-range test range",
+      detail: `Current range ${preferredPosition.tickLower} - ${preferredPosition.tickUpper} still contains price; do not recenter until breakout.`,
+      estimatedCostUsd: 0,
+      tokenId: preferredPosition.tokenId
     });
   } else if (!preferredPosition && portfolioValueUsd > 0) {
     actions.push({
@@ -583,7 +596,7 @@ function calculateSmallCapitalPlan(params: {
     });
   }
 
-  const state: AutopilotState = isTargetRange && !hasExtraPositions ? "idle" : "confirming";
+  const state: AutopilotState = (isTargetRange && !hasExtraPositions) || shouldHoldCurrentRange ? "idle" : "confirming";
   const title = state === "idle" ? "Small test range active" : "Small-capital plan";
   const detail =
     state === "idle"
