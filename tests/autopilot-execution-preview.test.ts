@@ -9,6 +9,16 @@ function plan(input: Partial<AutopilotPlan> = {}): AutopilotPlan {
     severity: "bad",
     title: "Breakout confirmation",
     detail: "The current price interval changed.",
+    strategy: {
+      preset: "triple_range",
+      label: "Triple range",
+      targetWidthTicks: 60,
+      confirmationSeconds: 300,
+      maxDriftBps: 30,
+      maxImmediateCostUsd: 10,
+      maxUncoveredDebtUsd: 10,
+      feeCreditMustCoverCosts: false
+    },
     pool: {
       currentTick: -199845,
       baseTick: -199860,
@@ -95,5 +105,29 @@ describe("buildAutopilotExecutionPreview", () => {
     expect(preview.status).toBe("ready");
     expect(preview.telegramSummary).toContain("Quote unavailable");
     expect(preview.telegramSummary).toContain("No on-chain transactions were sent.");
+  });
+
+  it("blocks the old executor for a small-capital wait plan", () => {
+    const preview = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "same" },
+      "same",
+      plan({
+        strategy: {
+          preset: "small_capital_test",
+          label: "Small capital test",
+          targetWidthTicks: 240,
+          confirmationSeconds: 30,
+          maxDriftBps: 30,
+          maxImmediateCostUsd: 5,
+          maxUncoveredDebtUsd: 0,
+          feeCreditMustCoverCosts: true
+        },
+        actions: [{ type: "wait", label: "Wait for single-range executor", detail: "Small-capital mode blocks the old three-range rebalance.", estimatedCostUsd: 0 }]
+      })
+    );
+
+    expect(preview.status).toBe("blocked");
+    expect(preview.reasons).toContain("Action required");
+    expect(preview.reasons).toContain("Strategy preset");
   });
 });

@@ -1,10 +1,11 @@
 import { type Position, type Transaction } from "@prisma/client";
 import { type Address } from "viem";
 import { CONTRACTS } from "./constants";
-import { priceFromTick, WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
+import { priceFromTick, WETH_USDC_NARROW_FEE, WETH_USDC_NARROW_TICK_SPACING } from "./narrow-range-rebalance";
 import { calculateTripleRangeGuide, type TripleRangeGuide } from "./triple-range-guide";
 
 export type AutopilotMode = "manual" | "approve_in_telegram" | "auto_guarded" | "auto_full";
+export type AutopilotPreset = "triple_range" | "small_capital_test";
 export type AutopilotState = "idle" | "armed" | "confirming" | "ready" | "cooldown" | "paused";
 export type AutopilotSeverity = "good" | "warn" | "bad";
 
@@ -14,6 +15,16 @@ export type AutopilotPlan = {
   severity: AutopilotSeverity;
   title: string;
   detail: string;
+  strategy: {
+    preset: AutopilotPreset;
+    label: string;
+    targetWidthTicks: number;
+    confirmationSeconds: number;
+    maxDriftBps: number;
+    maxImmediateCostUsd: number;
+    maxUncoveredDebtUsd: number;
+    feeCreditMustCoverCosts: boolean;
+  };
   pool: {
     currentTick: number;
     baseTick: number;
@@ -85,12 +96,43 @@ type TokenAmountLike = {
 };
 
 const DEFAULT_MODE: AutopilotMode = "approve_in_telegram";
+const DEFAULT_PRESET: AutopilotPreset = "triple_range";
 const TRIGGER_BUFFER_PERCENT = 0.1;
 const REVERSE_BUFFER_PERCENT = 0.15;
 const CONFIRMATION_MINUTES = 5;
 const COOLDOWN_MINUTES = 20;
 const ESTIMATED_SLIPPAGE_PERCENT = 0.15;
 const ESTIMATED_GAS_USD = 0.1;
+const SMALL_CAPITAL_WIDTH_TICKS = 240;
+const SMALL_CAPITAL_CONFIRM_SECONDS = 30;
+const SMALL_CAPITAL_MAX_DRIFT_BPS = 30;
+const SMALL_CAPITAL_MAX_IMMEDIATE_COST_USD = 5;
+
+function strategyConfig(preset: AutopilotPreset): AutopilotPlan["strategy"] {
+  if (preset === "small_capital_test") {
+    return {
+      preset,
+      label: "Small capital test",
+      targetWidthTicks: SMALL_CAPITAL_WIDTH_TICKS,
+      confirmationSeconds: SMALL_CAPITAL_CONFIRM_SECONDS,
+      maxDriftBps: SMALL_CAPITAL_MAX_DRIFT_BPS,
+      maxImmediateCostUsd: SMALL_CAPITAL_MAX_IMMEDIATE_COST_USD,
+      maxUncoveredDebtUsd: 0,
+      feeCreditMustCoverCosts: true
+    };
+  }
+
+  return {
+    preset,
+    label: "Triple range",
+    targetWidthTicks: WETH_USDC_NARROW_TICK_SPACING,
+    confirmationSeconds: CONFIRMATION_MINUTES * 60,
+    maxDriftBps: 30,
+    maxImmediateCostUsd: 10,
+    maxUncoveredDebtUsd: 10,
+    feeCreditMustCoverCosts: false
+  };
+}
 
 function numericAmount(value?: string | null) {
   if (!value) return 0;
@@ -202,6 +244,20 @@ function allActiveOutOfRange(positions: Position[]) {
   return active.length > 0 && active.every((position) => position.status === "above_range" || position.status === "below_range");
 }
 
+function alignToSpacing(tick: number) {
+  return Math.floor(tick / WETH_USDC_NARROW_TICK_SPACING) * WETH_USDC_NARROW_TICK_SPACING;
+}
+
+function singleRangeTarget(currentTick: number, widthTicks: number) {
+  const intervals = widthTicks / WETH_USDC_NARROW_TICK_SPACING;
+  const baseTick = alignToSpacing(currentTick);
+  const lowerTick = baseTick - Math.floor(intervals / 2) * WETH_USDC_NARROW_TICK_SPACING;
+  return {
+    lowerTick,
+    upperTick: lowerTick + widthTicks
+  };
+}
+
 function chooseState(guide: TripleRangeGuide, positions: Position[]): AutopilotState {
   if (guide.recommendation.severity === "good") return "idle";
   if (allActiveOutOfRange(positions)) return "ready";
@@ -296,6 +352,7 @@ function buildTelegramSummary(plan: Omit<AutopilotPlan, "telegramSummary">) {
   const firstAction = plan.actions[0];
   return [
     plan.title,
+    `Strategy: ${plan.strategy.label} (${plan.strategy.targetWidthTicks} ticks, ${plan.strategy.confirmationSeconds}s confirm, ${plan.strategy.maxDriftBps} bps drift max)`,
     `State: ${plan.state}`,
     `Price: ${formatPrice(plan.pool.price)} USDC | Tick ${plan.pool.currentTick}`,
     `Next: ${firstAction?.label ?? "No action"}`,
@@ -307,7 +364,7 @@ function buildTelegramSummary(plan: Omit<AutopilotPlan, "telegramSummary">) {
   ].join("\n");
 }
 
-export function calculateAutopilotPlan(params: {
+function calculateSmallCapitalPlan(params: {
   positions: Position[];
   transactions: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type">[];
   walletWeth: number | null;
@@ -319,6 +376,181 @@ export function calculateAutopilotPlan(params: {
   updatedAt?: Date;
   uncollectedFeeCreditUsd?: number;
 }): AutopilotPlan {
+  const price = priceFromTick({
+    tick: params.currentTick,
+    token0: params.token0,
+    token1: params.token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  if (!price) throw new Error("Unable to calculate WETH/USDC pool price");
+
+  const strategy = strategyConfig("small_capital_test");
+  const activePositions = activeNarrowPositions(params.positions);
+  const inRange = activePositions.find((position) => position.tickLower <= params.currentTick && params.currentTick < position.tickUpper) ?? null;
+  const preferredPosition =
+    inRange ??
+    activePositions
+      .map((position) => ({
+        position,
+        distance: Math.min(Math.abs(params.currentTick - position.tickLower), Math.abs(params.currentTick - position.tickUpper))
+      }))
+      .sort((left, right) => left.distance - right.distance)[0]?.position ??
+    null;
+  const target = singleRangeTarget(params.currentTick, strategy.targetWidthTicks);
+  const targetLowerPrice = priceFromTick({
+    tick: target.lowerTick,
+    token0: params.token0,
+    token1: params.token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  const targetUpperPrice = priceFromTick({
+    tick: target.upperTick,
+    token0: params.token0,
+    token1: params.token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  const activeValueUsd = activePositions.reduce((sum, position) => sum + positionValueUsd(position, price), 0);
+  const walletValueUsd = (params.walletWeth ?? 0) * price + (params.walletUsdc ?? 0);
+  const portfolioValueUsd = activeValueUsd + walletValueUsd;
+  const currentWidth = preferredPosition ? preferredPosition.tickUpper - preferredPosition.tickLower : null;
+  const isTargetRange =
+    preferredPosition?.tickLower === target.lowerTick &&
+    preferredPosition?.tickUpper === target.upperTick &&
+    currentWidth === strategy.targetWidthTicks;
+  const hasExtraPositions = activePositions.length > 1;
+  const lastSwap = latestDirectionalSwap(params.transactions);
+  const debt = reversalDebtUsd(lastSwap, price);
+  const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);
+  const uncollectedFeeCredit = params.uncollectedFeeCreditUsd ?? 0;
+  const feeCredit = collectedFeeCredit + uncollectedFeeCredit;
+  const estimatedSlippageUsd = 0;
+  const immediateCostUsd = preferredPosition && !isTargetRange ? ESTIMATED_GAS_USD : 0;
+  const uncoveredReversalDebtUsd = Math.max(0, debt + immediateCostUsd - feeCredit);
+  const mode = params.mode ?? DEFAULT_MODE;
+  const targetRange = `${target.lowerTick} - ${target.upperTick}`;
+  const ladder: AutopilotPlan["ladder"] = [
+    {
+      role: "active",
+      range: preferredPosition ? `${preferredPosition.tickLower} - ${preferredPosition.tickUpper}` : targetRange,
+      lowerTick: preferredPosition?.tickLower ?? target.lowerTick,
+      upperTick: preferredPosition?.tickUpper ?? target.upperTick,
+      lowerPrice: preferredPosition
+        ? priceFromTick({ tick: preferredPosition.tickLower, token0: params.token0, token1: params.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc })
+        : targetLowerPrice,
+      upperPrice: preferredPosition
+        ? priceFromTick({ tick: preferredPosition.tickUpper, token0: params.token0, token1: params.token1, baseToken: CONTRACTS.weth, quoteToken: CONTRACTS.usdc })
+        : targetUpperPrice,
+      tokenId: preferredPosition?.tokenId ?? null,
+      status: preferredPosition ? (isTargetRange && !hasExtraPositions ? "ok" : "warn") : "missing",
+      plannedAction: isTargetRange && !hasExtraPositions ? "Keep single 240-tick test range" : "Do not build guard ranges; prepare one 240-tick range"
+    }
+  ];
+  const actions: AutopilotPlan["actions"] = [];
+
+  if (isTargetRange && !hasExtraPositions) {
+    actions.push({
+      type: "hold",
+      label: "Hold single test range",
+      detail: "The active position matches the 240-tick small-capital test preset.",
+      estimatedCostUsd: 0
+    });
+  } else if (!preferredPosition && portfolioValueUsd > 0) {
+    actions.push({
+      type: "wait",
+      label: "Mint one 240-tick range manually",
+      detail: `Target ticks ${targetRange}, using the test budget only. Executor support for single-position mint is intentionally not live yet.`,
+      estimatedCostUsd: 0,
+      lowerTick: target.lowerTick,
+      upperTick: target.upperTick,
+      budgetUsd: portfolioValueUsd
+    });
+  } else {
+    actions.push({
+      type: "wait",
+      label: "Wait for single-range executor",
+      detail: `Small-capital mode blocks the old three-range rebalance. Next target is ${targetRange}; close/re-mint only after fee credit covers debt and dry-run support is added.`,
+      estimatedCostUsd: immediateCostUsd,
+      tokenId: preferredPosition?.tokenId
+    });
+  }
+
+  const state: AutopilotState = isTargetRange && !hasExtraPositions ? "idle" : "confirming";
+  const title = state === "idle" ? "Small test range active" : "Small-capital plan";
+  const detail =
+    state === "idle"
+      ? "One 240-tick range is active. Guard ranges are disabled for the $1k test."
+      : "Guard ranges are disabled. Use one 240-tick range and rebalance only after fee credit covers costs.";
+
+  const planWithoutTelegram = {
+    mode,
+    state,
+    severity: state === "idle" ? ("good" as const) : ("warn" as const),
+    title,
+    detail,
+    strategy,
+    pool: {
+      currentTick: params.currentTick,
+      baseTick: alignToSpacing(params.currentTick),
+      price,
+      triggerBufferPercent: TRIGGER_BUFFER_PERCENT,
+      reverseBufferPercent: REVERSE_BUFFER_PERCENT,
+      confirmationMinutes: strategy.confirmationSeconds / 60,
+      cooldownMinutes: COOLDOWN_MINUTES
+    },
+    economics: {
+      immediateCostUsd,
+      estimatedSlippageUsd,
+      estimatedGasUsd: immediateCostUsd > 0 ? ESTIMATED_GAS_USD : 0,
+      reversalDebtUsd: debt,
+      feeCreditUsd: feeCredit,
+      collectedFeesSinceLastSwapUsd: collectedFeeCredit,
+      uncollectedFeesUsd: uncollectedFeeCredit,
+      uncoveredReversalDebtUsd,
+      feesNeededToReverseUsd: uncoveredReversalDebtUsd,
+      lastDirectionalSwap: lastSwap
+    },
+    ladder,
+    actions,
+    updatedAt: (params.updatedAt ?? new Date()).toISOString()
+  };
+
+  return {
+    ...planWithoutTelegram,
+    telegramSummary: buildTelegramSummary(planWithoutTelegram)
+  };
+}
+
+export function calculateAutopilotPlan(params: {
+  positions: Position[];
+  transactions: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type">[];
+  walletWeth: number | null;
+  walletUsdc: number | null;
+  currentTick: number;
+  token0: Address;
+  token1: Address;
+  mode?: AutopilotMode;
+  preset?: AutopilotPreset;
+  updatedAt?: Date;
+  uncollectedFeeCreditUsd?: number;
+}): AutopilotPlan {
+  if ((params.preset ?? DEFAULT_PRESET) === "small_capital_test") {
+    return calculateSmallCapitalPlan({
+      positions: params.positions,
+      transactions: params.transactions,
+      walletWeth: params.walletWeth,
+      walletUsdc: params.walletUsdc,
+      currentTick: params.currentTick,
+      token0: params.token0,
+      token1: params.token1,
+      mode: params.mode,
+      updatedAt: params.updatedAt,
+      uncollectedFeeCreditUsd: params.uncollectedFeeCreditUsd
+    });
+  }
+
   const price = priceFromTick({
     tick: params.currentTick,
     token0: params.token0,
@@ -352,11 +584,13 @@ export function calculateAutopilotPlan(params: {
   const severity = guide.recommendation.severity;
   const actions = buildActions(guide, immediateCostUsd, debt);
   const mode = params.mode ?? DEFAULT_MODE;
+  const strategy = strategyConfig("triple_range");
 
   const planWithoutTelegram = {
     mode,
     state,
     severity,
+    strategy,
     title: chooseTitle(state, guide),
     detail:
       state === "ready"

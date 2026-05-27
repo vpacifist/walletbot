@@ -130,4 +130,23 @@ describe("calculateAutopilotPlan", () => {
     expect(partialSwap?.quoteRequest?.receiveSymbol).toBe("USDC");
     expect(partialSwap?.quoteRequest?.amountIn).toBeGreaterThan(0);
   });
+
+  it("uses a single 240-tick range in the small-capital preset", () => {
+    const plan = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [position({ id: "active", tokenId: "1", tickLower: -199980, tickUpper: -199740, status: PositionStatus.in_range })],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -199845,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    expect(plan.strategy.preset).toBe("small_capital_test");
+    expect(plan.strategy.targetWidthTicks).toBe(240);
+    expect(plan.ladder).toHaveLength(1);
+    expect(plan.ladder[0].range).toBe("-199980 - -199740");
+    expect(plan.actions[0].type).toBe("hold");
+  });
 });

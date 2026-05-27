@@ -83,7 +83,8 @@ export async function getCurrentAutopilotPlan() {
     walletUsdc: wallet.usdc,
     currentTick: pool.currentTick,
     token0: pool.token0,
-    token1: pool.token1
+    token1: pool.token1,
+    preset: getConfig().AUTOPILOT_PRESET
   });
 
   if (!basePlan.economics.lastDirectionalSwap) return basePlan;
@@ -110,6 +111,7 @@ export async function getCurrentAutopilotPlan() {
     currentTick: pool.currentTick,
     token0: pool.token0,
     token1: pool.token1,
+    preset: getConfig().AUTOPILOT_PRESET,
     uncollectedFeeCreditUsd
   });
 }
@@ -119,6 +121,7 @@ function planKeyInput(plan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>)
     state: plan.state,
     currentTick: plan.pool.currentTick,
     baseTick: plan.pool.baseTick,
+    strategy: plan.strategy,
     ladder: plan.ladder.map((segment) => ({
       role: segment.role,
       range: segment.range,

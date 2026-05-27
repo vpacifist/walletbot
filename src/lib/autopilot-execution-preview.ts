@@ -33,9 +33,6 @@ export type AutopilotExecutionPreview = {
   telegramSummary: string;
 };
 
-const MAX_IMMEDIATE_COST_USD = 10;
-const MAX_UNCOVERED_DEBT_USD = 10;
-
 export type SwapQuoteResult =
   | { status: "not_requested" }
   | { status: "available"; data: SwapQuote }
@@ -110,8 +107,9 @@ export function buildAutopilotExecutionPreview(
   const isApproved = record.status === "approved";
   const isFresh = currentPlanKey === record.planKey;
   const hasAction = currentPlan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
-  const costOk = currentPlan.economics.immediateCostUsd <= MAX_IMMEDIATE_COST_USD;
-  const uncoveredDebtOk = currentPlan.economics.uncoveredReversalDebtUsd <= MAX_UNCOVERED_DEBT_USD;
+  const costOk = currentPlan.economics.immediateCostUsd <= currentPlan.strategy.maxImmediateCostUsd;
+  const uncoveredDebtOk = currentPlan.economics.uncoveredReversalDebtUsd <= currentPlan.strategy.maxUncoveredDebtUsd;
+  const strategyAllowsExecution = currentPlan.strategy.preset !== "small_capital_test" || currentPlan.actions.some((action) => action.type === "close" || action.type === "mint");
   const notIdle = currentPlan.state !== "idle";
 
   const checks = [
@@ -133,12 +131,20 @@ export function buildAutopilotExecutionPreview(
     {
       label: "Immediate cost",
       ok: costOk,
-      detail: `${formatUsd(currentPlan.economics.immediateCostUsd)} <= ${formatUsd(MAX_IMMEDIATE_COST_USD)}`
+      detail: `${formatUsd(currentPlan.economics.immediateCostUsd)} <= ${formatUsd(currentPlan.strategy.maxImmediateCostUsd)}`
     },
     {
       label: "Uncovered debt",
       ok: uncoveredDebtOk,
-      detail: `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(MAX_UNCOVERED_DEBT_USD)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+      detail: `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+    },
+    {
+      label: "Strategy preset",
+      ok: strategyAllowsExecution,
+      detail:
+        currentPlan.strategy.preset === "small_capital_test"
+          ? "Small-capital mode blocks the old three-range executor until a single-range rebalance path is prepared"
+          : currentPlan.strategy.label
     }
   ];
   const reasons = checks.filter((check) => !check.ok).map((check) => check.label);

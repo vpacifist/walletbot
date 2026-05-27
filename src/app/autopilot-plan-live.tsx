@@ -8,6 +8,16 @@ type AutopilotPlan = {
   severity: "good" | "warn" | "bad";
   title: string;
   detail: string;
+  strategy: {
+    preset: "triple_range" | "small_capital_test";
+    label: string;
+    targetWidthTicks: number;
+    confirmationSeconds: number;
+    maxDriftBps: number;
+    maxImmediateCostUsd: number;
+    maxUncoveredDebtUsd: number;
+    feeCreditMustCoverCosts: boolean;
+  };
   pool: {
     currentTick: number;
     baseTick: number;
@@ -213,7 +223,7 @@ export function AutopilotPlanLive() {
           <strong>{data ? modeLabel(data.mode) : "-"}</strong>
           <p className="muted">
             {data
-              ? `Confirm ${data.pool.confirmationMinutes}m, cooldown ${data.pool.cooldownMinutes}m, reverse buffer ${formatAmount(data.pool.reverseBufferPercent, 2)}%.`
+              ? `${data.strategy.label}: ${data.strategy.targetWidthTicks} ticks, ${data.strategy.confirmationSeconds}s confirm, ${data.strategy.maxDriftBps} bps drift max.`
               : "Execution mode and risk gates will appear here."}
           </p>
         </div>
@@ -237,12 +247,12 @@ export function AutopilotPlanLive() {
         <div className="asset-metric">
           <p className="metric-label">Immediate cost</p>
           <span className="metric-value">{formatUsd(data?.economics.immediateCostUsd)}</span>
-          <span>{formatUsd(data?.economics.estimatedSlippageUsd)} slippage - {formatUsd(data?.economics.estimatedGasUsd)} gas</span>
+          <span>Limit {formatUsd(data?.strategy.maxImmediateCostUsd)} - {formatUsd(data?.economics.estimatedSlippageUsd)} slippage - {formatUsd(data?.economics.estimatedGasUsd)} gas</span>
         </div>
         <div className="asset-metric">
           <p className="metric-label">Reversal debt</p>
           <span className="metric-value">{formatUsd(data?.economics.reversalDebtUsd)}</span>
-          <span>{formatUsd(data?.economics.uncoveredReversalDebtUsd)} uncovered after fees</span>
+          <span>{formatUsd(data?.economics.uncoveredReversalDebtUsd)} uncovered after fees; limit {formatUsd(data?.strategy.maxUncoveredDebtUsd)}</span>
         </div>
         <div className="asset-metric">
           <p className="metric-label">Fee credit</p>
