@@ -1,5 +1,7 @@
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 
@@ -10,6 +12,8 @@ const SWAP_TOPIC0 = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115
 const CACHE_DIR = path.join(process.cwd(), "data", "cache", "uniswap-v3-base-weth-usdc-3000");
 const RAW_JSONL = path.join(CACHE_DIR, "swaps.jsonl");
 const SUMMARY_JSON = path.join(CACHE_DIR, "summary.json");
+const GOLDSKY_BUCKET = "indexed-xyz-wnam";
+const GOLDSKY_ENDPOINT = "ed5d915e0259fcddb2ab1ce5592040c3.r2.cloudflarestorage.com";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 type DuneRow = {
@@ -31,6 +35,14 @@ type SwapRow = {
   liquidity: string;
   tick: number;
   price: number;
+};
+
+type GoldskyRow = {
+  block_timestamp: string;
+  block_number: string;
+  transaction_hash: string;
+  log_index: string;
+  data: string;
 };
 
 function arg(name: string, fallback: string) {
@@ -79,6 +91,16 @@ function decodeSwap(row: DuneRow): SwapRow {
     tick,
     price: priceFromTick(tick)
   };
+}
+
+function decodeGoldskySwap(row: GoldskyRow): SwapRow {
+  return decodeSwap({
+    block_time: new Date(Number(row.block_timestamp) * 1000).toISOString().replace("T", " ").replace("Z", " UTC"),
+    block_number: Number(row.block_number),
+    tx_hash: row.transaction_hash,
+    log_index: Number(row.log_index),
+    data: row.data
+  });
 }
 
 async function duneRequest<T>(url: string, init?: RequestInit): Promise<T> {
@@ -185,6 +207,89 @@ async function download(days: number, chunkDays: number) {
   return { rows: totalRows, start: start.toISOString(), end: end.toISOString() };
 }
 
+function csvRows(content: string): GoldskyRow[] {
+  const lines = content.trim().split(/\r?\n/).filter(Boolean);
+  const [header, ...rows] = lines;
+  const columns = header.split(",");
+  return rows.map((line) => {
+    const values = line.split(",");
+    return Object.fromEntries(columns.map((column, index) => [column, values[index] ?? ""])) as GoldskyRow;
+  });
+}
+
+function sqlString(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function goldskyParquetPaths(start: Date, end: Date) {
+  const paths: string[] = [];
+  const startDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  for (let cursor = startDay; cursor < end; cursor = new Date(cursor.getTime() + MS_PER_DAY)) {
+    paths.push(`s3://${GOLDSKY_BUCKET}/base/raw/logs/v2.0.0/dt=${datePart(cursor)}/*.parquet`);
+  }
+  return paths;
+}
+
+function duckdbList(paths: string[]) {
+  return `[${paths.map(sqlString).join(", ")}]`;
+}
+
+async function downloadGoldsky(days: number, chunkDays: number) {
+  const accessKeyId = process.env.INDEXED_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.INDEXED_SECRET_ACCESS_KEY;
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("INDEXED_ACCESS_KEY_ID and INDEXED_SECRET_ACCESS_KEY are required for --source=goldsky.");
+  }
+
+  await mkdir(CACHE_DIR, { recursive: true });
+  const end = new Date(arg("end", new Date().toISOString()));
+  const start = process.argv.some((value) => value.startsWith("--start="))
+    ? new Date(arg("start", ""))
+    : new Date(end.getTime() - days * MS_PER_DAY);
+  const append = process.argv.includes("--append");
+  const duckdb = arg("duckdb", "duckdb");
+  const tmp = `${RAW_JSONL}.tmp`;
+  const target = append ? RAW_JSONL : tmp;
+  if (!append) await writeFile(target, "");
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "walletbot-goldsky-"));
+  let totalRows = 0;
+
+  try {
+    for (let cursor = start; cursor < end; cursor = new Date(cursor.getTime() + chunkDays * MS_PER_DAY)) {
+      const chunkEnd = new Date(Math.min(end.getTime(), cursor.getTime() + chunkDays * MS_PER_DAY));
+      const csvPath = path.join(tempDir, `swaps-${datePart(cursor)}.csv`).replace(/\\/g, "/");
+      process.stderr.write(`Goldsky ${datePart(cursor)} -> ${datePart(chunkEnd)}... `);
+      const sql = `
+LOAD httpfs;
+SET s3_region='auto';
+SET s3_endpoint=${sqlString(GOLDSKY_ENDPOINT)};
+SET s3_url_style='path';
+SET s3_access_key_id=${sqlString(accessKeyId)};
+SET s3_secret_access_key=${sqlString(secretAccessKey)};
+COPY (
+  SELECT block_timestamp, block_number, transaction_hash, log_index, data
+  FROM read_parquet(${duckdbList(goldskyParquetPaths(cursor, chunkEnd))}, hive_partitioning=true)
+  WHERE lower(address) = ${sqlString(POOL_ADDRESS)}
+    AND starts_with(topics, ${sqlString(SWAP_TOPIC0)})
+    AND block_timestamp >= ${Math.floor(cursor.getTime() / 1000)}
+    AND block_timestamp < ${Math.floor(chunkEnd.getTime() / 1000)}
+  ORDER BY block_number, log_index
+) TO ${sqlString(csvPath)} (HEADER, DELIMITER ',');
+`;
+      execFileSync(duckdb, ["-csv"], { input: sql, stdio: ["pipe", "ignore", "inherit"], windowsHide: true });
+      const rows = csvRows(await readFile(csvPath, "utf8"));
+      await appendFile(target, rows.map((row) => JSON.stringify(decodeGoldskySwap(row))).join("\n") + (rows.length ? "\n" : ""));
+      totalRows += rows.length;
+      process.stderr.write(`${rows.length} swaps\n`);
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  if (!append) await rename(tmp, RAW_JSONL);
+  return { rows: totalRows, start: start.toISOString(), end: end.toISOString(), source: "goldsky" };
+}
+
 async function loadSwaps() {
   const content = await readFile(RAW_JSONL, "utf8");
   const byLog = new Map<string, SwapRow>();
@@ -286,7 +391,7 @@ async function summarize(downloadMeta?: { rows: number; start: string; end: stri
 
   const summary = {
     pool: POOL_ADDRESS,
-    source: "Dune base.logs raw Swap events",
+    source: "Raw Uniswap v3 Swap events from Dune or Goldsky",
     generatedAt: new Date().toISOString(),
     download: downloadMeta,
     swaps: swaps.length,
@@ -315,11 +420,12 @@ async function summarize(downloadMeta?: { rows: number; start: string; end: stri
 async function main() {
   const days = Number(arg("days", "90"));
   const chunkDays = Number(arg("chunk-days", "1"));
+  const source = arg("source", "dune");
   const useExisting = process.argv.includes("--use-existing");
-  let downloadMeta: { rows: number; start: string; end: string } | undefined;
+  let downloadMeta: { rows: number; start: string; end: string; source?: string } | undefined;
 
   if (!useExisting) {
-    downloadMeta = await download(days, chunkDays);
+    downloadMeta = source === "goldsky" ? await downloadGoldsky(days, chunkDays) : await download(days, chunkDays);
   } else {
     await stat(RAW_JSONL);
   }
