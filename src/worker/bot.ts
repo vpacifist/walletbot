@@ -50,6 +50,10 @@ function decisionLabel(decision: string) {
   return decision;
 }
 
+function configuredWalletWhere() {
+  return { address: getConfig().BASE_WALLET_ADDRESS };
+}
+
 export function createBot() {
   const { TELEGRAM_BOT_TOKEN } = getConfig();
   if (!TELEGRAM_BOT_TOKEN) return null;
@@ -63,7 +67,7 @@ export function createBot() {
 
   bot.command("status", async (ctx) => {
     if (!assertAllowedChat(ctx)) return;
-    const wallet = await prisma.wallet.findFirst({ where: { enabled: true }, include: { positions: true } });
+    const wallet = await prisma.wallet.findUnique({ where: configuredWalletWhere(), include: { positions: true } });
     const latestRun = await prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } });
 
     if (!wallet) {
@@ -87,7 +91,10 @@ export function createBot() {
 
   bot.command("positions", async (ctx) => {
     if (!assertAllowedChat(ctx)) return;
-    const positions = await prisma.position.findMany({ orderBy: { updatedAt: "desc" }, take: 10 });
+    const wallet = await prisma.wallet.findUnique({ where: configuredWalletWhere() });
+    const positions = wallet
+      ? await prisma.position.findMany({ where: { walletId: wallet.id }, orderBy: { updatedAt: "desc" }, take: 10 })
+      : [];
     if (positions.length === 0) {
       await ctx.reply("No WETH/USDC Uniswap v3 positions found yet.");
       return;

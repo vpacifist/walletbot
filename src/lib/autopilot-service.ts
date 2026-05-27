@@ -31,6 +31,11 @@ function latestSyncedPoolSnapshot(positions: Position[]) {
   };
 }
 
+function autopilotBaselineAt() {
+  const value = getConfig().AUTOPILOT_BASELINE_AT;
+  return value ? new Date(value) : null;
+}
+
 async function livePoolSnapshot() {
   const client = createBaseClient();
   const poolAddress = await client.readContract({
@@ -57,10 +62,14 @@ async function livePoolSnapshot() {
 
 export async function getCurrentAutopilotPlan() {
   const walletAddress = getAddress(getConfig().BASE_WALLET_ADDRESS);
+  const walletRecord = await prisma.wallet.findUnique({ where: { address: walletAddress } });
   const [wallet, positions, transactions, livePool] = await Promise.all([
     getWalletAssetAmountsSnapshot(walletAddress).catch(() => ({ weth: null, usdc: null })),
-    prisma.position.findMany({ orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] }),
+    walletRecord
+      ? prisma.position.findMany({ where: { walletId: walletRecord.id }, orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] })
+      : Promise.resolve([]),
     prisma.transaction.findMany({
+      where: walletRecord ? { walletId: walletRecord.id } : { walletId: "__missing_wallet__" },
       orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
       take: 80,
       select: {
@@ -84,7 +93,8 @@ export async function getCurrentAutopilotPlan() {
     currentTick: pool.currentTick,
     token0: pool.token0,
     token1: pool.token1,
-    preset: getConfig().AUTOPILOT_PRESET
+    preset: getConfig().AUTOPILOT_PRESET,
+    baselineAt: autopilotBaselineAt()
   });
 
   if (!basePlan.economics.lastDirectionalSwap) return basePlan;
@@ -112,6 +122,7 @@ export async function getCurrentAutopilotPlan() {
     token0: pool.token0,
     token1: pool.token1,
     preset: getConfig().AUTOPILOT_PRESET,
+    baselineAt: autopilotBaselineAt(),
     uncollectedFeeCreditUsd
   });
 }

@@ -533,13 +533,19 @@ export function calculateAutopilotPlan(params: {
   token1: Address;
   mode?: AutopilotMode;
   preset?: AutopilotPreset;
+  baselineAt?: Date | null;
   updatedAt?: Date;
   uncollectedFeeCreditUsd?: number;
 }): AutopilotPlan {
+  const transactions =
+    params.baselineAt && params.preset === "small_capital_test"
+      ? params.transactions.filter((transaction) => transaction.timestamp.getTime() >= params.baselineAt!.getTime())
+      : params.transactions;
+
   if ((params.preset ?? DEFAULT_PRESET) === "small_capital_test") {
     return calculateSmallCapitalPlan({
       positions: params.positions,
-      transactions: params.transactions,
+      transactions,
       walletWeth: params.walletWeth,
       walletUsdc: params.walletUsdc,
       currentTick: params.currentTick,
@@ -547,7 +553,7 @@ export function calculateAutopilotPlan(params: {
       token1: params.token1,
       mode: params.mode,
       updatedAt: params.updatedAt,
-      uncollectedFeeCreditUsd: params.uncollectedFeeCreditUsd
+      uncollectedFeeCreditUsd: params.baselineAt ? 0 : params.uncollectedFeeCreditUsd
     });
   }
 
@@ -571,9 +577,9 @@ export function calculateAutopilotPlan(params: {
     token1: params.token1,
     updatedAt: params.updatedAt
   });
-  const lastSwap = latestDirectionalSwap(params.transactions);
+  const lastSwap = latestDirectionalSwap(transactions);
   const debt = reversalDebtUsd(lastSwap, price);
-  const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);
+  const collectedFeeCredit = collectedFeesSinceLastSwapUsd(transactions, lastSwap, price);
   const uncollectedFeeCredit = params.uncollectedFeeCreditUsd ?? 0;
   const feeCredit = collectedFeeCredit + uncollectedFeeCredit;
   const swapNotionalUsd = estimateSwapNotionalUsd(guide);

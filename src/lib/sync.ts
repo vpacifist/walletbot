@@ -49,7 +49,12 @@ export async function syncWalletOnce() {
 
     for (const tx of txs) {
       seen += 1;
-      const receipt = await client.getTransactionReceipt({ hash: tx.hash as `0x${string}` });
+      const receipt = await client.getTransactionReceipt({ hash: tx.hash as `0x${string}` }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("Transaction receipt") && message.includes("could not be found")) return null;
+        throw error;
+      });
+      if (!receipt) continue;
       const fromAddress = getAddress(tx.from.hash);
       const toAddress = tx.to?.hash ? getAddress(tx.to.hash) : null;
       const baseClassification = classifyTransaction({
