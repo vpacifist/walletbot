@@ -1,6 +1,135 @@
-import { describe, expect, it } from "vitest";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@prisma/client";
-import { isOutOfRange } from "@/lib/alerts";
+import { isOutOfRange, sendAutopilotPlanAlert } from "@/lib/alerts";
+import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
+import { prisma } from "@/lib/db";
+
+vi.mock("@/lib/config", () => {
+  return {
+    getConfig: vi.fn(() => ({
+      TELEGRAM_CHAT_ID: "63853863"
+    }))
+  };
+});
+
+vi.mock("@/lib/autopilot-service", () => {
+  return {
+    getOrCreatePendingAutopilotPlan: vi.fn()
+  };
+});
+
+vi.mock("@/lib/db", () => {
+  return {
+    prisma: {
+      telegramEvent: {
+        findUnique: vi.fn(),
+        create: vi.fn()
+      },
+      rebalancePlan: {
+        update: vi.fn()
+      }
+    }
+  };
+});
+
+function planRecord(input: any = {}) {
+  return {
+    plan: {
+      state: "confirming",
+      title: "Small-capital plan",
+      telegramSummary: "Small-capital plan\nState: confirming",
+      actions: [{ type: "close", label: "Close current test range" }],
+      ...input.plan
+    },
+    record: {
+      id: "plan-1",
+      planKey: "plan-key-1",
+      telegramChatId: "63853863",
+      telegramMessageId: null,
+      ...input.record
+    }
+  };
+}
+
+function bot() {
+  return {
+    telegram: {
+      sendMessage: vi.fn().mockResolvedValue({ chat: { id: 63853863 }, message_id: 42 })
+    }
+  };
+}
+
+describe("sendAutopilotPlanAlert", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue(null);
+  });
+
+  it("sends a new executable autopilot plan without waiting for /autopilot", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(planRecord() as any);
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 1, planId: "plan-1" });
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      "Small-capital plan\nState: confirming\n\nPlan id: plan-1",
+      expect.objectContaining({
+        reply_markup: expect.objectContaining({
+          inline_keyboard: expect.any(Array)
+        })
+      })
+    );
+    expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
+      where: { id: "plan-1" },
+      data: {
+        telegramChatId: "63853863",
+        telegramMessageId: "42"
+      }
+    });
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        alertType: "autopilot_plan",
+        dedupeKey: "autopilot-plan:plan-key-1"
+      })
+    });
+  });
+
+  it("does not send idle plans", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          state: "idle",
+          actions: [{ type: "hold", label: "Hold single test range" }]
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 0, skipped: "plan_does_not_need_attention" });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate a plan that already has a Telegram message", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        record: {
+          telegramMessageId: "41"
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 0, skipped: "plan_already_has_telegram_message" });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+});
 
 describe("isOutOfRange", () => {
   it("only treats above and below range as alertable", () => {

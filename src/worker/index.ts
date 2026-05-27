@@ -1,4 +1,4 @@
-import { sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
+import { sendAutopilotPlanAlert, sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { syncWalletOnce } from "@/lib/sync";
@@ -52,7 +52,11 @@ async function main() {
   const run = async () => {
     try {
       const result = await syncWalletOnce();
-      if (bot) await sendOutOfRangeAlerts(bot);
+      if (bot) {
+        const autopilotAlert = await sendAutopilotPlanAlert(bot);
+        const rangeAlerts = await sendOutOfRangeAlerts(bot);
+        console.log("alert checks complete", { autopilotAlert, rangeAlerts });
+      }
       console.log("sync complete", result);
     } catch (error) {
       console.error("sync failed", error);

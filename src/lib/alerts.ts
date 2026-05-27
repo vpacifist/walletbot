@@ -21,6 +21,11 @@ function autopilotKeyboard(planId: string) {
   };
 }
 
+function autopilotPlanNeedsAttention(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"]) {
+  if (plan.state === "idle" || plan.state === "paused" || plan.state === "cooldown") return false;
+  return plan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
+}
+
 export function isOutOfRange(status: PositionStatus) {
   return status === PositionStatus.above_range || status === PositionStatus.below_range;
 }
@@ -113,6 +118,48 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
   });
 
   return { sent };
+}
+
+export async function sendAutopilotPlanAlert(bot: Telegraf) {
+  const { TELEGRAM_CHAT_ID } = getConfig();
+  if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
+
+  const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
+  if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) return { sent: 0, skipped: "plan_does_not_need_attention" };
+  if (autopilotPlan.record.telegramMessageId) return { sent: 0, skipped: "plan_already_has_telegram_message" };
+
+  const dedupeKey = `autopilot-plan:${autopilotPlan.record.planKey}`;
+  const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
+  if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
+
+  const message = await bot.telegram.sendMessage(
+    TELEGRAM_CHAT_ID,
+    [autopilotPlan.plan.telegramSummary, "", `Plan id: ${autopilotPlan.record.id}`].join("\n"),
+    { reply_markup: autopilotKeyboard(autopilotPlan.record.id) }
+  );
+
+  await prisma.rebalancePlan.update({
+    where: { id: autopilotPlan.record.id },
+    data: {
+      telegramChatId: String(message.chat.id),
+      telegramMessageId: String(message.message_id)
+    }
+  });
+
+  await prisma.telegramEvent.create({
+    data: {
+      alertType: "autopilot_plan",
+      dedupeKey,
+      payload: {
+        planId: autopilotPlan.record.id,
+        planKey: autopilotPlan.record.planKey,
+        state: autopilotPlan.plan.state,
+        title: autopilotPlan.plan.title
+      }
+    }
+  });
+
+  return { sent: 1, planId: autopilotPlan.record.id };
 }
 
 export async function sendLowNativeEthAlert(bot: Telegraf, now = new Date()) {
