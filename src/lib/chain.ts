@@ -1,15 +1,34 @@
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, fallback, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getConfig } from "./config";
 
-export function createBaseClient() {
-  return createPublicClient({
-    chain: base,
-    transport: http(getConfig().BASE_RPC_URL, {
+function baseRpcUrls() {
+  const config = getConfig();
+  const extraUrls = config.BASE_RPC_ADD_URLS.split(/[\s,;]+/).filter(Boolean);
+  return [...new Set([config.BASE_RPC_URL, ...extraUrls])];
+}
+
+function baseTransport() {
+  const transports = baseRpcUrls().map((url) =>
+    http(url, {
       retryCount: 3,
       timeout: 15_000
     })
+  );
+
+  return transports.length === 1
+    ? transports[0]
+    : fallback(transports, {
+        rank: false,
+        retryCount: 1
+      });
+}
+
+export function createBaseClient() {
+  return createPublicClient({
+    chain: base,
+    transport: baseTransport()
   });
 }
 
@@ -26,6 +45,6 @@ export function createBaseWalletClient() {
   return createWalletClient({
     account,
     chain: base,
-    transport: http(getConfig().BASE_RPC_URL)
+    transport: baseTransport()
   });
 }

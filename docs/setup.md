@@ -13,6 +13,7 @@ corepack prepare pnpm@10.12.1 --activate
 
 - `BASE_WALLET_ADDRESS`
 - `BASE_RPC_URL`
+- `BASE_RPC_ADD_URLS` optionally, as comma/space/newline separated fallback RPC URLs
 - `APP_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
