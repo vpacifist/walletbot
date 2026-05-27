@@ -6,6 +6,7 @@ coverage
 dist
 artifacts
 cache
+data/cache
 *.log
 *.tsbuildinfo
 prisma/migrations/dev.db
