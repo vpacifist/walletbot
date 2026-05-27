@@ -77,6 +77,64 @@ function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecu
   };
 }
 
+function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecutionPreview {
+  return preview({
+    steps: [
+      {
+        type: "close",
+        label: "Close current test range",
+        sourceLabel: "Close current test range #1",
+        detail: "Close the current single test range before minting -199800 - -199560.",
+        estimatedCostUsd: 1.6,
+        tokenId: "1"
+      },
+      {
+        type: "partial_swap",
+        label: "Rebalance token split",
+        sourceLabel: "Rebalance token split",
+        detail: "Swap toward the required split for -199800 - -199560.",
+        estimatedCostUsd: 1.6,
+        quoteRequest: {
+          tokenIn: CONTRACTS.usdc,
+          tokenOut: CONTRACTS.weth,
+          fee: 3000,
+          amountIn: 400,
+          spendSymbol: "USDC",
+          receiveSymbol: "WETH"
+        }
+      },
+      {
+        type: "mint",
+        label: "Mint next 240-tick range",
+        sourceLabel: "Mint next 240-tick range",
+        detail: "Target ticks -199800 - -199560, budget $1,000.",
+        estimatedCostUsd: 1.6,
+        lowerTick: -199800,
+        upperTick: -199560,
+        budgetUsd: 1000
+      }
+    ],
+    quote: {
+      status: "available",
+      data: {
+        tokenIn: CONTRACTS.usdc,
+        tokenOut: CONTRACTS.weth,
+        fee: 3000,
+        amountIn: 400,
+        spendSymbol: "USDC",
+        receiveSymbol: "WETH",
+        amountInRaw: "400000000",
+        amountOut: 0.19,
+        amountOutRaw: "190000000000000000",
+        effectivePrice: 2105,
+        gasEstimate: "72044",
+        source: "Uniswap QuoterV2"
+      }
+    },
+    ...input
+  });
+}
+
 describe("buildAutopilotDryRunExecution", () => {
   it("validates a ready preview with a required quote", () => {
     const execution = buildAutopilotDryRunExecution(preview());
@@ -232,5 +290,30 @@ describe("buildAutopilotDryRunExecution", () => {
 
     expect(execution.status).toBe("blocked");
     expect(execution.telegramSummary).toContain("Preview blocked by Live plan freshness");
+  });
+
+  it("builds single-range close, swap, and mint intents for the small-capital preset", () => {
+    const execution = buildAutopilotDryRunExecution(smallCapitalPreview(), {
+      closePositions: {
+        "1": {
+          status: "available",
+          tokenId: "1",
+          liquidity: 123n,
+          tokensOwed0: 0n,
+          tokensOwed1: 0n
+        }
+      },
+      allowances: {
+        [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
+        [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
+      }
+    });
+
+    expect(execution.status).toBe("validated");
+    expect(execution.intents.map((intent) => intent.kind)).toEqual(["close_position", "swap_exact_input", "mint_position"]);
+    expect(execution.calls.some((call) => call.functionName === "decreaseLiquidity")).toBe(true);
+    expect(execution.calls.some((call) => call.functionName === "exactInputSingle")).toBe(true);
+    expect(execution.calls.some((call) => call.functionName === "mint")).toBe(true);
+    expect(execution.telegramSummary).toContain("Mint -199800 - -199560");
   });
 });

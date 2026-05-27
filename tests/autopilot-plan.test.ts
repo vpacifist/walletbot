@@ -149,4 +149,34 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.ladder[0].range).toBe("-199980 - -199740");
     expect(plan.actions[0].type).toBe("hold");
   });
+
+  it("plans a close, split rebalance, and mint after a small-capital breakout", () => {
+    const plan = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "1",
+          tickLower: -199980,
+          tickUpper: -199740,
+          status: PositionStatus.above_range,
+          wethAmount: "0",
+          usdcAmount: "1000"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -199700,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    expect(plan.strategy.preset).toBe("small_capital_test");
+    expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
+    expect(plan.actions[0].tokenId).toBe("1");
+    expect(plan.actions[1].quoteRequest?.spendSymbol).toBe("USDC");
+    expect(plan.actions[2].lowerTick).toBe(-199860);
+    expect(plan.actions[2].upperTick).toBe(-199620);
+  });
 });

@@ -258,6 +258,73 @@ function singleRangeTarget(currentTick: number, widthTicks: number) {
   };
 }
 
+function desiredTokenAmountsForRange(params: { price: number; lowerTick: number; upperTick: number; budgetUsd: number; token0: Address; token1: Address }) {
+  if (params.budgetUsd <= 0 || params.price <= 0) return { weth: 0, usdc: 0 };
+  if (params.upperTick <= params.lowerTick) return { weth: 0, usdc: 0 };
+
+  const lowerPrice = priceFromTick({
+    tick: params.lowerTick,
+    token0: params.token0,
+    token1: params.token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  const upperPrice = priceFromTick({
+    tick: params.upperTick,
+    token0: params.token0,
+    token1: params.token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  if (!lowerPrice || !upperPrice || lowerPrice <= 0 || upperPrice <= lowerPrice) return { weth: 0, usdc: 0 };
+
+  if (params.price <= lowerPrice) return { weth: params.budgetUsd / params.price, usdc: 0 };
+  if (params.price >= upperPrice) return { weth: 0, usdc: params.budgetUsd };
+
+  const sqrtPrice = Math.sqrt(params.price);
+  const sqrtLower = Math.sqrt(lowerPrice);
+  const sqrtUpper = Math.sqrt(upperPrice);
+  const usdcPerWethRatio = (sqrtPrice * sqrtUpper * (sqrtPrice - sqrtLower)) / (sqrtUpper - sqrtPrice);
+  const weth = params.budgetUsd / (params.price + usdcPerWethRatio);
+  return {
+    weth,
+    usdc: params.budgetUsd - weth * params.price
+  };
+}
+
+function singleRangeSwapQuoteRequest(params: {
+  totalWeth: number;
+  totalUsdc: number;
+  desiredWeth: number;
+  desiredUsdc: number;
+}): AutopilotPlan["actions"][number]["quoteRequest"] {
+  const wethExcess = params.totalWeth - params.desiredWeth;
+  const usdcExcess = params.totalUsdc - params.desiredUsdc;
+  if (wethExcess > 0.000001 && params.totalUsdc < params.desiredUsdc) {
+    return {
+      tokenIn: CONTRACTS.weth,
+      tokenOut: CONTRACTS.usdc,
+      fee: WETH_USDC_NARROW_FEE,
+      amountIn: wethExcess,
+      spendSymbol: "WETH",
+      receiveSymbol: "USDC"
+    };
+  }
+
+  if (usdcExcess > 0.01 && params.totalWeth < params.desiredWeth) {
+    return {
+      tokenIn: CONTRACTS.usdc,
+      tokenOut: CONTRACTS.weth,
+      fee: WETH_USDC_NARROW_FEE,
+      amountIn: usdcExcess,
+      spendSymbol: "USDC",
+      receiveSymbol: "WETH"
+    };
+  }
+
+  return undefined;
+}
+
 function chooseState(guide: TripleRangeGuide, positions: Position[]): AutopilotState {
   if (guide.recommendation.severity === "good") return "idle";
   if (allActiveOutOfRange(positions)) return "ready";
@@ -415,6 +482,24 @@ function calculateSmallCapitalPlan(params: {
   const activeValueUsd = activePositions.reduce((sum, position) => sum + positionValueUsd(position, price), 0);
   const walletValueUsd = (params.walletWeth ?? 0) * price + (params.walletUsdc ?? 0);
   const portfolioValueUsd = activeValueUsd + walletValueUsd;
+  const selectedPositionValueUsd = preferredPosition ? positionValueUsd(preferredPosition, price) : 0;
+  const executionBudgetUsd = Math.max(selectedPositionValueUsd + walletValueUsd, portfolioValueUsd);
+  const totalWeth = (params.walletWeth ?? 0) + (preferredPosition ? numericAmount(preferredPosition.wethAmount) : 0);
+  const totalUsdc = (params.walletUsdc ?? 0) + (preferredPosition ? numericAmount(preferredPosition.usdcAmount) : 0);
+  const desired = desiredTokenAmountsForRange({
+    price,
+    lowerTick: target.lowerTick,
+    upperTick: target.upperTick,
+    budgetUsd: executionBudgetUsd,
+    token0: params.token0,
+    token1: params.token1
+  });
+  const quoteRequest = singleRangeSwapQuoteRequest({
+    totalWeth,
+    totalUsdc,
+    desiredWeth: desired.weth,
+    desiredUsdc: desired.usdc
+  });
   const currentWidth = preferredPosition ? preferredPosition.tickUpper - preferredPosition.tickLower : null;
   const isTargetRange =
     preferredPosition?.tickLower === target.lowerTick &&
@@ -426,8 +511,9 @@ function calculateSmallCapitalPlan(params: {
   const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);
   const uncollectedFeeCredit = params.uncollectedFeeCreditUsd ?? 0;
   const feeCredit = collectedFeeCredit + uncollectedFeeCredit;
-  const estimatedSlippageUsd = 0;
-  const immediateCostUsd = preferredPosition && !isTargetRange ? ESTIMATED_GAS_USD : 0;
+  const swapNotionalUsd = quoteRequest ? (quoteRequest.spendSymbol === "WETH" ? quoteRequest.amountIn * price : quoteRequest.amountIn) : 0;
+  const estimatedSlippageUsd = swapNotionalUsd * (ESTIMATED_SLIPPAGE_PERCENT / 100);
+  const immediateCostUsd = preferredPosition && !isTargetRange ? estimatedSlippageUsd + ESTIMATED_GAS_USD : 0;
   const uncoveredReversalDebtUsd = Math.max(0, debt + immediateCostUsd - feeCredit);
   const mode = params.mode ?? DEFAULT_MODE;
   const targetRange = `${target.lowerTick} - ${target.upperTick}`;
@@ -459,21 +545,41 @@ function calculateSmallCapitalPlan(params: {
     });
   } else if (!preferredPosition && portfolioValueUsd > 0) {
     actions.push({
-      type: "wait",
-      label: "Mint one 240-tick range manually",
-      detail: `Target ticks ${targetRange}, using the test budget only. Executor support for single-position mint is intentionally not live yet.`,
+      type: "mint",
+      label: "Mint one 240-tick range",
+      detail: `Target ticks ${targetRange}, using the test budget only.`,
       estimatedCostUsd: 0,
       lowerTick: target.lowerTick,
       upperTick: target.upperTick,
       budgetUsd: portfolioValueUsd
     });
   } else {
+    if (preferredPosition) {
+      actions.push({
+        type: "close",
+        label: `Close current test range #${preferredPosition.tokenId}`,
+        detail: `Close the current single test range before minting ${targetRange}.`,
+        estimatedCostUsd: immediateCostUsd,
+        tokenId: preferredPosition.tokenId
+      });
+    }
+    if (quoteRequest) {
+      actions.push({
+        type: "partial_swap",
+        label: "Rebalance token split",
+        detail: `Swap toward the required split for ${targetRange}: target ${desired.weth.toLocaleString("en-US", { maximumFractionDigits: 6 })} WETH and ${desired.usdc.toLocaleString("en-US", { maximumFractionDigits: 2 })} USDC.`,
+        estimatedCostUsd: immediateCostUsd,
+        quoteRequest
+      });
+    }
     actions.push({
-      type: "wait",
-      label: "Wait for single-range executor",
-      detail: `Small-capital mode blocks the old three-range rebalance. Next target is ${targetRange}; close/re-mint only after fee credit covers debt and dry-run support is added.`,
+      type: "mint",
+      label: "Mint next 240-tick range",
+      detail: `Target ticks ${targetRange}, budget ${formatUsd(executionBudgetUsd)}.`,
       estimatedCostUsd: immediateCostUsd,
-      tokenId: preferredPosition?.tokenId
+      lowerTick: target.lowerTick,
+      upperTick: target.upperTick,
+      budgetUsd: executionBudgetUsd
     });
   }
 
