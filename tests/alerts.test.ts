@@ -24,7 +24,8 @@ vi.mock("@/lib/db", () => {
     prisma: {
       telegramEvent: {
         findUnique: vi.fn(),
-        create: vi.fn()
+        create: vi.fn(),
+        deleteMany: vi.fn()
       },
       rebalancePlan: {
         update: vi.fn()
@@ -39,7 +40,17 @@ function planRecord(input: any = {}) {
       state: "confirming",
       title: "Small-capital plan",
       telegramSummary: "Small-capital plan\nState: confirming",
-      actions: [{ type: "close", label: "Close current test range" }],
+      strategy: { preset: "small_capital_test" },
+      pool: { currentTick: -200120 },
+      ladder: [
+        {
+          role: "active",
+          tokenId: "5199548",
+          lowerTick: -200100,
+          upperTick: -199860
+        }
+      ],
+      actions: [{ type: "close", label: "Close current test range", tokenId: "5199548" }],
       ...input.plan
     },
     record: {
@@ -92,7 +103,7 @@ describe("sendAutopilotPlanAlert", () => {
     expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         alertType: "autopilot_plan",
-        dedupeKey: "autopilot-plan:plan-key-1"
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
       })
     });
   });
@@ -111,6 +122,39 @@ describe("sendAutopilotPlanAlert", () => {
     const result = await sendAutopilotPlanAlert(testBot as any);
 
     expect(result).toEqual({ sent: 0, skipped: "plan_does_not_need_attention" });
+    expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
+      where: {
+        alertType: "autopilot_plan",
+        dedupeKey: { startsWith: "autopilot-incident:" }
+      }
+    });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not resend the same small-capital breakout when tick and cost change", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        record: {
+          id: "plan-2",
+          planKey: "different-price-sensitive-plan-key"
+        },
+        plan: {
+          pool: { currentTick: -200180 },
+          economics: { immediateCostUsd: 1.23 }
+        }
+      }) as any
+    );
+    vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue({ id: "event-1" } as any);
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 0, skipped: "duplicate_plan_key" });
+    expect(prisma.telegramEvent.findUnique).toHaveBeenCalledWith({
+      where: {
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      }
+    });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 

@@ -26,6 +26,23 @@ function autopilotPlanNeedsAttention(plan: Awaited<ReturnType<typeof getOrCreate
   return plan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
 }
 
+function autopilotIncidentDedupeKey(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"], planKey: string) {
+  const active = plan.ladder.find((segment) => segment.role === "active");
+  const closeAction = plan.actions.find((action) => action.type === "close" && action.tokenId);
+
+  if (plan.strategy.preset === "small_capital_test" && active?.tokenId && closeAction?.tokenId) {
+    const direction =
+      plan.pool.currentTick < active.lowerTick
+        ? "below_range"
+        : plan.pool.currentTick >= active.upperTick
+          ? "above_range"
+          : "rebalance";
+    return `autopilot-incident:${plan.strategy.preset}:${active.tokenId}:${active.lowerTick}:${active.upperTick}:${direction}`;
+  }
+
+  return `autopilot-plan:${planKey}`;
+}
+
 export function isOutOfRange(status: PositionStatus) {
   return status === PositionStatus.above_range || status === PositionStatus.below_range;
 }
@@ -125,10 +142,18 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
 
   const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
-  if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) return { sent: 0, skipped: "plan_does_not_need_attention" };
+  if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) {
+    await prisma.telegramEvent.deleteMany({
+      where: {
+        alertType: "autopilot_plan",
+        dedupeKey: { startsWith: "autopilot-incident:" }
+      }
+    });
+    return { sent: 0, skipped: "plan_does_not_need_attention" };
+  }
   if (autopilotPlan.record.telegramMessageId) return { sent: 0, skipped: "plan_already_has_telegram_message" };
 
-  const dedupeKey = `autopilot-plan:${autopilotPlan.record.planKey}`;
+  const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
 
