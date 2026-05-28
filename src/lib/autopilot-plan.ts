@@ -107,6 +107,7 @@ const SMALL_CAPITAL_WIDTH_TICKS = 240;
 const SMALL_CAPITAL_CONFIRM_SECONDS = 30;
 const SMALL_CAPITAL_MAX_DRIFT_BPS = 30;
 const SMALL_CAPITAL_MAX_IMMEDIATE_COST_USD = 5;
+const SMALL_CAPITAL_MAX_UNCOVERED_DEBT_USD = 1.5;
 
 function strategyConfig(preset: AutopilotPreset): AutopilotPlan["strategy"] {
   if (preset === "small_capital_test") {
@@ -117,8 +118,8 @@ function strategyConfig(preset: AutopilotPreset): AutopilotPlan["strategy"] {
       confirmationSeconds: SMALL_CAPITAL_CONFIRM_SECONDS,
       maxDriftBps: SMALL_CAPITAL_MAX_DRIFT_BPS,
       maxImmediateCostUsd: SMALL_CAPITAL_MAX_IMMEDIATE_COST_USD,
-      maxUncoveredDebtUsd: 0,
-      feeCreditMustCoverCosts: true
+      maxUncoveredDebtUsd: SMALL_CAPITAL_MAX_UNCOVERED_DEBT_USD,
+      feeCreditMustCoverCosts: false
     };
   }
 

@@ -130,4 +130,44 @@ describe("buildAutopilotExecutionPreview", () => {
     expect(preview.reasons).toContain("Action required");
     expect(preview.reasons).toContain("Strategy preset");
   });
+
+  it("allows a bounded uncovered debt for the small-capital breakout test", () => {
+    const preview = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "same" },
+      "same",
+      plan({
+        title: "Small-capital plan",
+        strategy: {
+          preset: "small_capital_test",
+          label: "Small capital test",
+          targetWidthTicks: 240,
+          confirmationSeconds: 30,
+          maxDriftBps: 30,
+          maxImmediateCostUsd: 5,
+          maxUncoveredDebtUsd: 1.5,
+          feeCreditMustCoverCosts: false
+        },
+        economics: {
+          immediateCostUsd: 0.93,
+          estimatedSlippageUsd: 0.83,
+          estimatedGasUsd: 0.1,
+          reversalDebtUsd: 0,
+          feeCreditUsd: 0,
+          collectedFeesSinceLastSwapUsd: 0,
+          uncollectedFeesUsd: 0,
+          uncoveredReversalDebtUsd: 0.93,
+          feesNeededToReverseUsd: 0.93,
+          lastDirectionalSwap: null
+        },
+        actions: [
+          { type: "close", label: "Close current test range #5199548", detail: "Close the current single test range.", estimatedCostUsd: 0.93, tokenId: "5199548" },
+          { type: "mint", label: "Mint next 240-tick range", detail: "Target ticks -200520 - -200280.", estimatedCostUsd: 0.93, lowerTick: -200520, upperTick: -200280 }
+        ]
+      })
+    );
+
+    expect(preview.status).toBe("ready");
+    expect(preview.reasons).not.toContain("Uncovered debt");
+    expect(preview.telegramSummary).toContain("OK Uncovered debt: $0.93 <= $1.5 after $0 fee credit");
+  });
 });
