@@ -171,6 +171,12 @@ describe("sendAutopilotPlanAlert", () => {
     const result = await sendAutopilotPlanAlert(testBot as any);
 
     expect(result).toEqual({ sent: 0, skipped: "plan_already_has_telegram_message" });
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        alertType: "autopilot_plan",
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      })
+    });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 });

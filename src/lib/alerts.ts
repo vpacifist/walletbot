@@ -43,6 +43,29 @@ function autopilotIncidentDedupeKey(plan: Awaited<ReturnType<typeof getOrCreateP
   return `autopilot-plan:${planKey}`;
 }
 
+async function recordAutopilotPlanEvent(input: {
+  dedupeKey: string;
+  plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"];
+  planId: string;
+  planKey: string;
+}) {
+  const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey: input.dedupeKey } });
+  if (existing) return existing;
+
+  return prisma.telegramEvent.create({
+    data: {
+      alertType: "autopilot_plan",
+      dedupeKey: input.dedupeKey,
+      payload: {
+        planId: input.planId,
+        planKey: input.planKey,
+        state: input.plan.state,
+        title: input.plan.title
+      }
+    }
+  });
+}
+
 export function isOutOfRange(status: PositionStatus) {
   return status === PositionStatus.above_range || status === PositionStatus.below_range;
 }
@@ -151,11 +174,18 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
     });
     return { sent: 0, skipped: "plan_does_not_need_attention" };
   }
-  if (autopilotPlan.record.telegramMessageId) return { sent: 0, skipped: "plan_already_has_telegram_message" };
-
   const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
+  if (autopilotPlan.record.telegramMessageId) {
+    await recordAutopilotPlanEvent({
+      dedupeKey,
+      plan: autopilotPlan.plan,
+      planId: autopilotPlan.record.id,
+      planKey: autopilotPlan.record.planKey
+    });
+    return { sent: 0, skipped: "plan_already_has_telegram_message" };
+  }
 
   const message = await bot.telegram.sendMessage(
     TELEGRAM_CHAT_ID,
@@ -171,17 +201,11 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
     }
   });
 
-  await prisma.telegramEvent.create({
-    data: {
-      alertType: "autopilot_plan",
-      dedupeKey,
-      payload: {
-        planId: autopilotPlan.record.id,
-        planKey: autopilotPlan.record.planKey,
-        state: autopilotPlan.plan.state,
-        title: autopilotPlan.plan.title
-      }
-    }
+  await recordAutopilotPlanEvent({
+    dedupeKey,
+    plan: autopilotPlan.plan,
+    planId: autopilotPlan.record.id,
+    planKey: autopilotPlan.record.planKey
   });
 
   return { sent: 1, planId: autopilotPlan.record.id };
