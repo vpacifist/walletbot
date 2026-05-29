@@ -16,9 +16,17 @@ corepack prepare pnpm@10.12.1 --activate
 - `BASE_RPC_ADD_URLS` optionally, as comma/space/newline separated fallback RPC URLs
 - `AUTOPILOT_PRESET`, either `triple_range` or `small_capital_test`
 - `AUTOPILOT_BASELINE_AT` optionally, as an ISO timestamp for ignoring old autopilot fee/debt history
+- `AUTOPILOT_REBALANCER_ADDRESS` for atomic rebalance dry-run/live review
 - `APP_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+
+Live execution is off by default. To enable it, set both:
+
+- `AUTOPILOT_LIVE_EXECUTION_ENABLED=true`
+- `BASE_WALLET_PRIVATE_KEY`, for the hot wallet only; it must match `BASE_WALLET_ADDRESS`
+
+The bot still requires a validated dry-run and a second Telegram confirmation before broadcasting a live transaction. Do not use a cold-wallet private key here.
 
 The Compose Postgres service is exposed on host port `5433` to avoid conflicts with a locally installed Postgres on `5432`.
 

@@ -9,6 +9,7 @@ import { shortAddress } from "@/lib/format";
 
 const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
 const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
+const AUTOPILOT_LIVE_REVIEW_PATTERN = /^ap:live_review:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 
 function assertAllowedChat(ctx: Context) {
@@ -37,9 +38,21 @@ function autopilotExecutionKeyboard(planId: string) {
 }
 
 function autopilotLiveKeyboard(planId: string) {
-  if (!getConfig().AUTOPILOT_LIVE_EXECUTION_ENABLED) return undefined;
+  const config = getConfig();
+  if (!config.AUTOPILOT_LIVE_EXECUTION_ENABLED || !config.BASE_WALLET_PRIVATE_KEY || !config.AUTOPILOT_REBALANCER_ADDRESS) return undefined;
   return {
-    inline_keyboard: [[{ text: "Execute live transaction", callback_data: `ap:execute_live:${planId}` }]]
+    inline_keyboard: [[{ text: "Review live transaction", callback_data: `ap:live_review:${planId}` }]]
+  };
+}
+
+function autopilotLiveConfirmKeyboard(planId: string) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Confirm live transaction", callback_data: `ap:execute_live:${planId}` },
+        { text: "Cancel", callback_data: `ap:pause:${planId}` }
+      ]
+    ]
   };
 }
 
@@ -177,6 +190,49 @@ export function createBot() {
     } catch (error) {
       await ctx.answerCbQuery("Executor dry-run failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Executor dry-run failed: ${error.message}` : "Executor dry-run failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_LIVE_REVIEW_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Preparing live review...");
+      const execution = await createAutopilotDryRunExecution(planId);
+
+      if (execution.status !== "validated") {
+        await ctx.reply(["Live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        return;
+      }
+
+      await ctx.reply(
+        [
+          "Live execution review",
+          `Plan id: ${planId}`,
+          "",
+          "This will submit one atomic rebalance transaction on Base from the configured hot wallet.",
+          "Only continue if the dry-run output still matches the action you expect.",
+          "",
+          "Prepared operations",
+          ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`),
+          "",
+          "Atomic transaction",
+          execution.atomicCall.status === "prepared" ? `Target: ${execution.atomicCall.target}` : `Status: ${execution.atomicCall.status}`,
+          execution.atomicCall.dataPreview ? `Calldata: ${execution.atomicCall.dataPreview}` : undefined,
+          "",
+          "Final confirmation is required before broadcasting."
+        ]
+          .filter((line) => line !== undefined)
+          .join("\n"),
+        {
+          reply_markup: autopilotLiveConfirmKeyboard(planId)
+        }
+      );
+    } catch (error) {
+      await ctx.answerCbQuery("Live review failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Live review failed: ${error.message}` : "Live review failed.");
     }
   });
 
