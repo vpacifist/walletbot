@@ -41,8 +41,8 @@ export function getApprovalBadge(transaction: ApprovalTransaction): ApprovalBadg
   const decoded = decodedInput(transaction);
   if (!decoded?.method_call?.toLowerCase().startsWith("approve(")) return null;
 
-  const spender = parameterValue(decoded.parameters, ["spender", "guy"]);
-  const amount = parameterValue(decoded.parameters, ["amount", "value", "wad"]);
+  const spender = parameterValue(decoded.parameters, ["spender", "guy", "to"]);
+  const amount = parameterValue(decoded.parameters, ["amount", "value", "wad", "tokenId"]);
   if (typeof spender !== "string" || spender === "0x0000000000000000000000000000000000000000") return null;
 
   return {
