@@ -65,6 +65,9 @@ contract AutopilotRebalancer {
     error UnsupportedFee();
     error InvalidRecipient();
     error InvalidAmount();
+    error UnsupportedSwapTarget();
+    error SwapFailed(bytes data);
+    error InsufficientSwapOutput(uint256 amountOut, uint256 amountOutMinimum);
     error TransferFailed();
 
     struct CloseParams {
@@ -80,6 +83,9 @@ contract AutopilotRebalancer {
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
+        address spender;
+        address target;
+        bytes data;
     }
 
     struct MintParams {
@@ -108,6 +114,7 @@ contract AutopilotRebalancer {
     address public immutable usdc;
     INonfungiblePositionManager public immutable positionManager;
     ISwapRouter02 public immutable swapRouter;
+    address public immutable allowanceHolder;
 
     bool private locked;
 
@@ -137,10 +144,20 @@ contract AutopilotRebalancer {
         locked = false;
     }
 
-    constructor(address owner_, address executor_, address vault_, address weth_, address usdc_, address positionManager_, address swapRouter_) {
+    constructor(
+        address owner_,
+        address executor_,
+        address vault_,
+        address weth_,
+        address usdc_,
+        address positionManager_,
+        address swapRouter_,
+        address allowanceHolder_
+    ) {
         if (owner_ == address(0)) revert InvalidRecipient();
         if (executor_ == address(0)) revert InvalidRecipient();
         if (vault_ == address(0)) revert InvalidRecipient();
+        if (allowanceHolder_ == address(0)) revert InvalidRecipient();
         owner = owner_;
         executor = executor_;
         vault = vault_;
@@ -148,6 +165,7 @@ contract AutopilotRebalancer {
         usdc = usdc_;
         positionManager = INonfungiblePositionManager(positionManager_);
         swapRouter = ISwapRouter02(swapRouter_);
+        allowanceHolder = allowanceHolder_;
     }
 
     function rebalance(RebalanceParams calldata params)
@@ -158,6 +176,7 @@ contract AutopilotRebalancer {
     {
         if (block.timestamp > params.deadline) revert Expired();
         _validateTokenPair(params.swap.tokenIn, params.swap.tokenOut);
+        _validateSwap(params.swap);
         _validateMint(params.mintPosition);
 
         if (params.closePosition.liquidity == 0) revert InvalidAmount();
@@ -180,19 +199,7 @@ contract AutopilotRebalancer {
             })
         );
 
-        _approveExact(params.swap.tokenIn, address(swapRouter), params.swap.amountIn);
-        swapAmountOut = swapRouter.exactInputSingle(
-            ISwapRouter02.ExactInputSingleParams({
-                tokenIn: params.swap.tokenIn,
-                tokenOut: params.swap.tokenOut,
-                fee: POOL_FEE,
-                recipient: address(this),
-                amountIn: params.swap.amountIn,
-                amountOutMinimum: params.swap.amountOutMinimum,
-                sqrtPriceLimitX96: params.swap.sqrtPriceLimitX96
-            })
-        );
-        _approveExact(params.swap.tokenIn, address(swapRouter), 0);
+        swapAmountOut = _executeSwap(params.swap);
 
         _approveExact(weth, address(positionManager), params.mintPosition.amount0Desired);
         _approveExact(usdc, address(positionManager), params.mintPosition.amount1Desired);
@@ -234,6 +241,16 @@ contract AutopilotRebalancer {
         _validateToken(usdc);
     }
 
+    function _validateSwap(SwapParams calldata swap) private view {
+        if (swap.amountIn == 0) revert InvalidAmount();
+        if (swap.data.length == 0) {
+            if (swap.spender != address(0) && swap.spender != address(swapRouter)) revert UnsupportedSwapTarget();
+            if (swap.target != address(0) && swap.target != address(swapRouter)) revert UnsupportedSwapTarget();
+        } else {
+            if (swap.spender != allowanceHolder || swap.target != allowanceHolder) revert UnsupportedSwapTarget();
+        }
+    }
+
     function _validateTokenPair(address tokenIn, address tokenOut) private view {
         _validateToken(tokenIn);
         _validateToken(tokenOut);
@@ -246,6 +263,35 @@ contract AutopilotRebalancer {
 
     function _approveExact(address token, address spender, uint256 amount) private {
         if (!IERC20(token).approve(spender, amount)) revert TransferFailed();
+    }
+
+    function _executeSwap(SwapParams calldata swap) private returns (uint256 swapAmountOut) {
+        if (swap.data.length == 0) {
+            _approveExact(swap.tokenIn, address(swapRouter), swap.amountIn);
+            swapAmountOut = swapRouter.exactInputSingle(
+                ISwapRouter02.ExactInputSingleParams({
+                    tokenIn: swap.tokenIn,
+                    tokenOut: swap.tokenOut,
+                    fee: POOL_FEE,
+                    recipient: address(this),
+                    amountIn: swap.amountIn,
+                    amountOutMinimum: swap.amountOutMinimum,
+                    sqrtPriceLimitX96: swap.sqrtPriceLimitX96
+                })
+            );
+            _approveExact(swap.tokenIn, address(swapRouter), 0);
+            return swapAmountOut;
+        }
+
+        uint256 balanceBefore = IERC20(swap.tokenOut).balanceOf(address(this));
+        _approveExact(swap.tokenIn, swap.spender, swap.amountIn);
+        (bool success, bytes memory result) = swap.target.call(swap.data);
+        _approveExact(swap.tokenIn, swap.spender, 0);
+        if (!success) revert SwapFailed(result);
+
+        uint256 balanceAfter = IERC20(swap.tokenOut).balanceOf(address(this));
+        swapAmountOut = balanceAfter - balanceBefore;
+        if (swapAmountOut < swap.amountOutMinimum) revert InsufficientSwapOutput(swapAmountOut, swap.amountOutMinimum);
     }
 
     function _refund(address token) private {

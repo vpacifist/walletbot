@@ -1,4 +1,4 @@
-import { formatUnits, parseUnits, type Address } from "viem";
+import { formatUnits, getAddress, parseUnits, type Address, type Hex } from "viem";
 import { quoterV2Abi } from "./abi";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
@@ -13,7 +13,7 @@ export type SwapQuoteRequest = {
   receiveSymbol: "WETH" | "USDC";
 };
 
-export type SwapQuoteSource = "uniswap_v3" | "aggregator_required";
+export type SwapQuoteSource = "uniswap_v3" | "zeroex_allowance_holder" | "aggregator_required";
 
 export type SwapQuote = SwapQuoteRequest & {
   amountInRaw: string;
@@ -27,6 +27,7 @@ export type SwapQuote = SwapQuoteRequest & {
   executionNote?: string;
   approvalTarget?: Address;
   transactionTarget?: Address;
+  transactionData?: Hex;
   routeSummary?: string;
 };
 
@@ -66,10 +67,12 @@ function quoteFromRaw(request: SwapQuoteRequest, amountInRaw: bigint, amountOutR
     gasEstimate: gasEstimate.toString(),
     source,
     sourceType,
-    executable: sourceType === "uniswap_v3",
+    executable: sourceType === "uniswap_v3" || sourceType === "zeroex_allowance_holder",
     executionNote:
       sourceType === "uniswap_v3"
         ? "Executable by the current Uniswap-only rebalancer contract."
+        : sourceType === "zeroex_allowance_holder"
+          ? "Executable by the allowlisted 0x AllowanceHolder rebalancer contract."
         : "Aggregator quote requires a rebalancer contract that supports generic aggregator calldata."
   };
 }
@@ -133,6 +136,10 @@ function routeSummary(fills: NonNullable<ZeroExQuoteResponse["route"]>["fills"])
     .join(", ");
 }
 
+function sameAddress(left?: string, right?: string) {
+  return !!left && !!right && left.toLowerCase() === right.toLowerCase();
+}
+
 export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Promise<SwapQuote> {
   const apiKey = getConfig().ZEROX_API_KEY;
   if (!apiKey) throw new Error("ZEROX_API_KEY is not configured");
@@ -157,13 +164,31 @@ export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Pro
     throw new Error(body.message || body.reason || `0x quote failed with status ${response.status}`);
   }
 
-  const quote = quoteFromRaw(request, amountInRaw, BigInt(body.buyAmount), body.gas ?? "0", "0x AllowanceHolder", "aggregator_required");
+  const approvalTarget = body.issues?.allowance?.spender;
+  const transactionTarget = body.transaction?.to;
+  const transactionData = body.transaction?.data;
+  const isAllowanceHolderRoute =
+    sameAddress(approvalTarget, CONTRACTS.zeroExAllowanceHolder) &&
+    sameAddress(transactionTarget, CONTRACTS.zeroExAllowanceHolder) &&
+    typeof transactionData === "string" &&
+    transactionData.startsWith("0x");
+  const quote = quoteFromRaw(
+    request,
+    amountInRaw,
+    BigInt(body.buyAmount),
+    body.gas ?? "0",
+    "0x AllowanceHolder",
+    isAllowanceHolderRoute ? "zeroex_allowance_holder" : "aggregator_required"
+  );
   return {
     ...quote,
-    executable: false,
-    executionNote: "0x returned an aggregator route, but the deployed rebalancer cannot execute generic aggregator calldata yet.",
-    approvalTarget: body.issues?.allowance?.spender as Address | undefined,
-    transactionTarget: body.transaction?.to as Address | undefined,
+    executable: isAllowanceHolderRoute,
+    executionNote: isAllowanceHolderRoute
+      ? "0x AllowanceHolder calldata can be executed by the allowlisted atomic rebalancer."
+      : "0x returned an aggregator route outside the allowlisted AllowanceHolder path.",
+    approvalTarget: approvalTarget ? getAddress(approvalTarget) : undefined,
+    transactionTarget: transactionTarget ? getAddress(transactionTarget) : undefined,
+    transactionData: isAllowanceHolderRoute ? (transactionData as Hex) : undefined,
     routeSummary: routeSummary(body.route?.fills)
   };
 }

@@ -26,8 +26,11 @@ type TransactionIntent =
       tokenOutAddress: Address;
       amountInRaw: string;
       minAmountOutRaw: string | null;
-      sourceType: "uniswap_v3" | "aggregator_required" | null;
+      sourceType: "uniswap_v3" | "zeroex_allowance_holder" | "aggregator_required" | null;
       executable: boolean;
+      approvalTarget?: Address;
+      transactionTarget?: Address;
+      transactionData?: `0x${string}`;
       executionNote?: string;
       description: string;
     }
@@ -239,6 +242,9 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         minAmountOutRaw: quote ? rawAmount(minAmountOut(quote.amountOut), step.quoteRequest.tokenOut) : null,
         sourceType: quote?.sourceType ?? null,
         executable: quote?.executable ?? false,
+        approvalTarget: quote?.approvalTarget,
+        transactionTarget: quote?.transactionTarget,
+        transactionData: quote?.transactionData,
         executionNote: quote?.executionNote,
         description: step.detail
       };
@@ -515,7 +521,46 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
         };
       }
 
-      if (intent.sourceType !== "uniswap_v3" || !intent.executable) {
+      if (intent.sourceType !== "uniswap_v3" && intent.sourceType !== "zeroex_allowance_holder") {
+        return {
+          intent: `${index + 1}. swap_exact_input`,
+          status: "blocked" as const,
+          target: intent.target,
+          functionName: null,
+          data: null,
+          dataPreview: null,
+          reason: intent.executionNote ?? "Selected swap source is not executable by the deployed rebalancer contract.",
+          simulation: simulation("skipped", "Call is not prepared.")
+        };
+      }
+
+      if (intent.sourceType === "zeroex_allowance_holder") {
+        if (!intent.executable || !intent.transactionTarget || !intent.transactionData) {
+          return {
+            intent: `${index + 1}. swap_exact_input`,
+            status: "blocked" as const,
+            target: intent.target,
+            functionName: null,
+            data: null,
+            dataPreview: null,
+            reason: intent.executionNote ?? "0x swap calldata is missing or not executable.",
+            simulation: simulation("skipped", "Call is not prepared.")
+          };
+        }
+
+        return {
+          intent: `${index + 1}. swap_exact_input`,
+          status: "prepared" as const,
+          target: intent.transactionTarget,
+          functionName: "zeroExAllowanceHolder",
+          data: intent.transactionData,
+          dataPreview: dataPreview(intent.transactionData),
+          reason: "0x AllowanceHolder calldata prepared for atomic rebalancer review; direct simulation remains disabled because it depends on prior close funds.",
+          simulation: simulation("not_run", "Simulation has not run yet.")
+        };
+      }
+
+      if (!intent.executable) {
         return {
           intent: `${index + 1}. swap_exact_input`,
           status: "blocked" as const,
@@ -642,7 +687,7 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
 
-  if (swapIntent.sourceType !== "uniswap_v3" || !swapIntent.executable) {
+  if ((swapIntent.sourceType !== "uniswap_v3" && swapIntent.sourceType !== "zeroex_allowance_holder") || !swapIntent.executable) {
     return {
       status: "blocked",
       target,
@@ -650,6 +695,20 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
       data: null,
       dataPreview: null,
       reason: swapIntent.executionNote ?? "Atomic rebalance cannot execute the selected aggregator route with the deployed rebalancer contract."
+    };
+  }
+
+  const swapSpender = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.approvalTarget : CONTRACTS.uniswapV3SwapRouter02;
+  const swapTarget = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.transactionTarget : CONTRACTS.uniswapV3SwapRouter02;
+  const swapData = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.transactionData : "0x";
+  if (!swapSpender || !swapTarget || !swapData) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: "Atomic rebalance needs executable swap spender, target, and calldata."
     };
   }
 
@@ -682,7 +741,10 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
           tokenOut: swapIntent.tokenOutAddress,
           amountIn: BigInt(swapIntent.amountInRaw),
           amountOutMinimum: BigInt(swapIntent.minAmountOutRaw),
-          sqrtPriceLimitX96: 0n
+          sqrtPriceLimitX96: 0n,
+          spender: getAddress(swapSpender),
+          target: getAddress(swapTarget),
+          data: swapData
         },
         mintPosition: {
           tickLower: mintIntent.lowerTick,
@@ -878,14 +940,16 @@ function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildE
 function buildSwapSourceChecks(intents: TransactionIntent[]) {
   return intents
     .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
-    .map((intent) => ({
-      label: "Swap source",
-      ok: intent.sourceType === "uniswap_v3" && intent.executable,
-      detail:
-        intent.sourceType === "uniswap_v3" && intent.executable
+    .map((intent) => {
+      const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder") && intent.executable;
+      return {
+        label: "Swap source",
+        ok: executableSource,
+        detail: executableSource
           ? `${intent.target} is executable by the deployed rebalancer`
           : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
-    }));
+      };
+    });
 }
 
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
@@ -1092,7 +1156,7 @@ async function fetchRebalancerRoles(): Promise<RebalancerRoleState> {
     const address = getAddress(rebalancerAddress);
     const expectedVault = getAddress(getConfig().BASE_WALLET_ADDRESS);
     const expectedExecutor = getAddress(autopilotExecutorAddress());
-    const [owner, executor, vault] = await Promise.all([
+    const [owner, executor, vault, allowanceHolder] = await Promise.all([
       client.readContract({
         address,
         abi: autopilotRebalancerAbi,
@@ -1107,16 +1171,22 @@ async function fetchRebalancerRoles(): Promise<RebalancerRoleState> {
         address,
         abi: autopilotRebalancerAbi,
         functionName: "vault"
+      }),
+      client.readContract({
+        address,
+        abi: autopilotRebalancerAbi,
+        functionName: "allowanceHolder"
       })
     ]);
     const executorMatches = executor.toLowerCase() === expectedExecutor.toLowerCase();
     const vaultMatches = vault.toLowerCase() === expectedVault.toLowerCase();
+    const allowanceHolderMatches = allowanceHolder.toLowerCase() === CONTRACTS.zeroExAllowanceHolder.toLowerCase();
     return {
-      status: executorMatches && vaultMatches ? "roles_match" : "roles_mismatch",
+      status: executorMatches && vaultMatches && allowanceHolderMatches ? "roles_match" : "roles_mismatch",
       detail:
-        executorMatches && vaultMatches
-          ? `Rebalancer owner ${owner}; executor ${executor} matches AUTOPILOT_EXECUTOR_ADDRESS; vault ${vault} matches BASE_WALLET_ADDRESS`
-          : `Rebalancer owner ${owner}; executor ${executor} ${executorMatches ? "matches" : `does not match`} AUTOPILOT_EXECUTOR_ADDRESS ${expectedExecutor}; vault ${vault} ${vaultMatches ? "matches" : `does not match`} BASE_WALLET_ADDRESS ${expectedVault}`
+        executorMatches && vaultMatches && allowanceHolderMatches
+          ? `Rebalancer owner ${owner}; executor ${executor} matches AUTOPILOT_EXECUTOR_ADDRESS; vault ${vault} matches BASE_WALLET_ADDRESS; 0x AllowanceHolder ${allowanceHolder} is allowlisted`
+          : `Rebalancer owner ${owner}; executor ${executor} ${executorMatches ? "matches" : `does not match`} AUTOPILOT_EXECUTOR_ADDRESS ${expectedExecutor}; vault ${vault} ${vaultMatches ? "matches" : `does not match`} BASE_WALLET_ADDRESS ${expectedVault}; 0x AllowanceHolder ${allowanceHolder} ${allowanceHolderMatches ? "matches" : "does not match"} ${CONTRACTS.zeroExAllowanceHolder}`
     };
   } catch (error) {
     return {

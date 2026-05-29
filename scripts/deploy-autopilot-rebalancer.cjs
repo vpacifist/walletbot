@@ -5,7 +5,8 @@ const BASE_ADDRESSES = {
   weth: "0x4200000000000000000000000000000000000006",
   usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   positionManager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
-  swapRouter02: "0x2626664c2603336E57B271c5C0b26F421741e481"
+  swapRouter02: "0x2626664c2603336E57B271c5C0b26F421741e481",
+  zeroExAllowanceHolder: "0x0000000000001fF3684f28c67538d4D072C22734"
 };
 
 async function main() {
@@ -29,7 +30,8 @@ async function main() {
     BASE_ADDRESSES.weth,
     BASE_ADDRESSES.usdc,
     BASE_ADDRESSES.positionManager,
-    BASE_ADDRESSES.swapRouter02
+    BASE_ADDRESSES.swapRouter02,
+    BASE_ADDRESSES.zeroExAllowanceHolder
   );
   await rebalancer.waitForDeployment();
 
@@ -38,6 +40,7 @@ async function main() {
   console.log(`Owner: ${owner}`);
   console.log(`Executor: ${executor}`);
   console.log(`Vault: ${vault}`);
+  console.log(`0x AllowanceHolder: ${BASE_ADDRESSES.zeroExAllowanceHolder}`);
   console.log(`Set AUTOPILOT_REBALANCER_ADDRESS=${address}`);
 }
 

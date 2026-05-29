@@ -379,6 +379,13 @@ export const autopilotRebalancerAbi = [
   },
   {
     type: "function",
+    name: "allowanceHolder",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
     name: "rebalance",
     stateMutability: "nonpayable",
     inputs: [
@@ -404,7 +411,10 @@ export const autopilotRebalancerAbi = [
               { name: "tokenOut", type: "address" },
               { name: "amountIn", type: "uint256" },
               { name: "amountOutMinimum", type: "uint256" },
-              { name: "sqrtPriceLimitX96", type: "uint160" }
+              { name: "sqrtPriceLimitX96", type: "uint160" },
+              { name: "spender", type: "address" },
+              { name: "target", type: "address" },
+              { name: "data", type: "bytes" }
             ]
           },
           {

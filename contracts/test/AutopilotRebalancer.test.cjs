@@ -8,7 +8,8 @@ const BASE_ADDRESSES = {
   pool: "0xd0b53D9277642d899DF5C87A3966A349A798F224",
   quoterV2: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
   positionManager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
-  swapRouter02: "0x2626664c2603336E57B271c5C0b26F421741e481"
+  swapRouter02: "0x2626664c2603336E57B271c5C0b26F421741e481",
+  zeroExAllowanceHolder: "0x0000000000001fF3684f28c67538d4D072C22734"
 };
 
 const POSITION_MANAGER_ABI = [
@@ -64,7 +65,8 @@ describe("AutopilotRebalancer", function () {
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
-      BASE_ADDRESSES.swapRouter02
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
     );
     await rebalancer.waitForDeployment();
 
@@ -73,6 +75,7 @@ describe("AutopilotRebalancer", function () {
     assert.equal(await rebalancer.vault(), vault.address);
     assert.equal(await rebalancer.weth(), BASE_ADDRESSES.weth);
     assert.equal(await rebalancer.usdc(), BASE_ADDRESSES.usdc);
+    assert.equal(await rebalancer.allowanceHolder(), BASE_ADDRESSES.zeroExAllowanceHolder);
     assert.equal(await rebalancer.POOL_FEE(), 3000n);
   });
 
@@ -86,7 +89,8 @@ describe("AutopilotRebalancer", function () {
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
-      BASE_ADDRESSES.swapRouter02
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
     );
     await rebalancer.waitForDeployment();
 
@@ -103,7 +107,8 @@ describe("AutopilotRebalancer", function () {
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
-      BASE_ADDRESSES.swapRouter02
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
     );
     await rebalancer.waitForDeployment();
 
@@ -120,7 +125,10 @@ describe("AutopilotRebalancer", function () {
           tokenOut: BASE_ADDRESSES.usdc,
           amountIn: 1,
           amountOutMinimum: 0,
-          sqrtPriceLimitX96: 0
+          sqrtPriceLimitX96: 0,
+          spender: ethers.ZeroAddress,
+          target: ethers.ZeroAddress,
+          data: "0x"
         },
         mintPosition: {
           tickLower: -200400,
@@ -146,11 +154,59 @@ describe("AutopilotRebalancer", function () {
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
-      BASE_ADDRESSES.swapRouter02
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
     );
     await rebalancer.waitForDeployment();
 
     await assert.rejects(rebalancer.sweepToken(owner.address), /UnsupportedToken/);
+  });
+
+  it("blocks aggregator calldata unless it targets the allowlisted 0x AllowanceHolder", async function () {
+    const [owner, executor, vault, other] = await ethers.getSigners();
+    const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer");
+    const rebalancer = await Rebalancer.deploy(
+      owner.address,
+      executor.address,
+      vault.address,
+      BASE_ADDRESSES.weth,
+      BASE_ADDRESSES.usdc,
+      BASE_ADDRESSES.positionManager,
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
+    );
+    await rebalancer.waitForDeployment();
+
+    await assert.rejects(
+      rebalancer.connect(executor).rebalance({
+        closePosition: {
+          tokenId: 1,
+          liquidity: 1,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        swap: {
+          tokenIn: BASE_ADDRESSES.weth,
+          tokenOut: BASE_ADDRESSES.usdc,
+          amountIn: 1,
+          amountOutMinimum: 0,
+          sqrtPriceLimitX96: 0,
+          spender: other.address,
+          target: other.address,
+          data: "0x1234"
+        },
+        mintPosition: {
+          tickLower: -200400,
+          tickUpper: -200160,
+          amount0Desired: 1,
+          amount1Desired: 0,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
+      }),
+      /UnsupportedSwapTarget/
+    );
   });
 
   it("executes a small executor-approved rebalance on the Base fork", async function () {
@@ -175,7 +231,8 @@ describe("AutopilotRebalancer", function () {
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
-      BASE_ADDRESSES.swapRouter02
+      BASE_ADDRESSES.swapRouter02,
+      BASE_ADDRESSES.zeroExAllowanceHolder
     );
     await rebalancer.waitForDeployment();
 
@@ -228,7 +285,10 @@ describe("AutopilotRebalancer", function () {
           tokenOut,
           amountIn,
           amountOutMinimum,
-          sqrtPriceLimitX96: 0
+          sqrtPriceLimitX96: 0,
+          spender: ethers.ZeroAddress,
+          target: ethers.ZeroAddress,
+          data: "0x"
         },
         mintPosition: {
           tickLower: targetLowerTick,

@@ -357,6 +357,63 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("cannot execute generic aggregator calldata yet");
   });
 
+  it("prepares 0x AllowanceHolder calldata for the atomic rebalancer", () => {
+    const execution = buildAutopilotDryRunExecution(
+      preview({
+        quote: {
+          status: "available",
+          data: {
+            tokenIn: CONTRACTS.weth,
+            tokenOut: CONTRACTS.usdc,
+            fee: 3000,
+            amountIn: 1,
+            spendSymbol: "WETH",
+            receiveSymbol: "USDC",
+            amountInRaw: "1000000000000000000",
+            amountOut: 2100,
+            amountOutRaw: "2100000000",
+            effectivePrice: 2100,
+            gasEstimate: "150000",
+            source: "0x AllowanceHolder",
+            sourceType: "zeroex_allowance_holder",
+            executable: true,
+            executionNote: "0x AllowanceHolder calldata can be executed by the allowlisted atomic rebalancer.",
+            approvalTarget: CONTRACTS.zeroExAllowanceHolder,
+            transactionTarget: CONTRACTS.zeroExAllowanceHolder,
+            transactionData: "0x12345678",
+            routeSummary: "TesseraSwap 100%"
+          }
+        }
+      }),
+      {
+        closePositions: {
+          "5187240": {
+            status: "available",
+            tokenId: "5187240",
+            liquidity: 123n,
+            tokensOwed0: 4n,
+            tokensOwed1: 5n,
+            decreaseAmount0: 2_000_000_000_000_000_000n,
+            decreaseAmount1: 0n
+          }
+        },
+        rebalancerRoles: {
+          status: "roles_match",
+          detail: "Rebalancer roles match configured executor and vault"
+        }
+      }
+    );
+
+    const swapCall = execution.calls.find((call) => call.intent.includes("swap_exact_input"));
+    expect(execution.status).toBe("validated");
+    expect(swapCall?.target).toBe(CONTRACTS.zeroExAllowanceHolder);
+    expect(swapCall?.functionName).toBe("zeroExAllowanceHolder");
+    expect(swapCall?.data).toBe("0x12345678");
+    expect(execution.atomicCall.status).toBe("prepared");
+    expect(execution.telegramSummary).toContain("0x AllowanceHolder");
+    expect(execution.telegramSummary).toContain("Swap source: 0x AllowanceHolder is executable");
+  });
+
   it("blocks execution when preview guardrails are blocked", () => {
     const execution = buildAutopilotDryRunExecution(
       preview({
