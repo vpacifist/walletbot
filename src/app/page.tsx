@@ -309,6 +309,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
   const chronologicalLiquidityByPosition = new Map<string, bigint>();
   const closedSnapshotsByTokenId = new Map<string, ClosedPositionSnapshot>();
   const trackedLpTokenIds = new Set(positions.map((position) => position.tokenId));
+  const positionsByTokenId = new Map(positions.map((position) => [position.tokenId, position]));
   let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
   const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
   const exitBlockNumbers = transactions
@@ -323,7 +324,12 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
   }
 
   for (const transaction of [...transactions].reverse()) {
-    for (const liquidityDelta of getTransactionPositionLiquidityDeltas(transaction)) {
+    const liquidityDeltas = getTransactionPositionLiquidityDeltas(transaction).filter((liquidityDelta) =>
+      trackedLpTokenIds.has(liquidityDelta.tokenId)
+    );
+    const closedTokenIds = new Set<string>();
+
+    for (const liquidityDelta of liquidityDeltas) {
       if (!trackedLpTokenIds.has(liquidityDelta.tokenId)) continue;
       chronologicalLiquidityByPosition.set(
         liquidityDelta.tokenId,
@@ -331,23 +337,49 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       );
     }
 
+    for (const liquidityDelta of liquidityDeltas) {
+      const remainingLiquidity = chronologicalLiquidityByPosition.get(liquidityDelta.tokenId);
+      if (remainingLiquidity === undefined || remainingLiquidity > 0n) continue;
+
+      const position = positionsByTokenId.get(liquidityDelta.tokenId);
+      const exitAmounts = position
+        ? getTransactionPositionExitAmounts(transaction, liquidityDelta.tokenId, position.token0, position.token1)
+        : null;
+      if (!exitAmounts) continue;
+
+      closedSnapshotsByTokenId.set(liquidityDelta.tokenId, {
+        closedAt: transaction.timestamp,
+        blockNumber: transaction.blockNumber.toString(),
+        depositAmounts: exitAmounts.principal,
+        exitAmounts: exitAmounts.collected,
+        earnedAmounts: exitAmounts.earned,
+        hodlAmounts: chronologicalLpAssetsByPosition.get(liquidityDelta.tokenId) ?? exitAmounts.principal
+      });
+      chronologicalLpAssetsByPosition.delete(liquidityDelta.tokenId);
+      chronologicalLiquidityByPosition.delete(liquidityDelta.tokenId);
+      closedTokenIds.add(liquidityDelta.tokenId);
+    }
+
     if (transaction.type === "lp_exit") {
       if (transaction.relatedPositionTokenId) {
-        const position = positions.find((item) => item.tokenId === transaction.relatedPositionTokenId);
+        const position = positionsByTokenId.get(transaction.relatedPositionTokenId);
         const exitAmounts = position
           ? getTransactionPositionExitAmounts(transaction, transaction.relatedPositionTokenId, position.token0, position.token1)
           : null;
-        closedSnapshotsByTokenId.set(transaction.relatedPositionTokenId, {
-          closedAt: transaction.timestamp,
-          blockNumber: transaction.blockNumber.toString(),
-          depositAmounts:
-            exitAmounts?.principal ?? chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 },
-          exitAmounts: exitAmounts?.collected ?? tokenAmountsToLpAmounts(transaction.tokenAmounts),
-          earnedAmounts: exitAmounts?.earned,
-          hodlAmounts: chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 }
-        });
-        chronologicalLpAssetsByPosition.delete(transaction.relatedPositionTokenId);
-        chronologicalLiquidityByPosition.delete(transaction.relatedPositionTokenId);
+        if (!closedSnapshotsByTokenId.has(transaction.relatedPositionTokenId)) {
+          closedSnapshotsByTokenId.set(transaction.relatedPositionTokenId, {
+            closedAt: transaction.timestamp,
+            blockNumber: transaction.blockNumber.toString(),
+            depositAmounts:
+              exitAmounts?.principal ?? chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 },
+            exitAmounts: exitAmounts?.collected ?? tokenAmountsToLpAmounts(transaction.tokenAmounts),
+            earnedAmounts: exitAmounts?.earned,
+            hodlAmounts: chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 }
+          });
+          chronologicalLpAssetsByPosition.delete(transaction.relatedPositionTokenId);
+          chronologicalLiquidityByPosition.delete(transaction.relatedPositionTokenId);
+          closedTokenIds.add(transaction.relatedPositionTokenId);
+        }
       } else {
         chronologicalLpAssetsByPosition.clear();
         chronologicalLiquidityByPosition.clear();
@@ -356,7 +388,8 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       transaction.relatedPositionTokenId &&
       trackedLpTokenIds.has(transaction.relatedPositionTokenId) &&
       transaction.type.startsWith("lp_") &&
-      transaction.type !== "lp_collect"
+      transaction.type !== "lp_collect" &&
+      !closedTokenIds.has(transaction.relatedPositionTokenId)
     ) {
       const current = chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 };
       const next = addLpDelta(current, getTransactionLpDelta(transaction));
@@ -444,10 +477,13 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       weth: numberValue(position.wethAmount),
       usdc: numberValue(position.usdcAmount)
     };
-    const displayAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
-    const totalAmounts = closedSnapshot?.exitAmounts ?? currentPositionAmounts;
-    const depositAmounts = closedSnapshot?.depositAmounts ?? currentPositionAmounts;
-    const earned = closedSnapshot?.earnedAmounts ?? feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
+    const missingClosedSnapshot = isClosed && !closedSnapshot;
+    const fallbackClosedDepositAmounts = isClosed ? chronologicalLpAssetsByPosition.get(position.tokenId) : undefined;
+    const unknownClosedAmounts = { weth: null, usdc: null };
+    const displayAmounts = closedSnapshot?.depositAmounts ?? (missingClosedSnapshot ? unknownClosedAmounts : currentPositionAmounts);
+    const totalAmounts = closedSnapshot?.exitAmounts ?? (missingClosedSnapshot ? unknownClosedAmounts : currentPositionAmounts);
+    const depositAmounts = closedSnapshot?.depositAmounts ?? fallbackClosedDepositAmounts ?? currentPositionAmounts;
+    const earned = closedSnapshot?.earnedAmounts ?? (missingClosedSnapshot ? unknownClosedAmounts : (feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 }));
     const valuationPrice = closedSnapshot
       ? historicalPrice
       : latestKnownBlock
@@ -456,10 +492,16 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     const depositUsd = lpAmountValueUsd(depositAmounts, valuationPrice);
     const totalUsd = lpAmountValueUsd(totalAmounts, valuationPrice);
     const earnedUsd = valuationPrice === null ? null : (earned.weth ?? 0) * valuationPrice + (earned.usdc ?? 0);
-    const displayedTotalUsd = closedSnapshot ? totalUsd : depositUsd === null || earnedUsd === null ? null : depositUsd + earnedUsd;
+    const displayedTotalUsd = missingClosedSnapshot
+      ? null
+      : closedSnapshot
+        ? totalUsd
+        : depositUsd === null || earnedUsd === null
+          ? null
+          : depositUsd + earnedUsd;
     const hodlAmounts = closedSnapshot?.hodlAmounts ?? chronologicalLpAssetsByPosition.get(position.tokenId) ?? depositAmounts;
     const hodlUsd = lpAmountValueUsd(hodlAmounts, valuationPrice);
-    const pnlUsd = displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
+    const pnlUsd = missingClosedSnapshot || displayedTotalUsd === null || hodlUsd === null ? null : displayedTotalUsd - hodlUsd;
     const openedAt = firstPositionActivityByTokenId.get(position.tokenId) ?? position.createdAt;
     const poolUrl = uniswapPoolUrl(position.poolAddress);
     const rate = depositUsd === null || earnedUsd === null ? null : dprDisplay(earnedUsd, depositUsd, openedAt, closedSnapshot?.closedAt);
@@ -487,22 +529,22 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       positionAmounts: {
         weth: formatNumber(displayAmounts.weth, 6),
         usdc: formatNumber(displayAmounts.usdc, 2),
-        note: isClosed ? "at close" : null
+        note: missingClosedSnapshot ? "close snapshot unavailable" : isClosed ? "at close" : null
       },
       deposit: {
         total: formatUsd(depositUsd),
         wethUsd: formatUsd(valuationPrice === null ? null : (depositAmounts.weth ?? 0) * valuationPrice),
         usdcUsd: formatUsd(depositAmounts.usdc ?? 0),
-        note: isClosed ? "at close" : null
+        note: missingClosedSnapshot ? "opened" : isClosed ? "at close" : null
       },
       earned: {
         total: formatUsd(earnedUsd),
         weth: formatNumber(earned.weth, 6),
         usdc: formatNumber(earned.usdc, 2),
-        note: isClosed ? "realized" : null
+        note: missingClosedSnapshot ? "close snapshot unavailable" : isClosed ? "realized" : null
       },
       total: formatUsd(displayedTotalUsd),
-      totalNote: isClosed ? "at close" : null,
+      totalNote: missingClosedSnapshot ? "close snapshot unavailable" : isClosed ? "at close" : null,
       dpr: rate,
       pnl: {
         value: formatSignedUsd(pnlUsd),
