@@ -8,7 +8,7 @@ export async function GET() {
 
   const config = getConfig();
   const wallet = await prisma.wallet.findUnique({ where: { address: config.BASE_WALLET_ADDRESS } });
-  const latestRun = await prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } });
+  const latestRun = wallet ? await prisma.syncRun.findFirst({ where: { walletId: wallet.id }, orderBy: { startedAt: "desc" } }) : null;
 
   return NextResponse.json({
     walletAddress: config.BASE_WALLET_ADDRESS,

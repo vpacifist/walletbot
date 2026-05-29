@@ -275,15 +275,20 @@ async function DashboardContent({ config }: { config: ReturnType<typeof getConfi
 }
 
 async function DashboardContentInner({ config }: { config: ReturnType<typeof getConfig> }) {
+  const walletAddress = getAddress(config.BASE_WALLET_ADDRESS);
+  const walletRecord = await prisma.wallet.findUnique({ where: { address: walletAddress } });
   const transactions = await prisma.transaction.findMany({
+    where: walletRecord ? { walletId: walletRecord.id } : { walletId: "__missing_wallet__" },
     orderBy: [{ blockNumber: "desc" }, { timestamp: "desc" }],
     take: 80
   });
   const latestKnownBlock = transactions[0]?.blockNumber;
   const [positions, latestRun, walletAmounts] = await Promise.all([
-    prisma.position.findMany({ orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] }).then(sortPositionsForDisplay),
-    prisma.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    getWalletAssetAmountsSnapshotAtBlock(getAddress(config.BASE_WALLET_ADDRESS), latestKnownBlock).catch(() => null)
+    walletRecord
+      ? prisma.position.findMany({ where: { walletId: walletRecord.id }, orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] }).then(sortPositionsForDisplay)
+      : Promise.resolve([]),
+    walletRecord ? prisma.syncRun.findFirst({ where: { walletId: walletRecord.id }, orderBy: { startedAt: "desc" } }) : Promise.resolve(null),
+    getWalletAssetAmountsSnapshotAtBlock(walletAddress, latestKnownBlock).catch(() => null)
   ]);
   const initialSyncRun = latestRun
     ? {
@@ -375,7 +380,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       lpWeth: lpAssets.weth,
       lpUsdc: lpAssets.usdc
     });
-    runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, getAddress(config.BASE_WALLET_ADDRESS)));
+    runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, walletAddress));
   }
 
   const transactionRows: TransactionTableRow[] = visibleTransactions.map((transaction) => ({
@@ -411,7 +416,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
           tokenId: position.tokenId,
           token0: position.token0,
           token1: position.token1,
-          walletAddress: getAddress(config.BASE_WALLET_ADDRESS)
+          walletAddress
         }).catch(() => ({ weth: 0, usdc: 0 }))
       ] as const)
     )

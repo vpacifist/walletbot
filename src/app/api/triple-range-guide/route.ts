@@ -60,9 +60,12 @@ export async function GET() {
 
   try {
     const walletAddress = getAddress(getConfig().BASE_WALLET_ADDRESS);
+    const walletRecord = await prisma.wallet.findUnique({ where: { address: walletAddress } });
     const [wallet, positions, livePool] = await Promise.all([
       getWalletAssetAmountsSnapshot(walletAddress).catch(() => ({ weth: null, usdc: null })),
-      prisma.position.findMany({ orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] }),
+      walletRecord
+        ? prisma.position.findMany({ where: { walletId: walletRecord.id }, orderBy: [{ tokenId: "desc" }, { createdAt: "desc" }] })
+        : Promise.resolve([]),
       livePoolSnapshot().catch(() => null)
     ]);
     const pool = livePool ?? latestSyncedPoolSnapshot(positions);
