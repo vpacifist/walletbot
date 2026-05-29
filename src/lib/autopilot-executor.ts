@@ -66,7 +66,9 @@ export type AutopilotDryRunExecution = {
   telegramSummary: string;
 };
 
-const SLIPPAGE_BPS = 15;
+// Atomic rebalances quote before closing our own LP. A wider guard covers the
+// post-close liquidity impact while the contract still enforces this minOut.
+const SLIPPAGE_BPS = 100;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =
