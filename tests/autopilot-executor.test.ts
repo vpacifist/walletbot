@@ -69,7 +69,10 @@ function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecu
         amountOutRaw: "2090000000",
         effectivePrice: 2090,
         gasEstimate: "72044",
-        source: "Uniswap QuoterV2"
+        source: "Uniswap QuoterV2",
+        sourceType: "uniswap_v3",
+        executable: true,
+        executionNote: "Executable by the current Uniswap-only rebalancer contract."
       }
     },
     telegramSummary: "summary",
@@ -128,7 +131,10 @@ function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): Au
         amountOutRaw: "190000000000000000",
         effectivePrice: 2105,
         gasEstimate: "72044",
-        source: "Uniswap QuoterV2"
+        source: "Uniswap QuoterV2",
+        sourceType: "uniswap_v3",
+        executable: true,
+        executionNote: "Executable by the current Uniswap-only rebalancer contract."
       }
     },
     ...input
@@ -156,6 +162,7 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("eth_call simulation");
     expect(execution.telegramSummary).toContain("Close position #5187240");
     expect(execution.telegramSummary).toContain("Swap 1 WETH");
+    expect(execution.telegramSummary).toContain("via Uniswap QuoterV2");
     expect(execution.telegramSummary).toContain("Mint -199920 - -199860");
     expect(execution.telegramSummary).toContain("No on-chain transactions were sent.");
   });

@@ -80,11 +80,15 @@ describe("buildAutopilotExecutionPreview", () => {
         amountOutRaw: "2090000000",
         effectivePrice: 2090,
         gasEstimate: "120000",
-        source: "Uniswap QuoterV2"
+        source: "Uniswap QuoterV2",
+        sourceType: "uniswap_v3",
+        executable: true,
+        executionNote: "Executable by the current Uniswap-only rebalancer contract."
       }
     });
 
     expect(preview.telegramSummary).toContain("Uniswap QuoterV2");
+    expect(preview.telegramSummary).toContain("Executable by the current Uniswap-only rebalancer contract.");
     expect(preview.telegramSummary).toContain("Effective WETH price: $2,090");
   });
 

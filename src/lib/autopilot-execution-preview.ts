@@ -1,7 +1,7 @@
 import { type RebalancePlan } from "@prisma/client";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { prisma } from "./db";
-import { quoteExactInputSingle, type SwapQuote, type SwapQuoteRequest } from "./uniswap-v3-quoter";
+import { quoteBestExecutableSwap, type SwapQuote, type SwapQuoteRequest } from "./swap-quote";
 
 export type AutopilotExecutionPreview = {
   planId: string;
@@ -71,7 +71,8 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
           `${preview.quote.data.source}: ${preview.quote.data.amountIn.toLocaleString("en-US", { maximumFractionDigits: preview.quote.data.spendSymbol === "USDC" ? 2 : 6 })} ${preview.quote.data.spendSymbol}`,
           `-> ${preview.quote.data.amountOut.toLocaleString("en-US", { maximumFractionDigits: preview.quote.data.receiveSymbol === "USDC" ? 2 : 6 })} ${preview.quote.data.receiveSymbol}`,
           `Effective WETH price: ${formatUsd(preview.quote.data.effectivePrice)}`,
-          `Gas estimate: ${preview.quote.data.gasEstimate}`
+          `Gas estimate: ${preview.quote.data.gasEstimate}`,
+          preview.quote.data.executionNote
         ].join("\n")
       : preview.quote.status === "unavailable"
         ? `Quote unavailable: ${preview.quote.reason}`
@@ -187,7 +188,7 @@ export async function createAutopilotExecutionPreview(planId: string): Promise<A
   const currentPlan = await getCurrentAutopilotPlan();
   const quoteRequest = currentPlan.actions.find((action) => action.type === "partial_swap" && action.quoteRequest)?.quoteRequest;
   const quote: SwapQuoteResult = quoteRequest
-    ? await quoteExactInputSingle(quoteRequest)
+    ? await quoteBestExecutableSwap(quoteRequest)
         .then((data): SwapQuoteResult => ({ status: "available", data }))
         .catch((error): SwapQuoteResult => ({ status: "unavailable", request: quoteRequest, reason: shortError(error) }))
     : { status: "not_requested" };

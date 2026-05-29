@@ -223,7 +223,7 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
       const quote = preview.quote.status === "available" ? preview.quote.data : null;
       return {
         kind: "swap_exact_input",
-        target: "Uniswap v3 SwapRouter",
+        target: quote?.source ?? "Swap provider",
         tokenIn: step.quoteRequest.spendSymbol,
         tokenOut: step.quoteRequest.receiveSymbol,
         amountIn: step.quoteRequest.amountIn,
