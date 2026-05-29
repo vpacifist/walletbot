@@ -95,13 +95,6 @@ function stateClass(state: AutopilotPlan["state"], severity: AutopilotPlan["seve
   return severity;
 }
 
-function actionClass(type: AutopilotPlan["actions"][number]["type"]) {
-  if (type === "hold") return "good";
-  if (type === "pause") return "bad";
-  if (type === "partial_swap" || type === "close") return "warn";
-  return "";
-}
-
 function swapSideLabel(side: "buy_weth" | "sell_weth") {
   return side === "buy_weth" ? "Bought WETH" : "Sold WETH";
 }
@@ -136,6 +129,41 @@ function dbStatusLabel(status?: string) {
   if (status === "skipped") return "План пропущен";
   if (status === "paused") return "Работа приостановлена";
   return `Статус плана: ${status}`;
+}
+
+function primaryAction(data: AutopilotPlan | null) {
+  return data?.actions[0] ?? null;
+}
+
+function decisionTitle(data: AutopilotPlan | null, error: string | null) {
+  if (error && !data) return "Autopilot unavailable";
+  if (!data) return "Loading current plan";
+  if (data.state === "paused") return "Autopilot paused";
+  if (data.state === "idle" && data.actions[0]?.type === "hold") return "No action needed";
+  if (data.state === "confirming") return "Breakout is being confirmed";
+  if (data.state === "ready") return "Approval needed";
+  if (data.state === "cooldown") return "Cooldown after recent action";
+  return data.title;
+}
+
+function decisionDetail(data: AutopilotPlan | null, error: string | null) {
+  if (error && !data) return shortError(error);
+  const action = primaryAction(data);
+  if (action) return action.detail;
+  return data?.detail ?? "Preparing the current rebalance plan.";
+}
+
+function pricePositionPercent(data: AutopilotPlan | null) {
+  const active = data?.ladder.find((segment) => segment.role === "active");
+  if (!data || !active?.lowerPrice || !active.upperPrice) return null;
+  const range = active.upperPrice - active.lowerPrice;
+  if (range <= 0) return null;
+  return Math.min(100, Math.max(0, ((data.pool.price - active.lowerPrice) / range) * 100));
+}
+
+function checkTone(ok: boolean | null) {
+  if (ok === null) return "";
+  return ok ? "good" : "bad";
 }
 
 export function AutopilotPlanLive() {
@@ -189,6 +217,12 @@ export function AutopilotPlanLive() {
     return STATE_ORDER.indexOf(data.state);
   }, [data]);
   const statusTone = data ? stateClass(data.state, data.severity) : "";
+  const action = primaryAction(data);
+  const activeRange = data?.ladder.find((segment) => segment.role === "active") ?? data?.ladder[0] ?? null;
+  const pricePercent = pricePositionPercent(data);
+  const costOk = data ? data.economics.immediateCostUsd <= data.strategy.maxImmediateCostUsd : null;
+  const debtOk = data ? data.economics.uncoveredReversalDebtUsd <= data.strategy.maxUncoveredDebtUsd : null;
+  const driftText = data ? `${data.strategy.maxDriftBps} bps max drift` : "-";
 
   return (
     <div className="autopilot-grid">
@@ -212,108 +246,97 @@ export function AutopilotPlanLive() {
         </div>
       )}
 
-      <div className="rebalance-primary">
-        <div className={`hero-metric ${error && !data ? "bad" : statusTone}`}>
-          <p className="metric-label">Autopilot state</p>
-          <strong>{error && !data ? "Autopilot unavailable" : (data?.title ?? "Loading")}</strong>
-          <p className="muted">{error && !data ? shortError(error) : (data?.detail ?? "Preparing the current rebalance plan.")}</p>
-        </div>
-        <div className="hero-metric">
-          <p className="metric-label">Mode</p>
-          <strong>{data ? modeLabel(data.mode) : "-"}</strong>
-          <p className="muted">
-            {data
-              ? `${data.strategy.label}: ${data.strategy.targetWidthTicks} ticks, ${data.strategy.confirmationSeconds}s confirm, ${data.strategy.maxDriftBps} bps drift max.`
-              : "Execution mode and risk gates will appear here."}
-          </p>
-        </div>
-      </div>
-
-      <div className="autopilot-timeline" aria-label="Autopilot decision state">
-        {STATE_ORDER.map((state, index) => (
-          <div className={`autopilot-step ${index <= activeStateIndex ? "is-active" : ""} ${data?.state === state ? "is-current" : ""}`} key={state}>
-            <span />
-            <strong>{state}</strong>
+      <div className="autopilot-command">
+        <div className={`autopilot-decision ${error && !data ? "bad" : statusTone}`}>
+          <p className="metric-label">Decision</p>
+          <strong>{decisionTitle(data, error)}</strong>
+          <p>{decisionDetail(data, error)}</p>
+          <div className="autopilot-decision-meta">
+            <span className={`status ${statusTone}`}>{data?.state ?? "loading"}</span>
+            <span>{data ? modeLabel(data.mode) : "Mode loading"}</span>
+            <span>{data ? `${data.strategy.targetWidthTicks} ticks` : "Range loading"}</span>
+            <span>{data ? `${data.strategy.confirmationSeconds}s confirm` : "Confirm loading"}</span>
           </div>
-        ))}
+        </div>
+
+        <div className="autopilot-current-range">
+          <div className="section-title-row">
+            <p className="metric-label">Current range</p>
+            <span className={`status ${activeRange?.status === "ok" ? "good" : activeRange?.status === "missing" ? "bad" : "warn"}`}>
+              {activeRange?.status ?? "loading"}
+            </span>
+          </div>
+          <strong>{activeRange?.tokenId ? `#${activeRange.tokenId}` : "No active NFT"}</strong>
+          <span>{activeRange ? `${formatAmount(activeRange.lowerPrice, 2)} - ${formatAmount(activeRange.upperPrice, 2)} USDC` : "-"}</span>
+          <div className="autopilot-price-band" aria-hidden="true">
+            <span style={{ left: `${pricePercent ?? 50}%` }} />
+          </div>
+          <div className="autopilot-price-row">
+            <span>{formatAmount(activeRange?.lowerPrice, 2)}</span>
+            <strong>{formatAmount(data?.pool.price, 2)} USDC</strong>
+            <span>{formatAmount(activeRange?.upperPrice, 2)}</span>
+          </div>
+          <p className="muted">{activeRange?.plannedAction ?? "Waiting for range data."}</p>
+        </div>
       </div>
 
-      <div className="autopilot-economics">
-        <div className="asset-metric">
-          <p className="metric-label">Current price</p>
-          <span className="metric-value">{formatAmount(data?.pool.price, 2)} USDC</span>
-          <span>Tick {data?.pool.currentTick ?? "-"}</span>
+      <div className="autopilot-checks" aria-label="Autopilot guardrails">
+        <div className={`autopilot-check ${checkTone(costOk)}`}>
+          <span>Immediate cost</span>
+          <strong>{formatUsd(data?.economics.immediateCostUsd)}</strong>
+          <small>Limit {formatUsd(data?.strategy.maxImmediateCostUsd)}</small>
         </div>
-        <div className="asset-metric">
-          <p className="metric-label">Immediate cost</p>
-          <span className="metric-value">{formatUsd(data?.economics.immediateCostUsd)}</span>
-          <span>Limit {formatUsd(data?.strategy.maxImmediateCostUsd)} - {formatUsd(data?.economics.estimatedSlippageUsd)} slippage - {formatUsd(data?.economics.estimatedGasUsd)} gas</span>
+        <div className={`autopilot-check ${checkTone(debtOk)}`}>
+          <span>Uncovered debt</span>
+          <strong>{formatUsd(data?.economics.uncoveredReversalDebtUsd)}</strong>
+          <small>Limit {formatUsd(data?.strategy.maxUncoveredDebtUsd)}</small>
         </div>
-        <div className="asset-metric">
-          <p className="metric-label">Reversal debt</p>
-          <span className="metric-value">{formatUsd(data?.economics.reversalDebtUsd)}</span>
-          <span>{formatUsd(data?.economics.uncoveredReversalDebtUsd)} uncovered after fees; limit {formatUsd(data?.strategy.maxUncoveredDebtUsd)}</span>
+        <div className="autopilot-check">
+          <span>Fee credit</span>
+          <strong>{formatUsd(data?.economics.feeCreditUsd)}</strong>
+          <small>
+            {formatUsd(data?.economics.collectedFeesSinceLastSwapUsd)} collected / {formatUsd(data?.economics.uncollectedFeesUsd)} uncollected
+          </small>
         </div>
-        <div className="asset-metric">
-          <p className="metric-label">Fee credit</p>
-          <span className="metric-value">{formatUsd(data?.economics.feeCreditUsd)}</span>
-          <span>
-            {formatUsd(data?.economics.collectedFeesSinceLastSwapUsd)} collected - {formatUsd(data?.economics.uncollectedFeesUsd)} uncollected
-          </span>
+        <div className="autopilot-check">
+          <span>Drift guard</span>
+          <strong>{driftText}</strong>
+          <small>Used when breakout is confirming</small>
         </div>
-        <div className="asset-metric">
+      </div>
+
+      <div className="autopilot-details">
+        <div className="autopilot-next-action">
+          <p className="metric-label">Next action</p>
+          <strong>{action?.label ?? "Loading action"}</strong>
+          <p className="muted">{action?.detail ?? "Waiting for current plan."}</p>
+          <span>{formatUsd(action?.estimatedCostUsd)}</span>
+        </div>
+        <div className="autopilot-swap-reference">
           <p className="metric-label">Last directional swap</p>
           {data?.economics.lastDirectionalSwap ? (
             <>
-              <span className="metric-value">{swapSideLabel(data.economics.lastDirectionalSwap.side)}</span>
+              <strong>{swapSideLabel(data.economics.lastDirectionalSwap.side)}</strong>
               <span>
-                {formatAmount(data.economics.lastDirectionalSwap.effectivePrice, 2)} - {shortDateTime(data.economics.lastDirectionalSwap.timestamp)}
+                {formatAmount(data.economics.lastDirectionalSwap.effectivePrice, 2)} USDC on {shortDateTime(data.economics.lastDirectionalSwap.timestamp)}
               </span>
             </>
           ) : (
             <>
-              <span className="metric-value">No swap reference</span>
+              <strong>No swap reference</strong>
               <span>Reversal debt is inactive.</span>
             </>
           )}
         </div>
       </div>
 
-      <div className="autopilot-ladder" aria-label="Planned ladder">
-        {data?.ladder.map((segment) => (
-          <div className={`autopilot-range ${segment.role}`} key={segment.role}>
-            <div>
-              <p className="metric-label">{segment.role}</p>
-              <strong>{segment.tokenId ? `#${segment.tokenId}` : "Missing"}</strong>
-            </div>
-            <div>
-              <span>{segment.range}</span>
-              <span>
-                {formatAmount(segment.lowerPrice, 2)} - {formatAmount(segment.upperPrice, 2)}
-              </span>
-            </div>
-            <span className={`status ${segment.status === "ok" ? "good" : segment.status === "missing" ? "bad" : "warn"}`}>{segment.status}</span>
-            <p className="muted">{segment.plannedAction}</p>
+      <div className="autopilot-process" aria-label="Autopilot process">
+        {STATE_ORDER.map((state, index) => (
+          <div className={`autopilot-step ${index <= activeStateIndex ? "is-active" : ""} ${data?.state === state ? "is-current" : ""}`} key={state}>
+            <span />
+            <strong>{state}</strong>
           </div>
-        )) ?? (
-          <>
-            <div className="autopilot-range skeleton" />
-            <div className="autopilot-range skeleton" />
-            <div className="autopilot-range skeleton" />
-          </>
-        )}
-      </div>
-
-      <div className="autopilot-actions">
-        {data?.actions.map((action) => (
-          <div className={`autopilot-action ${actionClass(action.type)}`} key={`${action.type}:${action.label}`}>
-            <div>
-              <strong>{action.label}</strong>
-              <p className="muted">{action.detail}</p>
-            </div>
-            <span>{formatUsd(action.estimatedCostUsd)}</span>
-          </div>
-        )) ?? <div className="autopilot-action">Loading current action plan</div>}
+        ))}
       </div>
 
       {error ? <p className="error">{error}</p> : null}

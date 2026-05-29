@@ -12,11 +12,17 @@ export type TransactionTableRow = {
   blockNumber: string;
   timestamp: string;
   type: string;
+  displayType?: string;
   tokenAmounts: unknown;
   protocol: string | null;
   relatedPositionTokenId: string | null;
   classificationStatus: string;
   approvals: Array<{ hash: string }>;
+  rebalanceDetails?: {
+    closed: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
+    minted: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
+    earned: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
+  } | null;
   assets: {
     weth: number | null;
     usdc: number | null;
@@ -109,6 +115,101 @@ function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null;
 
   if (rows.length === 0) return "-";
   return <div className="amounts-cell">{rows}</div>;
+}
+
+function compactLpAmounts(amounts: { weth: number | null; usdc: number | null }) {
+  const parts = [];
+  if (amounts.weth !== null && Math.abs(amounts.weth) > 0) parts.push(`${formatNumber(amounts.weth, 6)} WETH`);
+  if (amounts.usdc !== null && Math.abs(amounts.usdc) > 0) parts.push(`${formatNumber(amounts.usdc, 2)} USDC`);
+  return parts.length > 0 ? parts.join(" + ") : "0";
+}
+
+function compactTokenAmounts(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return "0";
+  const parts = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const amount = item as { amount?: string; symbol?: string };
+      if (!amount.symbol) return null;
+      return `${formatNumber(amount.amount, amount.symbol === "USDC" ? 2 : 6)} ${amount.symbol}`;
+    })
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" + ") : "0";
+}
+
+function lpValueUsd(amounts: { weth: number | null; usdc: number | null }, prices?: { ethPriceUsd?: number | null }) {
+  if (prices?.ethPriceUsd === undefined) return undefined;
+  if (prices.ethPriceUsd === null) return null;
+  return (amounts.weth ?? 0) * prices.ethPriceUsd + (amounts.usdc ?? 0);
+}
+
+function tokenAmountsValueUsd(value: unknown, prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }) {
+  if (!Array.isArray(value)) return 0;
+
+  return value.reduce<number | null | undefined>((total, item) => {
+    if (total === undefined || total === null) return total;
+    if (!item || typeof item !== "object") return total;
+    const amount = item as { amount?: string; symbol?: string };
+    const usdValue = tokenAmountUsd(amount, prices);
+    if (usdValue === undefined || usdValue === null) return usdValue;
+    return total + usdValue;
+  }, 0);
+}
+
+function sumLpValueUsd(items: Array<{ weth: number | null; usdc: number | null }>, prices?: { ethPriceUsd?: number | null }) {
+  return items.reduce<number | null | undefined>((total, item) => {
+    if (total === undefined || total === null) return total;
+    const value = lpValueUsd(item, prices);
+    if (value === undefined || value === null) return value;
+    return total + value;
+  }, 0);
+}
+
+function rebalanceCostUsd(
+  rebalanceDetails: NonNullable<TransactionTableRow["rebalanceDetails"]>,
+  leftovers: unknown,
+  prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }
+) {
+  const closedValue = sumLpValueUsd(rebalanceDetails.closed, prices);
+  const mintedValue = sumLpValueUsd(rebalanceDetails.minted, prices);
+  const earnedValue = sumLpValueUsd(rebalanceDetails.earned, prices);
+  const leftoverValue = tokenAmountsValueUsd(leftovers, prices);
+
+  if (
+    closedValue === undefined ||
+    mintedValue === undefined ||
+    earnedValue === undefined ||
+    leftoverValue === undefined
+  ) {
+    return undefined;
+  }
+  if (closedValue === null || mintedValue === null || earnedValue === null || leftoverValue === null) return null;
+
+  return closedValue + earnedValue - mintedValue - leftoverValue;
+}
+
+function rebalanceAmountRows(
+  rebalanceDetails: NonNullable<TransactionTableRow["rebalanceDetails"]>,
+  leftovers: unknown,
+  prices?: { ethPriceUsd?: number | null; aeroPriceUsd?: number | null }
+) {
+  const fromTokenId = rebalanceDetails.closed[0]?.tokenId;
+  const toTokenId = rebalanceDetails.minted[0]?.tokenId;
+  const costUsd = rebalanceCostUsd(rebalanceDetails, leftovers, prices);
+
+  return (
+    <div className="rebalance-summary">
+      <strong>
+        #{fromTokenId ?? "?"} -&gt; #{toTokenId ?? "?"}
+      </strong>
+      <span className="rebalance-cost">Cost {formatUsd(costUsd)}</span>
+      {rebalanceDetails.closed[0] ? <span>Closed {compactLpAmounts(rebalanceDetails.closed[0])}</span> : null}
+      {rebalanceDetails.minted[0] ? <span>Minted {compactLpAmounts(rebalanceDetails.minted[0])}</span> : null}
+      {rebalanceDetails.earned[0] ? <span>Fees {compactLpAmounts(rebalanceDetails.earned[0])}</span> : null}
+      <span className="historical-note">Leftover {compactTokenAmounts(leftovers)}</span>
+    </div>
+  );
 }
 
 function assetValueUsd(
@@ -254,8 +355,12 @@ export function TransactionsTable({ rows, initialPrices }: TransactionsTableProp
               return (
                 <tr key={transaction.id}>
                   <td>{new Date(transaction.timestamp).toLocaleString()}</td>
-                  <td>{transaction.type}</td>
-                  <td>{tokenAmountRows(transaction.tokenAmounts, transactionPrices)}</td>
+                  <td>{transaction.displayType ?? transaction.type}</td>
+                  <td>
+                    {transaction.rebalanceDetails
+                      ? rebalanceAmountRows(transaction.rebalanceDetails, transaction.tokenAmounts, transactionPrices)
+                      : tokenAmountRows(transaction.tokenAmounts, transactionPrices)}
+                  </td>
                   <td>{transaction.protocol ?? "-"}</td>
                   <td>{transaction.relatedPositionTokenId ? `#${transaction.relatedPositionTokenId}` : "-"}</td>
                   <td>

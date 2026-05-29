@@ -71,6 +71,11 @@ export type PositionExitAmounts = {
   earned: LpAssetAmounts;
 };
 
+export type PositionPrincipalDelta = {
+  tokenId: string;
+  delta: LpAssetDelta;
+};
+
 type TransactionAssetSource = {
   fromAddress: string;
   toAddress?: string | null;
@@ -465,6 +470,51 @@ export function getTransactionPositionLiquidityDeltas(transaction: TransactionAs
       const tokenId = parsed.args.tokenId.toString();
       const signedLiquidity = parsed.eventName === "IncreaseLiquidity" ? parsed.args.liquidity : -parsed.args.liquidity;
       deltas.set(tokenId, (deltas.get(tokenId) ?? 0n) + signedLiquidity);
+    } catch {
+      // Not a position liquidity event.
+    }
+  }
+
+  return [...deltas.entries()].map(([tokenId, delta]) => ({ tokenId, delta }));
+}
+
+export function getTransactionPositionPrincipalDeltas(
+  transaction: TransactionAssetSource,
+  positionTokens: Map<string, { token0: string; token1: string }>
+): PositionPrincipalDelta[] {
+  const raw = readRawRecord(transaction.raw);
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  const deltas = new Map<string, LpAssetDelta>();
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || !record.data || !record.topics) continue;
+    const isPositionManager =
+      record.address.toLowerCase() === CONTRACTS.nonfungiblePositionManager.toLowerCase() ||
+      record.address.toLowerCase() === CONTRACTS.aerodromeNonfungiblePositionManager.toLowerCase();
+    if (!isPositionManager) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: positionManagerAbi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName !== "IncreaseLiquidity" && parsed.eventName !== "DecreaseLiquidity") continue;
+
+      const tokenId = parsed.args.tokenId.toString();
+      const tokens = positionTokens.get(tokenId);
+      if (!tokens) continue;
+
+      const amounts = lpAmountsFromTokenPair(tokens.token0, tokens.token1, parsed.args.amount0, parsed.args.amount1);
+      const sign = parsed.eventName === "IncreaseLiquidity" ? 1 : -1;
+      const current = deltas.get(tokenId) ?? { weth: 0, usdc: 0 };
+      deltas.set(tokenId, {
+        weth: current.weth + sign * (amounts.weth ?? 0),
+        usdc: current.usdc + sign * (amounts.usdc ?? 0)
+      });
     } catch {
       // Not a position liquidity event.
     }

@@ -12,9 +12,7 @@ type DashboardTabsProps = {
 };
 
 const TABS = [
-  { id: "overview", label: "Overview" },
   { id: "autopilot", label: "Autopilot" },
-  { id: "tripleGuide", label: "Triple range" },
   { id: "performance", label: "Growth" },
   { id: "positions", label: "Positions" },
   { id: "transactions", label: "Transactions" }
@@ -23,7 +21,7 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 export function DashboardTabs({ overview, autopilot, tripleGuide, performance, positions, transactions }: DashboardTabsProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("autopilot");
   const panels = { overview, autopilot, tripleGuide, performance, positions, transactions };
 
   return (

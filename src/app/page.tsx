@@ -17,6 +17,7 @@ import {
   getTransactionLpDelta,
   getTransactionPositionExitAmounts,
   getTransactionPositionLiquidityDeltas,
+  getTransactionPositionPrincipalDeltas,
   getWalletAssetAmountsSnapshotAtBlock,
   subtractDelta,
   type LpAssetAmounts,
@@ -146,6 +147,54 @@ function tokenAmountsToLpAmounts(value: unknown) {
   }
 
   return amounts;
+}
+
+function isAtomicRebalanceTransaction(transaction: { raw: unknown }) {
+  const liquidityDeltas = getTransactionPositionLiquidityDeltas({
+    fromAddress: "",
+    tokenAmounts: [],
+    raw: transaction.raw
+  });
+
+  return liquidityDeltas.some((delta) => delta.delta < 0n) && liquidityDeltas.some((delta) => delta.delta > 0n);
+}
+
+function buildRebalanceDetails(
+  transaction: { fromAddress: string; tokenAmounts: unknown; raw: unknown },
+  positionsByTokenId: Map<string, { token0: string; token1: string }>
+): TransactionTableRow["rebalanceDetails"] {
+  const principalDeltas = getTransactionPositionPrincipalDeltas(transaction, positionsByTokenId);
+  const closed = principalDeltas
+    .filter((delta) => (delta.delta.weth ?? 0) < 0 || (delta.delta.usdc ?? 0) < 0)
+    .map((delta) => ({
+      tokenId: delta.tokenId,
+      weth: Math.abs(delta.delta.weth ?? 0),
+      usdc: Math.abs(delta.delta.usdc ?? 0)
+    }));
+  const minted = principalDeltas
+    .filter((delta) => (delta.delta.weth ?? 0) > 0 || (delta.delta.usdc ?? 0) > 0)
+    .map((delta) => ({
+      tokenId: delta.tokenId,
+      weth: Math.max(delta.delta.weth ?? 0, 0),
+      usdc: Math.max(delta.delta.usdc ?? 0, 0)
+    }));
+  const earned = closed
+    .map((closedPosition) => {
+      const position = positionsByTokenId.get(closedPosition.tokenId);
+      const exitAmounts = position
+        ? getTransactionPositionExitAmounts(transaction, closedPosition.tokenId, position.token0, position.token1)
+        : null;
+      return exitAmounts
+        ? {
+            tokenId: closedPosition.tokenId,
+            weth: exitAmounts.earned.weth,
+            usdc: exitAmounts.earned.usdc
+          }
+        : null;
+    })
+    .filter((item): item is { tokenId: string; weth: number | null; usdc: number | null } => item !== null);
+
+  return closed.length > 0 && minted.length > 0 ? { closed, minted, earned } : null;
 }
 
 function lpAmountValueUsd(amounts: LpAssetAmounts, wethPriceUsd: number | null) {
@@ -310,6 +359,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
   const closedSnapshotsByTokenId = new Map<string, ClosedPositionSnapshot>();
   const trackedLpTokenIds = new Set(positions.map((position) => position.tokenId));
   const positionsByTokenId = new Map(positions.map((position) => [position.tokenId, position]));
+  const positionTokensByTokenId = new Map(positions.map((position) => [position.tokenId, { token0: position.token0, token1: position.token1 }]));
   let runningAssets: WalletAssetAmounts = walletAmounts ?? { weth: null, usdc: null, aero: null, eth: null };
   const historicalPriceBlockNumbers = [...new Set(visibleTransactions.map((transaction) => transaction.blockNumber.toString()))];
   const exitBlockNumbers = transactions
@@ -327,6 +377,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     const liquidityDeltas = getTransactionPositionLiquidityDeltas(transaction).filter((liquidityDelta) =>
       trackedLpTokenIds.has(liquidityDelta.tokenId)
     );
+    const principalDeltas = getTransactionPositionPrincipalDeltas(transaction, positionTokensByTokenId);
     const closedTokenIds = new Set<string>();
 
     for (const liquidityDelta of liquidityDeltas) {
@@ -392,7 +443,8 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
       !closedTokenIds.has(transaction.relatedPositionTokenId)
     ) {
       const current = chronologicalLpAssetsByPosition.get(transaction.relatedPositionTokenId) ?? { weth: 0, usdc: 0 };
-      const next = addLpDelta(current, getTransactionLpDelta(transaction));
+      const eventDelta = principalDeltas.find((delta) => delta.tokenId === transaction.relatedPositionTokenId)?.delta;
+      const next = addLpDelta(current, eventDelta ?? getTransactionLpDelta(transaction));
       const remainingLiquidity = chronologicalLiquidityByPosition.get(transaction.relatedPositionTokenId);
       chronologicalLpAssetsByPosition.set(
         transaction.relatedPositionTokenId,
@@ -422,11 +474,13 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     blockNumber: transaction.blockNumber.toString(),
     timestamp: transaction.timestamp.toISOString(),
     type: transaction.type,
+    displayType: isAtomicRebalanceTransaction(transaction) ? "rebalance" : transaction.type,
     tokenAmounts: transaction.tokenAmounts,
     protocol: transaction.protocol,
     relatedPositionTokenId: transaction.relatedPositionTokenId,
     classificationStatus: transaction.classificationStatus,
     approvals: (approvalsByTransactionId.get(transaction.id) ?? []).map((approval) => ({ hash: approval.hash })),
+    rebalanceDetails: isAtomicRebalanceTransaction(transaction) ? buildRebalanceDetails(transaction, positionsByTokenId) : null,
     assets: transactionAssetStates.get(transaction.id) ?? { weth: null, usdc: null, aero: null, eth: null, lpWeth: null, lpUsdc: null }
   }));
 
