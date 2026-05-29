@@ -208,4 +208,55 @@ describe("broadcastAutopilotRebalance", () => {
     expect(chain.createAutopilotExecutorWalletClient).not.toHaveBeenCalled();
     expect(prisma.rebalancePlan.update).not.toHaveBeenCalled();
   });
+
+  it("returns a concise preflight simulation error instead of a raw viem dump", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockRejectedValue(
+        new Error(
+          [
+            "Execution reverted for an unknown reason.",
+            "",
+            "Raw Call Arguments:",
+            "  from: 0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45",
+            `  data: 0x${"ab".repeat(5_000)}`,
+            "",
+            "Details: execution reverted"
+          ].join("\n")
+        )
+      )
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Execution reverted: for an unknown reason");
+    expect(result.error?.length).toBeLessThan(200);
+    expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
+      where: { id: "test-plan-id" },
+      data: {
+        status: "failed",
+        decidedAt: expect.any(Date),
+        decisionNote: "On-chain execution failed: Execution reverted: for an unknown reason"
+      }
+    });
+  });
 });

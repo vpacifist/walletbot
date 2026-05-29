@@ -12,6 +12,11 @@ const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
 const AUTOPILOT_LIVE_REVIEW_PATTERN = /^ap:live_review:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 
+function telegramSafeMessage(message: string, maxLength = 3_800) {
+  if (message.length <= maxLength) return message;
+  return `${message.slice(0, maxLength - 80)}\n\n[message truncated; see Railway logs or plan history for full details]`;
+}
+
 function assertAllowedChat(ctx: Context) {
   const expected = getConfig().TELEGRAM_CHAT_ID;
   if (!expected) return true;
@@ -259,11 +264,11 @@ export function createBot() {
           { parse_mode: "Markdown" }
         );
       } else {
-        await ctx.reply(`**On-chain execution failed:**\n${result.error || "Unknown error"}`);
+        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
       }
     } catch (error) {
       await ctx.answerCbQuery("Live execution failed", { show_alert: true });
-      await ctx.reply(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed.");
+      await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
     }
   });
 
