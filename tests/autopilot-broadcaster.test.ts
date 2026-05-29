@@ -25,6 +25,7 @@ vi.mock("@/lib/autopilot-executor", () => {
 
 vi.mock("@/lib/chain", () => {
   return {
+    createAutopilotExecutorWalletClient: vi.fn(),
     createBaseClient: vi.fn(),
     createBaseWalletClient: vi.fn()
   };
@@ -92,7 +93,7 @@ describe("broadcastAutopilotRebalance", () => {
       chain: { id: 8453 },
       account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
     };
-    vi.mocked(chain.createBaseWalletClient).mockReturnValue(mockWalletClient as any);
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue(mockWalletClient as any);
 
     const mockWaitForTransactionReceipt = vi.fn().mockResolvedValue({
       status: "success",
@@ -204,7 +205,7 @@ describe("broadcastAutopilotRebalance", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("already executed or changed");
-    expect(chain.createBaseWalletClient).not.toHaveBeenCalled();
+    expect(chain.createAutopilotExecutorWalletClient).not.toHaveBeenCalled();
     expect(prisma.rebalancePlan.update).not.toHaveBeenCalled();
   });
 });

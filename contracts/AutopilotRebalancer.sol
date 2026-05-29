@@ -58,6 +58,7 @@ interface ISwapRouter02 {
 
 contract AutopilotRebalancer {
     error NotOwner();
+    error NotExecutor();
     error Reentered();
     error Expired();
     error UnsupportedToken();
@@ -101,6 +102,8 @@ contract AutopilotRebalancer {
     uint128 private constant MAX_UINT128 = type(uint128).max;
 
     address public immutable owner;
+    address public immutable executor;
+    address public immutable vault;
     address public immutable weth;
     address public immutable usdc;
     INonfungiblePositionManager public immutable positionManager;
@@ -122,6 +125,11 @@ contract AutopilotRebalancer {
         _;
     }
 
+    modifier onlyExecutor() {
+        if (msg.sender != executor) revert NotExecutor();
+        _;
+    }
+
     modifier nonReentrant() {
         if (locked) revert Reentered();
         locked = true;
@@ -129,9 +137,13 @@ contract AutopilotRebalancer {
         locked = false;
     }
 
-    constructor(address owner_, address weth_, address usdc_, address positionManager_, address swapRouter_) {
+    constructor(address owner_, address executor_, address vault_, address weth_, address usdc_, address positionManager_, address swapRouter_) {
         if (owner_ == address(0)) revert InvalidRecipient();
+        if (executor_ == address(0)) revert InvalidRecipient();
+        if (vault_ == address(0)) revert InvalidRecipient();
         owner = owner_;
+        executor = executor_;
+        vault = vault_;
         weth = weth_;
         usdc = usdc_;
         positionManager = INonfungiblePositionManager(positionManager_);
@@ -140,7 +152,7 @@ contract AutopilotRebalancer {
 
     function rebalance(RebalanceParams calldata params)
         external
-        onlyOwner
+        onlyExecutor
         nonReentrant
         returns (uint256 mintedTokenId, uint128 mintedLiquidity, uint256 swapAmountOut)
     {
@@ -197,7 +209,7 @@ contract AutopilotRebalancer {
                 amount1Desired: params.mintPosition.amount1Desired,
                 amount0Min: params.mintPosition.amount0Min,
                 amount1Min: params.mintPosition.amount1Min,
-                recipient: owner,
+                recipient: vault,
                 deadline: params.deadline
             })
         );
@@ -238,6 +250,6 @@ contract AutopilotRebalancer {
 
     function _refund(address token) private {
         uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance > 0 && !IERC20(token).transfer(owner, balance)) revert TransferFailed();
+        if (balance > 0 && !IERC20(token).transfer(vault, balance)) revert TransferFailed();
     }
 }

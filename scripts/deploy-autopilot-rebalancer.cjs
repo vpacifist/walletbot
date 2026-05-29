@@ -10,7 +10,7 @@ const BASE_ADDRESSES = {
 
 async function main() {
   if (!process.env.BASE_WALLET_ADDRESS) {
-    throw new Error("BASE_WALLET_ADDRESS is required; it becomes the AutopilotRebalancer owner.");
+    throw new Error("BASE_WALLET_ADDRESS is required; it becomes the AutopilotRebalancer vault.");
   }
 
   const [deployer] = await ethers.getSigners();
@@ -18,10 +18,14 @@ async function main() {
     throw new Error("No deployer signer. Set BASE_DEPLOYER_PRIVATE_KEY before running contracts:deploy:base.");
   }
 
-  const owner = ethers.getAddress(process.env.BASE_WALLET_ADDRESS);
+  const owner = ethers.getAddress(deployer.address);
+  const executor = ethers.getAddress(process.env.AUTOPILOT_EXECUTOR_ADDRESS || deployer.address);
+  const vault = ethers.getAddress(process.env.BASE_WALLET_ADDRESS);
   const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer", deployer);
   const rebalancer = await Rebalancer.deploy(
     owner,
+    executor,
+    vault,
     BASE_ADDRESSES.weth,
     BASE_ADDRESSES.usdc,
     BASE_ADDRESSES.positionManager,
@@ -32,6 +36,8 @@ async function main() {
   const address = await rebalancer.getAddress();
   console.log(`AutopilotRebalancer deployed: ${address}`);
   console.log(`Owner: ${owner}`);
+  console.log(`Executor: ${executor}`);
+  console.log(`Vault: ${vault}`);
   console.log(`Set AUTOPILOT_REBALANCER_ADDRESS=${address}`);
 }
 

@@ -138,9 +138,9 @@ function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): Au
 describe("buildAutopilotDryRunExecution", () => {
   it("validates a ready preview with a required quote", () => {
     const execution = buildAutopilotDryRunExecution(preview(), {
-      rebalancerOwnership: {
-        status: "owner_matches",
-        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      rebalancerRoles: {
+        status: "roles_match",
+        detail: "Rebalancer roles match configured executor and vault"
       }
     });
 
@@ -241,9 +241,9 @@ describe("buildAutopilotDryRunExecution", () => {
           detail: "Rebalancer is approved for this NFT"
         }
       },
-      rebalancerOwnership: {
-        status: "owner_matches",
-        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      rebalancerRoles: {
+        status: "roles_match",
+        detail: "Rebalancer roles match configured executor and vault"
       },
       rebalancerAddress: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0"
     });
@@ -258,9 +258,9 @@ describe("buildAutopilotDryRunExecution", () => {
         [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
         [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
       },
-      rebalancerOwnership: {
-        status: "owner_matches",
-        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      rebalancerRoles: {
+        status: "roles_match",
+        detail: "Rebalancer roles match configured executor and vault"
       }
     });
 
@@ -320,9 +320,9 @@ describe("buildAutopilotDryRunExecution", () => {
         [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
         [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
       },
-      rebalancerOwnership: {
-        status: "owner_matches",
-        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      rebalancerRoles: {
+        status: "roles_match",
+        detail: "Rebalancer roles match configured executor and vault"
       }
     });
 
@@ -334,7 +334,7 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("Mint -199800 - -199560");
   });
 
-  it("blocks atomic execution when the rebalancer owner is not the configured wallet", () => {
+  it("blocks atomic execution when the rebalancer roles do not match the configured wallets", () => {
     const execution = buildAutopilotDryRunExecution(smallCapitalPreview(), {
       closePositions: {
         "1": {
@@ -352,9 +352,9 @@ describe("buildAutopilotDryRunExecution", () => {
           detail: "Rebalancer is approved for this NFT"
         }
       },
-      rebalancerOwnership: {
-        status: "owner_mismatch",
-        detail: "Rebalancer owner 0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45 does not match BASE_WALLET_ADDRESS 0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057"
+      rebalancerRoles: {
+        status: "roles_mismatch",
+        detail: "Rebalancer owner 0x6C28F2F5908F61f2F698c504664f777482859FA7; executor 0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45 does not match AUTOPILOT_EXECUTOR_ADDRESS 0x6C28F2F5908F61f2F698c504664f777482859FA7; vault 0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45 does not match BASE_WALLET_ADDRESS 0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057"
       },
       allowances: {
         [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
@@ -363,7 +363,8 @@ describe("buildAutopilotDryRunExecution", () => {
     });
 
     expect(execution.status).toBe("blocked");
-    expect(execution.telegramSummary).toContain("BLOCKED Rebalancer owner");
+    expect(execution.telegramSummary).toContain("BLOCKED Rebalancer roles");
+    expect(execution.telegramSummary).toContain("does not match AUTOPILOT_EXECUTOR_ADDRESS");
     expect(execution.telegramSummary).toContain("does not match BASE_WALLET_ADDRESS");
   });
 });

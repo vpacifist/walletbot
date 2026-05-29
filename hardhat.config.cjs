@@ -4,7 +4,7 @@ const { loadEnvConfig } = require("@next/env");
 
 loadEnvConfig(process.cwd());
 
-const { BASE_RPC_URL, BASE_DEPLOYER_PRIVATE_KEY } = process.env;
+const { BASE_RPC_URL, BASE_DEPLOYER_PRIVATE_KEY, HARDHAT_FORK_BASE } = process.env;
 
 /** @type {import("hardhat/config").HardhatUserConfig} */
 module.exports = {
@@ -24,7 +24,7 @@ module.exports = {
     artifacts: "./artifacts"
   },
   networks: {
-    hardhat: BASE_RPC_URL
+    hardhat: BASE_RPC_URL && HARDHAT_FORK_BASE === "1"
       ? {
           forking: {
             url: BASE_RPC_URL

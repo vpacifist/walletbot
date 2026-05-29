@@ -1,6 +1,6 @@
 import { getAddress } from "viem";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
-import { createBaseClient, createBaseWalletClient } from "./chain";
+import { createAutopilotExecutorWalletClient, createBaseClient } from "./chain";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 
@@ -52,7 +52,7 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
       return { success: false, error: "Plan was already executed or changed before transaction submission." };
     }
 
-    const walletClient = createBaseWalletClient();
+    const walletClient = createAutopilotExecutorWalletClient();
     const publicClient = createBaseClient();
 
     await publicClient.call({

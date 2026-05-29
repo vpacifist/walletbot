@@ -365,6 +365,20 @@ export const autopilotRebalancerAbi = [
   },
   {
     type: "function",
+    name: "executor",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "vault",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
     name: "rebalance",
     stateMutability: "nonpayable",
     inputs: [

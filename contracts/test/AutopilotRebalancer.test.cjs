@@ -46,7 +46,7 @@ async function findWalletPosition(positionManager, walletAddress) {
 
 describe("AutopilotRebalancer", function () {
   it("sees expected Base contracts on the fork", async function () {
-    if (!process.env.BASE_RPC_URL) this.skip();
+    if (!process.env.BASE_RPC_URL || process.env.HARDHAT_FORK_BASE !== "1") this.skip();
 
     for (const [label, address] of Object.entries(BASE_ADDRESSES)) {
       const code = await ethers.provider.getCode(address);
@@ -55,10 +55,12 @@ describe("AutopilotRebalancer", function () {
   });
 
   it("deploys with Base Uniswap v3 addresses and exposes constants", async function () {
-    const [owner] = await ethers.getSigners();
+    const [owner, executor, vault] = await ethers.getSigners();
     const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer");
     const rebalancer = await Rebalancer.deploy(
       owner.address,
+      executor.address,
+      vault.address,
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
       BASE_ADDRESSES.positionManager,
@@ -67,6 +69,8 @@ describe("AutopilotRebalancer", function () {
     await rebalancer.waitForDeployment();
 
     assert.equal(await rebalancer.owner(), owner.address);
+    assert.equal(await rebalancer.executor(), executor.address);
+    assert.equal(await rebalancer.vault(), vault.address);
     assert.equal(await rebalancer.weth(), BASE_ADDRESSES.weth);
     assert.equal(await rebalancer.usdc(), BASE_ADDRESSES.usdc);
     assert.equal(await rebalancer.POOL_FEE(), 3000n);
@@ -76,6 +80,8 @@ describe("AutopilotRebalancer", function () {
     const [owner, other] = await ethers.getSigners();
     const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer");
     const rebalancer = await Rebalancer.deploy(
+      owner.address,
+      owner.address,
       owner.address,
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
@@ -87,10 +93,55 @@ describe("AutopilotRebalancer", function () {
     await assert.rejects(rebalancer.connect(other).sweepToken(BASE_ADDRESSES.weth), /NotOwner/);
   });
 
+  it("blocks non-executor rebalances", async function () {
+    const [owner, executor, vault, other] = await ethers.getSigners();
+    const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer");
+    const rebalancer = await Rebalancer.deploy(
+      owner.address,
+      executor.address,
+      vault.address,
+      BASE_ADDRESSES.weth,
+      BASE_ADDRESSES.usdc,
+      BASE_ADDRESSES.positionManager,
+      BASE_ADDRESSES.swapRouter02
+    );
+    await rebalancer.waitForDeployment();
+
+    await assert.rejects(
+      rebalancer.connect(other).rebalance({
+        closePosition: {
+          tokenId: 1,
+          liquidity: 1,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        swap: {
+          tokenIn: BASE_ADDRESSES.weth,
+          tokenOut: BASE_ADDRESSES.usdc,
+          amountIn: 1,
+          amountOutMinimum: 0,
+          sqrtPriceLimitX96: 0
+        },
+        mintPosition: {
+          tickLower: -200400,
+          tickUpper: -200160,
+          amount0Desired: 1,
+          amount1Desired: 0,
+          amount0Min: 0,
+          amount1Min: 0
+        },
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
+      }),
+      /NotExecutor/
+    );
+  });
+
   it("rejects unsupported token sweeps", async function () {
     const [owner] = await ethers.getSigners();
     const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer");
     const rebalancer = await Rebalancer.deploy(
+      owner.address,
+      owner.address,
       owner.address,
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,
@@ -102,8 +153,8 @@ describe("AutopilotRebalancer", function () {
     await assert.rejects(rebalancer.sweepToken(owner.address), /UnsupportedToken/);
   });
 
-  it("executes a small owner-approved rebalance on the Base fork", async function () {
-    if (!process.env.BASE_RPC_URL || !process.env.BASE_WALLET_ADDRESS) this.skip();
+  it("executes a small executor-approved rebalance on the Base fork", async function () {
+    if (!process.env.BASE_RPC_URL || process.env.HARDHAT_FORK_BASE !== "1" || !process.env.BASE_WALLET_ADDRESS) this.skip();
 
     const walletAddress = ethers.getAddress(process.env.BASE_WALLET_ADDRESS);
     const positionManager = new ethers.Contract(BASE_ADDRESSES.positionManager, POSITION_MANAGER_ABI, ethers.provider);
@@ -118,6 +169,8 @@ describe("AutopilotRebalancer", function () {
 
     const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer", wallet);
     const rebalancer = await Rebalancer.deploy(
+      walletAddress,
+      walletAddress,
       walletAddress,
       BASE_ADDRESSES.weth,
       BASE_ADDRESSES.usdc,

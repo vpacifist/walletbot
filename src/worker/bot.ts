@@ -39,7 +39,8 @@ function autopilotExecutionKeyboard(planId: string) {
 
 function autopilotLiveKeyboard(planId: string) {
   const config = getConfig();
-  if (!config.AUTOPILOT_LIVE_EXECUTION_ENABLED || !config.BASE_WALLET_PRIVATE_KEY || !config.AUTOPILOT_REBALANCER_ADDRESS) return undefined;
+  const executorPrivateKey = config.AUTOPILOT_EXECUTOR_PRIVATE_KEY || config.BASE_WALLET_PRIVATE_KEY;
+  if (!config.AUTOPILOT_LIVE_EXECUTION_ENABLED || !executorPrivateKey || !config.AUTOPILOT_REBALANCER_ADDRESS) return undefined;
   return {
     inline_keyboard: [[{ text: "Review live transaction", callback_data: `ap:live_review:${planId}` }]]
   };
@@ -212,7 +213,7 @@ export function createBot() {
           "Live execution review",
           `Plan id: ${planId}`,
           "",
-          "This will submit one atomic rebalance transaction on Base from the configured hot wallet.",
+          "This will submit one atomic rebalance transaction on Base from the configured executor wallet.",
           "Only continue if the dry-run output still matches the action you expect.",
           "",
           "Prepared operations",

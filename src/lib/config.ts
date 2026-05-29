@@ -18,6 +18,10 @@ const envSchema = z.object({
     .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{40}$/)])
     .optional()
     .default(""),
+  AUTOPILOT_EXECUTOR_ADDRESS: z
+    .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{40}$/)])
+    .optional()
+    .default(""),
   BLOCKSCOUT_BASE_URL: z.string().url().default("https://base.blockscout.com"),
   TELEGRAM_BOT_TOKEN: z.string().optional().default(""),
   TELEGRAM_CHAT_ID: z.string().optional().default(""),
@@ -29,6 +33,10 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === "true" || value === "1"),
   BASE_WALLET_PRIVATE_KEY: z
+    .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{64}$/)])
+    .optional()
+    .default(""),
+  AUTOPILOT_EXECUTOR_PRIVATE_KEY: z
     .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{64}$/)])
     .optional()
     .default("")
