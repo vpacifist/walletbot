@@ -80,6 +80,7 @@ type ClosePositionState =
 type BuildExecutionOptions = {
   closePositions?: Record<string, ClosePositionState>;
   nftApprovals?: Record<string, NftApprovalState>;
+  rebalancerOwnership?: RebalancerOwnershipState;
   rebalancerAddress?: Address | "";
   allowances?: Record<string, bigint>;
   pool?: {
@@ -125,6 +126,20 @@ type NftApprovalState =
   | {
       status: "unavailable";
       tokenId: string;
+      detail: string;
+    };
+
+type RebalancerOwnershipState =
+  | {
+      status: "owner_matches";
+      detail: string;
+    }
+  | {
+      status: "owner_mismatch";
+      detail: string;
+    }
+  | {
+      status: "unavailable";
       detail: string;
     };
 
@@ -693,6 +708,36 @@ function buildApprovalChecks(intents: TransactionIntent[], options: BuildExecuti
   });
 }
 
+function buildRebalancerOwnershipChecks(intents: TransactionIntent[], options: BuildExecutionOptions = {}) {
+  const needsAtomicRebalancer =
+    intents.some((intent) => intent.kind === "close_position") &&
+    intents.some((intent) => intent.kind === "swap_exact_input") &&
+    intents.some((intent) => intent.kind === "mint_position");
+  if (!needsAtomicRebalancer) return [];
+
+  const configuredRebalancer = options.rebalancerAddress ?? getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  if (!configuredRebalancer) return [];
+
+  const ownership = options.rebalancerOwnership;
+  if (!ownership) {
+    return [
+      {
+        label: "Rebalancer owner",
+        ok: false,
+        detail: "Rebalancer owner was not checked"
+      }
+    ];
+  }
+
+  return [
+    {
+      label: "Rebalancer owner",
+      ok: ownership.status === "owner_matches",
+      detail: ownership.detail
+    }
+  ];
+}
+
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
   return [
     "Executor dry run",
@@ -747,6 +792,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   }));
   const intents = buildIntents(preview);
   const approvalChecks = buildApprovalChecks(intents, options);
+  const rebalancerOwnershipChecks = buildRebalancerOwnershipChecks(intents, options);
   const calls = buildCalls(intents, {
     ...options,
     pool: options.pool ?? preview.pool
@@ -757,8 +803,8 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   });
   const executionWithoutTelegram = {
     planId: preview.planId,
-    status: [...checks, ...approvalChecks].every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
-    checks: [...checks, ...approvalChecks],
+    status: [...checks, ...approvalChecks, ...rebalancerOwnershipChecks].every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
+    checks: [...checks, ...approvalChecks, ...rebalancerOwnershipChecks],
     operations,
     intents,
     calls,
@@ -850,6 +896,37 @@ async function fetchNftApproval(tokenId: string): Promise<NftApprovalState> {
   }
 }
 
+async function fetchRebalancerOwnership(): Promise<RebalancerOwnershipState> {
+  const rebalancerAddress = getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  if (!rebalancerAddress) {
+    return {
+      status: "unavailable",
+      detail: "AUTOPILOT_REBALANCER_ADDRESS is not configured"
+    };
+  }
+
+  try {
+    const expectedOwner = getAddress(getConfig().BASE_WALLET_ADDRESS);
+    const owner = await createBaseClient().readContract({
+      address: getAddress(rebalancerAddress),
+      abi: autopilotRebalancerAbi,
+      functionName: "owner"
+    });
+    const ownerMatches = owner.toLowerCase() === expectedOwner.toLowerCase();
+    return {
+      status: ownerMatches ? "owner_matches" : "owner_mismatch",
+      detail: ownerMatches
+        ? `Rebalancer owner ${owner} matches BASE_WALLET_ADDRESS`
+        : `Rebalancer owner ${owner} does not match BASE_WALLET_ADDRESS ${expectedOwner}`
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      detail: shortError(error)
+    };
+  }
+}
+
 function shouldSimulateIndependentCall(call: ExecutionCall) {
   return call.status === "prepared" && (call.functionName === "decreaseLiquidity" || call.functionName === "collect");
 }
@@ -897,15 +974,17 @@ async function simulatePreparedCalls(calls: ExecutionCall[]) {
 export async function createAutopilotDryRunExecution(planId: string) {
   const preview = await createAutopilotExecutionPreview(planId);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
-  const [closeStates, nftApprovals, wethAllowance, usdcAllowance] = await Promise.all([
+  const [closeStates, nftApprovals, rebalancerOwnership, wethAllowance, usdcAllowance] = await Promise.all([
     Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId))),
     Promise.all(closeTokenIds.map((tokenId) => fetchNftApproval(tokenId))),
+    fetchRebalancerOwnership(),
     fetchAllowance(CONTRACTS.weth),
     fetchAllowance(CONTRACTS.usdc)
   ]);
   const execution = buildAutopilotDryRunExecution(preview, {
     closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
     nftApprovals: Object.fromEntries(nftApprovals.map((state) => [state.tokenId, state])),
+    rebalancerOwnership,
     allowances: {
       [allowanceKey(CONTRACTS.weth)]: wethAllowance,
       [allowanceKey(CONTRACTS.usdc)]: usdcAllowance

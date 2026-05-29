@@ -358,6 +358,13 @@ export const swapRouter02Abi = [
 export const autopilotRebalancerAbi = [
   {
     type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
     name: "rebalance",
     stateMutability: "nonpayable",
     inputs: [

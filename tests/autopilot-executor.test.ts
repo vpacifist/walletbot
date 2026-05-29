@@ -137,7 +137,12 @@ function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): Au
 
 describe("buildAutopilotDryRunExecution", () => {
   it("validates a ready preview with a required quote", () => {
-    const execution = buildAutopilotDryRunExecution(preview());
+    const execution = buildAutopilotDryRunExecution(preview(), {
+      rebalancerOwnership: {
+        status: "owner_matches",
+        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      }
+    });
 
     expect(execution.status).toBe("validated");
     expect(execution.telegramSummary).toContain("Executor dry run");
@@ -236,6 +241,10 @@ describe("buildAutopilotDryRunExecution", () => {
           detail: "Rebalancer is approved for this NFT"
         }
       },
+      rebalancerOwnership: {
+        status: "owner_matches",
+        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
+      },
       rebalancerAddress: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0"
     });
 
@@ -248,6 +257,10 @@ describe("buildAutopilotDryRunExecution", () => {
       allowances: {
         [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
         [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
+      },
+      rebalancerOwnership: {
+        status: "owner_matches",
+        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
       }
     });
 
@@ -306,6 +319,10 @@ describe("buildAutopilotDryRunExecution", () => {
       allowances: {
         [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
         [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
+      },
+      rebalancerOwnership: {
+        status: "owner_matches",
+        detail: "Rebalancer owner matches BASE_WALLET_ADDRESS"
       }
     });
 
@@ -315,5 +332,38 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.calls.some((call) => call.functionName === "exactInputSingle")).toBe(true);
     expect(execution.calls.some((call) => call.functionName === "mint")).toBe(true);
     expect(execution.telegramSummary).toContain("Mint -199800 - -199560");
+  });
+
+  it("blocks atomic execution when the rebalancer owner is not the configured wallet", () => {
+    const execution = buildAutopilotDryRunExecution(smallCapitalPreview(), {
+      closePositions: {
+        "1": {
+          status: "available",
+          tokenId: "1",
+          liquidity: 123n,
+          tokensOwed0: 0n,
+          tokensOwed1: 0n
+        }
+      },
+      nftApprovals: {
+        "1": {
+          status: "approved",
+          tokenId: "1",
+          detail: "Rebalancer is approved for this NFT"
+        }
+      },
+      rebalancerOwnership: {
+        status: "owner_mismatch",
+        detail: "Rebalancer owner 0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45 does not match BASE_WALLET_ADDRESS 0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057"
+      },
+      allowances: {
+        [`${CONTRACTS.weth.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n,
+        [`${CONTRACTS.usdc.toLowerCase()}:${CONTRACTS.nonfungiblePositionManager.toLowerCase()}`]: 10n ** 30n
+      }
+    });
+
+    expect(execution.status).toBe("blocked");
+    expect(execution.telegramSummary).toContain("BLOCKED Rebalancer owner");
+    expect(execution.telegramSummary).toContain("does not match BASE_WALLET_ADDRESS");
   });
 });
