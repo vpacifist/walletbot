@@ -47,7 +47,7 @@
   --status-historical-bg: #e1e5df;
   --status-historical-text: #526050;
   --shell-width: 1180px;
-  --positions-width: 1320px;
+  --positions-width: 1440px;
   --transactions-width: 1560px;
 }
 
@@ -1261,7 +1261,7 @@ table {
 }
 
 .positions-table {
-  width: var(--positions-width);
+  width: 100%;
   min-width: 1300px;
   table-layout: fixed;
 }
