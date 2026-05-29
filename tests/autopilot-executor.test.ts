@@ -168,7 +168,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "5187240",
           liquidity: 123n,
           tokensOwed0: 4n,
-          tokensOwed1: 5n
+          tokensOwed1: 5n,
+          decreaseAmount0: 2_000_000_000_000_000_000n,
+          decreaseAmount1: 0n
         }
       }
     });
@@ -187,7 +189,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "5187240",
           liquidity: 123n,
           tokensOwed0: 4n,
-          tokensOwed1: 5n
+          tokensOwed1: 5n,
+          decreaseAmount0: 2_000_000_000_000_000_000n,
+          decreaseAmount1: 0n
         }
       }
     });
@@ -206,7 +210,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "5187240",
           liquidity: 123n,
           tokensOwed0: 4n,
-          tokensOwed1: 5n
+          tokensOwed1: 5n,
+          decreaseAmount0: 2_000_000_000_000_000_000n,
+          decreaseAmount1: 0n
         }
       },
       nftApprovals: {
@@ -231,7 +237,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "5187240",
           liquidity: 123n,
           tokensOwed0: 4n,
-          tokensOwed1: 5n
+          tokensOwed1: 5n,
+          decreaseAmount0: 2_000_000_000_000_000_000n,
+          decreaseAmount1: 0n
         }
       },
       nftApprovals: {
@@ -313,7 +321,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "1",
           liquidity: 123n,
           tokensOwed0: 0n,
-          tokensOwed1: 0n
+          tokensOwed1: 0n,
+          decreaseAmount0: 300_000_000_000_000_000n,
+          decreaseAmount1: 600_000_000n
         }
       },
       allowances: {
@@ -342,7 +352,9 @@ describe("buildAutopilotDryRunExecution", () => {
           tokenId: "1",
           liquidity: 123n,
           tokensOwed0: 0n,
-          tokensOwed1: 0n
+          tokensOwed1: 0n,
+          decreaseAmount0: 300_000_000_000_000_000n,
+          decreaseAmount1: 600_000_000n
         }
       },
       nftApprovals: {

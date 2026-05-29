@@ -70,6 +70,9 @@ type ClosePositionState =
       liquidity: bigint;
       tokensOwed0: bigint;
       tokensOwed1: bigint;
+      decreaseAmount0?: bigint;
+      decreaseAmount1?: bigint;
+      decreaseQuoteError?: string;
     }
   | {
       status: "unavailable";
@@ -620,17 +623,18 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
 
-  const mintAmounts = mintDesiredAmounts(mintIntent, options.pool);
-  if (!mintAmounts) {
+  const atomicAmounts = atomicMintAmounts(mintIntent, swapIntent, closeState, options.pool);
+  if (atomicAmounts.status === "blocked") {
     return {
       status: "blocked",
       target,
       functionName: "rebalance",
       data: null,
       dataPreview: null,
-      reason: "Atomic rebalance needs live pool price and a valid target mint range."
+      reason: atomicAmounts.reason
     };
   }
+  const mintAmounts = atomicAmounts.amounts;
 
   const data = encodeFunctionData({
     abi: autopilotRebalancerAbi,
@@ -670,7 +674,7 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     data,
     dataPreview: dataPreview(data),
     reason: configuredRebalancer
-      ? `Single-call contract calldata prepared for dry-run review; live execution still disabled; ${approvalReady ? "NFT approval is ready." : "NFT approval still needs to be checked."}`
+      ? `Single-call contract calldata prepared for dry-run review; live execution still disabled; ${approvalReady ? "NFT approval is ready." : "NFT approval still needs to be checked."}${atomicAmounts.capped ? ` Mint is capped to conservative post-swap balances ${atomicAmounts.available0.toString()} token0 / ${atomicAmounts.available1.toString()} token1.` : ""}`
       : "Single-call contract calldata prepared, but live execution needs AUTOPILOT_REBALANCER_ADDRESS."
   };
 }
@@ -706,6 +710,109 @@ function buildApprovalChecks(intents: TransactionIntent[], options: BuildExecuti
       detail: approval.detail
     };
   });
+}
+
+function scaleMintAmountsToBalances(amounts: NonNullable<ReturnType<typeof mintDesiredAmounts>>, available0: bigint, available1: bigint) {
+  const scale = 1_000_000_000_000n;
+  if (amounts.amount0 === 0n && amounts.amount1 === 0n) return null;
+
+  if (amounts.amount0 === 0n) {
+    const amount1 = amounts.amount1 < available1 ? amounts.amount1 : available1;
+    return amount1 > 0n ? { ...amounts, amount1 } : null;
+  }
+
+  if (amounts.amount1 === 0n) {
+    const amount0 = amounts.amount0 < available0 ? amounts.amount0 : available0;
+    return amount0 > 0n ? { ...amounts, amount0 } : null;
+  }
+
+  const scale0 = (available0 * scale) / amounts.amount0;
+  const scale1 = (available1 * scale) / amounts.amount1;
+  const boundedScale = [scale, scale0, scale1].reduce((min, value) => (value < min ? value : min), scale);
+  if (boundedScale <= 0n) return null;
+
+  const amount0 = (amounts.amount0 * boundedScale) / scale;
+  const amount1 = (amounts.amount1 * boundedScale) / scale;
+  if (amount0 <= 0n && amount1 <= 0n) return null;
+  return {
+    ...amounts,
+    amount0,
+    amount1
+  };
+}
+
+function atomicMintAmounts(
+  mintIntent: Extract<TransactionIntent, { kind: "mint_position" }>,
+  swapIntent: Extract<TransactionIntent, { kind: "swap_exact_input" }>,
+  closeState: Extract<ClosePositionState, { status: "available" }>,
+  pool?: BuildExecutionOptions["pool"]
+) {
+  const desired = mintDesiredAmounts(mintIntent, pool);
+  if (!desired) {
+    return {
+      status: "blocked" as const,
+      reason: "Atomic rebalance needs live pool price and a valid target mint range."
+    };
+  }
+
+  if (closeState.decreaseAmount0 === undefined || closeState.decreaseAmount1 === undefined) {
+    return {
+      status: "blocked" as const,
+      reason: closeState.decreaseQuoteError
+        ? `Atomic rebalance needs simulated close token amounts: ${closeState.decreaseQuoteError}`
+        : "Atomic rebalance needs simulated close token amounts."
+    };
+  }
+
+  let available0 = closeState.decreaseAmount0 + closeState.tokensOwed0;
+  let available1 = closeState.decreaseAmount1 + closeState.tokensOwed1;
+  const amountIn = BigInt(swapIntent.amountInRaw);
+  const minAmountOut = BigInt(swapIntent.minAmountOutRaw ?? 0);
+  const tokenIn = getAddress(swapIntent.tokenInAddress);
+  const tokenOut = getAddress(swapIntent.tokenOutAddress);
+  const weth = getAddress(CONTRACTS.weth);
+  const usdc = getAddress(CONTRACTS.usdc);
+
+  if (tokenIn === weth && tokenOut === usdc) {
+    if (available0 < amountIn) {
+      return {
+        status: "blocked" as const,
+        reason: `Atomic rebalance swap needs ${amountIn.toString()} WETH raw, but close simulation provides ${available0.toString()}.`
+      };
+    }
+    available0 -= amountIn;
+    available1 += minAmountOut;
+  } else if (tokenIn === usdc && tokenOut === weth) {
+    if (available1 < amountIn) {
+      return {
+        status: "blocked" as const,
+        reason: `Atomic rebalance swap needs ${amountIn.toString()} USDC raw, but close simulation provides ${available1.toString()}.`
+      };
+    }
+    available1 -= amountIn;
+    available0 += minAmountOut;
+  } else {
+    return {
+      status: "blocked" as const,
+      reason: "Atomic rebalance only supports WETH/USDC swap directions."
+    };
+  }
+
+  const capped = scaleMintAmountsToBalances(desired, available0, available1);
+  if (!capped) {
+    return {
+      status: "blocked" as const,
+      reason: "Atomic rebalance has no conservative post-swap balance available for minting."
+    };
+  }
+
+  return {
+    status: "ready" as const,
+    amounts: capped,
+    capped: capped.amount0 !== desired.amount0 || capped.amount1 !== desired.amount1,
+    available0,
+    available1
+  };
 }
 
 function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildExecutionOptions = {}) {
@@ -819,18 +926,49 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
 
 async function fetchClosePositionState(tokenId: string): Promise<ClosePositionState> {
   try {
-    const position = await createBaseClient().readContract({
+    const client = createBaseClient();
+    const position = await client.readContract({
       address: CONTRACTS.nonfungiblePositionManager,
       abi: positionManagerAbi,
       functionName: "positions",
       args: [BigInt(tokenId)]
     });
+    let decreaseAmount0: bigint | undefined;
+    let decreaseAmount1: bigint | undefined;
+    let decreaseQuoteError: string | undefined;
+    const rebalancerAddress = getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+    if (rebalancerAddress && position[7] > 0n) {
+      try {
+        const simulated = await client.simulateContract({
+          account: getAddress(rebalancerAddress),
+          address: CONTRACTS.nonfungiblePositionManager,
+          abi: positionManagerAbi,
+          functionName: "decreaseLiquidity",
+          args: [
+            {
+              tokenId: BigInt(tokenId),
+              liquidity: position[7],
+              amount0Min: 0n,
+              amount1Min: 0n,
+              deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
+            }
+          ]
+        });
+        decreaseAmount0 = simulated.result[0];
+        decreaseAmount1 = simulated.result[1];
+      } catch (error) {
+        decreaseQuoteError = shortError(error);
+      }
+    }
     return {
       status: "available",
       tokenId,
       liquidity: position[7],
       tokensOwed0: position[10],
-      tokensOwed1: position[11]
+      tokensOwed1: position[11],
+      decreaseAmount0,
+      decreaseAmount1,
+      decreaseQuoteError
     };
   } catch (error) {
     return {
