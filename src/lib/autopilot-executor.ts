@@ -66,9 +66,11 @@ export type AutopilotDryRunExecution = {
   telegramSummary: string;
 };
 
-// Atomic rebalances quote before closing our own LP. A wider guard covers the
-// post-close liquidity impact while the contract still enforces this minOut.
-const SLIPPAGE_BPS = 100;
+const SWAP_SLIPPAGE_BPS = 15;
+// Uniswap v3 mint can consume slightly different token amounts as price moves
+// between planning and execution. A wider mint guard avoids reverting while
+// unused token dust is still refunded to the vault.
+const MINT_SLIPPAGE_BPS = 100;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =
@@ -175,7 +177,7 @@ function formatUsd(value: number) {
 }
 
 function minAmountOut(amountOut: number) {
-  return amountOut * (1 - SLIPPAGE_BPS / 10_000);
+  return amountOut * (1 - SWAP_SLIPPAGE_BPS / 10_000);
 }
 
 function tokenDecimals(address: string) {
@@ -237,7 +239,7 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         amountIn: step.quoteRequest.amountIn,
         expectedAmountOut: quote?.amountOut ?? null,
         minAmountOut: quote ? minAmountOut(quote.amountOut) : null,
-        slippageBps: SLIPPAGE_BPS,
+        slippageBps: SWAP_SLIPPAGE_BPS,
         tokenInAddress: step.quoteRequest.tokenIn,
         tokenOutAddress: step.quoteRequest.tokenOut,
         amountInRaw: rawAmount(step.quoteRequest.amountIn, step.quoteRequest.tokenIn),
@@ -487,8 +489,8 @@ function buildMintCall(intent: Extract<TransactionIntent, { kind: "mint_position
         tickUpper: intent.upperTick,
         amount0Desired: amounts.amount0,
         amount1Desired: amounts.amount1,
-        amount0Min: (amounts.amount0 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
-        amount1Min: (amounts.amount1 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
+        amount0Min: (amounts.amount0 * BigInt(10_000 - MINT_SLIPPAGE_BPS)) / 10_000n,
+        amount1Min: (amounts.amount1 * BigInt(10_000 - MINT_SLIPPAGE_BPS)) / 10_000n,
         recipient: getAddress(getConfig().BASE_WALLET_ADDRESS),
         deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
       }
@@ -753,8 +755,8 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
           tickUpper: mintIntent.upperTick,
           amount0Desired: mintAmounts.amount0,
           amount1Desired: mintAmounts.amount1,
-          amount0Min: (mintAmounts.amount0 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n,
-          amount1Min: (mintAmounts.amount1 * BigInt(10_000 - SLIPPAGE_BPS)) / 10_000n
+          amount0Min: (mintAmounts.amount0 * BigInt(10_000 - MINT_SLIPPAGE_BPS)) / 10_000n,
+          amount1Min: (mintAmounts.amount1 * BigInt(10_000 - MINT_SLIPPAGE_BPS)) / 10_000n
         },
         deadline: BigInt(Math.floor(Date.now() / 1000) + 120)
       }
