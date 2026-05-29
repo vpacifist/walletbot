@@ -72,8 +72,11 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
           `-> ${preview.quote.data.amountOut.toLocaleString("en-US", { maximumFractionDigits: preview.quote.data.receiveSymbol === "USDC" ? 2 : 6 })} ${preview.quote.data.receiveSymbol}`,
           `Effective WETH price: ${formatUsd(preview.quote.data.effectivePrice)}`,
           `Gas estimate: ${preview.quote.data.gasEstimate}`,
+          preview.quote.data.routeSummary ? `Route: ${preview.quote.data.routeSummary}` : undefined,
           preview.quote.data.executionNote
-        ].join("\n")
+        ]
+          .filter((line) => line !== undefined)
+          .join("\n")
       : preview.quote.status === "unavailable"
         ? `Quote unavailable: ${preview.quote.reason}`
         : "No quote request in this plan.";

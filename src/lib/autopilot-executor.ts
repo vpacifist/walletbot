@@ -26,6 +26,9 @@ type TransactionIntent =
       tokenOutAddress: Address;
       amountInRaw: string;
       minAmountOutRaw: string | null;
+      sourceType: "uniswap_v3" | "aggregator_required" | null;
+      executable: boolean;
+      executionNote?: string;
       description: string;
     }
   | {
@@ -234,6 +237,9 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         tokenOutAddress: step.quoteRequest.tokenOut,
         amountInRaw: rawAmount(step.quoteRequest.amountIn, step.quoteRequest.tokenIn),
         minAmountOutRaw: quote ? rawAmount(minAmountOut(quote.amountOut), step.quoteRequest.tokenOut) : null,
+        sourceType: quote?.sourceType ?? null,
+        executable: quote?.executable ?? false,
+        executionNote: quote?.executionNote,
         description: step.detail
       };
     }
@@ -509,6 +515,19 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
         };
       }
 
+      if (intent.sourceType !== "uniswap_v3" || !intent.executable) {
+        return {
+          intent: `${index + 1}. swap_exact_input`,
+          status: "blocked" as const,
+          target: intent.target,
+          functionName: null,
+          data: null,
+          dataPreview: null,
+          reason: intent.executionNote ?? "Selected swap source is not executable by the deployed rebalancer contract.",
+          simulation: simulation("skipped", "Call is not prepared.")
+        };
+      }
+
       const data = encodeFunctionData({
         abi: swapRouter02Abi,
         functionName: "exactInputSingle",
@@ -620,6 +639,17 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
       data: null,
       dataPreview: null,
       reason: "Atomic rebalance needs an available swap quote and amountOutMinimum."
+    };
+  }
+
+  if (swapIntent.sourceType !== "uniswap_v3" || !swapIntent.executable) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: swapIntent.executionNote ?? "Atomic rebalance cannot execute the selected aggregator route with the deployed rebalancer contract."
     };
   }
 
@@ -845,6 +875,19 @@ function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildE
   ];
 }
 
+function buildSwapSourceChecks(intents: TransactionIntent[]) {
+  return intents
+    .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
+    .map((intent) => ({
+      label: "Swap source",
+      ok: intent.sourceType === "uniswap_v3" && intent.executable,
+      detail:
+        intent.sourceType === "uniswap_v3" && intent.executable
+          ? `${intent.target} is executable by the deployed rebalancer`
+          : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
+    }));
+}
+
 function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegramSummary">) {
   return [
     "Executor dry run",
@@ -900,6 +943,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   const intents = buildIntents(preview);
   const approvalChecks = buildApprovalChecks(intents, options);
   const rebalancerRoleChecks = buildRebalancerRoleChecks(intents, options);
+  const swapSourceChecks = buildSwapSourceChecks(intents);
   const calls = buildCalls(intents, {
     ...options,
     pool: options.pool ?? preview.pool
@@ -910,8 +954,8 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   });
   const executionWithoutTelegram = {
     planId: preview.planId,
-    status: [...checks, ...approvalChecks, ...rebalancerRoleChecks].every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
-    checks: [...checks, ...approvalChecks, ...rebalancerRoleChecks],
+    status: [...checks, ...approvalChecks, ...rebalancerRoleChecks, ...swapSourceChecks].every((check) => check.ok) ? ("validated" as const) : ("blocked" as const),
+    checks: [...checks, ...approvalChecks, ...rebalancerRoleChecks, ...swapSourceChecks],
     operations,
     intents,
     calls,

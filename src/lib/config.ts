@@ -43,6 +43,10 @@ const envSchema = z.object({
   AUTOPILOT_EXECUTOR_PRIVATE_KEY: z
     .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{64}$/)])
     .optional()
+    .default(""),
+  ZEROX_API_KEY: z
+    .string()
+    .optional()
     .default("")
 });
 

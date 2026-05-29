@@ -2,7 +2,7 @@ import { formatUnits, parseUnits, type Address } from "viem";
 import { quoterV2Abi } from "./abi";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
-import { CONTRACTS, TOKEN_META } from "./constants";
+import { BASE_CHAIN_ID, CONTRACTS, TOKEN_META } from "./constants";
 
 export type SwapQuoteRequest = {
   tokenIn: Address;
@@ -25,6 +25,9 @@ export type SwapQuote = SwapQuoteRequest & {
   sourceType: SwapQuoteSource;
   executable: boolean;
   executionNote?: string;
+  approvalTarget?: Address;
+  transactionTarget?: Address;
+  routeSummary?: string;
 };
 
 export function quoteRequestKey(request: SwapQuoteRequest) {
@@ -96,14 +99,86 @@ export async function quoteUniswapV3ExactInputSingle(request: SwapQuoteRequest):
   return quoteFromRaw(request, amountInRaw, amountOutRaw, gasEstimate, "Uniswap QuoterV2", "uniswap_v3");
 }
 
+type ZeroExQuoteResponse = {
+  buyAmount?: string;
+  sellAmount?: string;
+  minBuyAmount?: string;
+  gas?: string;
+  liquidityAvailable?: boolean;
+  transaction?: {
+    to?: string;
+    data?: string;
+  };
+  issues?: {
+    allowance?: {
+      spender?: string;
+    };
+  };
+  route?: {
+    fills?: Array<{
+      source?: string;
+      proportionBps?: string;
+    }>;
+  };
+  message?: string;
+  reason?: string;
+  validationErrors?: unknown;
+};
+
+function routeSummary(fills: NonNullable<ZeroExQuoteResponse["route"]>["fills"]) {
+  if (!fills || fills.length === 0) return "route unavailable";
+  return fills
+    .slice(0, 4)
+    .map((fill) => `${fill.source ?? "unknown"} ${Number(fill.proportionBps ?? 0) / 100}%`)
+    .join(", ");
+}
+
+export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Promise<SwapQuote> {
+  const apiKey = getConfig().ZEROX_API_KEY;
+  if (!apiKey) throw new Error("ZEROX_API_KEY is not configured");
+
+  const amountInRaw = quoteAmountInRaw(request);
+  const params = new URLSearchParams({
+    chainId: String(BASE_CHAIN_ID),
+    sellToken: request.tokenIn,
+    buyToken: request.tokenOut,
+    sellAmount: amountInRaw.toString(),
+    taker: getConfig().AUTOPILOT_REBALANCER_ADDRESS || getConfig().BASE_WALLET_ADDRESS
+  });
+
+  const response = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${params.toString()}`, {
+    headers: {
+      "0x-api-key": apiKey,
+      "0x-version": "v2"
+    }
+  });
+  const body = (await response.json().catch(() => ({}))) as ZeroExQuoteResponse;
+  if (!response.ok || body.liquidityAvailable === false || !body.buyAmount) {
+    throw new Error(body.message || body.reason || `0x quote failed with status ${response.status}`);
+  }
+
+  const quote = quoteFromRaw(request, amountInRaw, BigInt(body.buyAmount), body.gas ?? "0", "0x AllowanceHolder", "aggregator_required");
+  return {
+    ...quote,
+    executable: false,
+    executionNote: "0x returned an aggregator route, but the deployed rebalancer cannot execute generic aggregator calldata yet.",
+    approvalTarget: body.issues?.allowance?.spender as Address | undefined,
+    transactionTarget: body.transaction?.to as Address | undefined,
+    routeSummary: routeSummary(body.route?.fills)
+  };
+}
+
 export async function quoteBestExecutableSwap(request: SwapQuoteRequest): Promise<SwapQuote> {
   const provider = getConfig().AUTOPILOT_SWAP_PROVIDER;
+  if (provider === "zeroex") {
+    return quoteZeroExAllowanceHolder(request);
+  }
+
   const fallback = await quoteUniswapV3ExactInputSingle(request);
   if (provider === "uniswap_v3") return fallback;
-
   return {
     ...fallback,
     source: `${fallback.source} fallback; ${provider} scouting not configured`,
-    executionNote: `${provider} is selected, but aggregator calldata is not supported by the deployed rebalancer yet. Falling back to executable Uniswap v3 quote.`
+    executionNote: `${provider} is selected, but its adapter is not implemented yet. Falling back to executable Uniswap v3 quote.`
   };
 }

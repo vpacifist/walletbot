@@ -308,6 +308,55 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("BLOCKED Quote readiness");
   });
 
+  it("blocks aggregator routes until the rebalancer supports aggregator calldata", () => {
+    const execution = buildAutopilotDryRunExecution(
+      preview({
+        quote: {
+          status: "available",
+          data: {
+            tokenIn: CONTRACTS.weth,
+            tokenOut: CONTRACTS.usdc,
+            fee: 3000,
+            amountIn: 1,
+            spendSymbol: "WETH",
+            receiveSymbol: "USDC",
+            amountInRaw: "1000000000000000000",
+            amountOut: 2100,
+            amountOutRaw: "2100000000",
+            effectivePrice: 2100,
+            gasEstimate: "150000",
+            source: "0x AllowanceHolder",
+            sourceType: "aggregator_required",
+            executable: false,
+            executionNote: "0x returned an aggregator route, but the deployed rebalancer cannot execute generic aggregator calldata yet.",
+            routeSummary: "LunarBase 75%, Maverick_V2 5%, PancakeSwap_Infinity_CL 20%"
+          }
+        }
+      }),
+      {
+        closePositions: {
+          "5187240": {
+            status: "available",
+            tokenId: "5187240",
+            liquidity: 123n,
+            tokensOwed0: 4n,
+            tokensOwed1: 5n,
+            decreaseAmount0: 2_000_000_000_000_000_000n,
+            decreaseAmount1: 0n
+          }
+        },
+        rebalancerRoles: {
+          status: "roles_match",
+          detail: "Rebalancer roles match configured executor and vault"
+        }
+      }
+    );
+
+    expect(execution.status).toBe("blocked");
+    expect(execution.telegramSummary).toContain("0x AllowanceHolder");
+    expect(execution.telegramSummary).toContain("cannot execute generic aggregator calldata yet");
+  });
+
   it("blocks execution when preview guardrails are blocked", () => {
     const execution = buildAutopilotDryRunExecution(
       preview({
