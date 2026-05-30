@@ -1092,6 +1092,63 @@ input {
   gap: 16px;
 }
 
+.daily-summary {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.daily-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.daily-summary-head strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.daily-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.daily-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.daily-summary-grid span,
+.daily-summary-grid small,
+.daily-summary-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.daily-summary-grid strong {
+  font-size: 18px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.daily-summary-note {
+  margin: 0;
+}
+
 .autopilot-command {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
@@ -2204,6 +2261,7 @@ th {
     text-overflow: ellipsis;
   }
 
+  .daily-summary-grid,
   .autopilot-command,
   .autopilot-details,
   .autopilot-checks {

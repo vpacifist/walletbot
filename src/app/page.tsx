@@ -70,6 +70,10 @@ function formatSignedUsd(value: number | null) {
   return `${sign}$${formatNumber(Math.abs(value), 2)}`;
 }
 
+function formatCount(value: number, noun: string) {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
 function pnlClass(value: number | null) {
   if (value === null || !Number.isFinite(value) || value === 0) return "neutral";
   return value > 0 ? "positive" : "negative";
@@ -200,6 +204,83 @@ function buildRebalanceDetails(
 function lpAmountValueUsd(amounts: LpAssetAmounts, wethPriceUsd: number | null) {
   if (wethPriceUsd === null) return null;
   return (amounts.weth ?? 0) * wethPriceUsd + (amounts.usdc ?? 0);
+}
+
+function tokenAmountsValueUsd(value: unknown, wethPriceUsd: number | null) {
+  if (wethPriceUsd === null) return null;
+  if (!Array.isArray(value)) return 0;
+
+  return value.reduce((total, item) => {
+    if (!item || typeof item !== "object") return total;
+    const amount = item as { amount?: string; symbol?: string };
+    const numericAmount = Number(amount.amount);
+    if (!Number.isFinite(numericAmount)) return total;
+    if (amount.symbol === "USDC") return total + numericAmount;
+    if (amount.symbol === "WETH" || amount.symbol === "ETH") return total + numericAmount * wethPriceUsd;
+    return total;
+  }, 0);
+}
+
+function rebalanceCostValueUsd(
+  rebalanceDetails: NonNullable<TransactionTableRow["rebalanceDetails"]>,
+  leftovers: unknown,
+  wethPriceUsd: number | null
+) {
+  const closedValue = rebalanceDetails.closed.reduce((sum, item) => sum + (lpAmountValueUsd(item, wethPriceUsd) ?? 0), 0);
+  const mintedValue = rebalanceDetails.minted.reduce((sum, item) => sum + (lpAmountValueUsd(item, wethPriceUsd) ?? 0), 0);
+  const earnedValue = rebalanceDetails.earned.reduce((sum, item) => sum + (lpAmountValueUsd(item, wethPriceUsd) ?? 0), 0);
+  const leftoverValue = tokenAmountsValueUsd(leftovers, wethPriceUsd);
+
+  if (leftoverValue === null) return null;
+  return closedValue + earnedValue - mintedValue - leftoverValue;
+}
+
+type DailySummary = {
+  portfolioUsd: number | null;
+  activeFeesUsd: number | null;
+  activeFeesDetail: string;
+  rebalanceCount24h: number;
+  rebalanceCost24hUsd: number | null;
+  activeRangeLabel: string;
+  activeRangeDetail: string;
+  syncLabel: string;
+};
+
+function AutopilotDailySummary({ summary }: { summary: DailySummary }) {
+  return (
+    <div className="daily-summary" aria-label="24 hour strategy summary">
+      <div className="daily-summary-head">
+        <div>
+          <p className="metric-label">Last 24 hours</p>
+          <strong>Strategy health</strong>
+        </div>
+        <span className="status good">monitoring</span>
+      </div>
+      <div className="daily-summary-grid">
+        <div>
+          <span>Portfolio now</span>
+          <strong>{formatUsd(summary.portfolioUsd)}</strong>
+          <small>Wallet plus active LP</small>
+        </div>
+        <div>
+          <span>Active fees</span>
+          <strong>{formatUsd(summary.activeFeesUsd)}</strong>
+          <small>{summary.activeFeesDetail}</small>
+        </div>
+        <div>
+          <span>Rebalances</span>
+          <strong>{formatCount(summary.rebalanceCount24h, "tx")}</strong>
+          <small>Cost {formatUsd(summary.rebalanceCost24hUsd)}</small>
+        </div>
+        <div>
+          <span>Current range</span>
+          <strong>{summary.activeRangeLabel}</strong>
+          <small>{summary.activeRangeDetail}</small>
+        </div>
+      </div>
+      <p className="daily-summary-note">{summary.syncLabel}</p>
+    </div>
+  );
 }
 
 type ClosedPositionSnapshot = {
@@ -613,6 +694,76 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     };
   });
 
+  const activePositions = positions.filter((position) => position.status !== "closed_or_zero_liquidity" && position.liquidity !== "0");
+  const currentWethPrice =
+    activePositions
+      .map((position) => (position.currentTick === null ? null : tickToWethUsdcPrice(position.currentTick, position.token0, position.token1)))
+      .find((price): price is number => price !== null) ??
+    (latestKnownBlock ? (historicalPrices[latestKnownBlock.toString()]?.ethPriceUsd ?? null) : null);
+  const activeLpAmounts = activePositions.reduce<LpAssetAmounts>(
+    (total, position) => ({
+      weth: (total.weth ?? 0) + numberValue(position.wethAmount),
+      usdc: (total.usdc ?? 0) + numberValue(position.usdcAmount)
+    }),
+    { weth: 0, usdc: 0 }
+  );
+  const activeFeeAmounts = activePositions.reduce<LpAssetAmounts>(
+    (total, position) => {
+      const fees = feesByTokenId.get(position.tokenId) ?? { weth: 0, usdc: 0 };
+      return {
+        weth: (total.weth ?? 0) + (fees.weth ?? 0),
+        usdc: (total.usdc ?? 0) + (fees.usdc ?? 0)
+      };
+    },
+    { weth: 0, usdc: 0 }
+  );
+  const activeLpUsd = lpAmountValueUsd(activeLpAmounts, currentWethPrice);
+  const activeFeesUsd = lpAmountValueUsd(activeFeeAmounts, currentWethPrice);
+  const walletWethUsd = currentWethPrice === null || walletAmounts?.weth === null || walletAmounts?.weth === undefined ? null : walletAmounts.weth * currentWethPrice;
+  const walletEthUsd = currentWethPrice === null || walletAmounts?.eth === null || walletAmounts?.eth === undefined ? null : walletAmounts.eth * currentWethPrice;
+  const walletUsdcUsd = walletAmounts?.usdc ?? null;
+  const currentPortfolioUsd =
+    currentWethPrice === null
+      ? null
+      : (walletWethUsd ?? 0) + (walletEthUsd ?? 0) + (walletUsdcUsd ?? 0) + (activeLpUsd ?? 0);
+  const dayAgo = new Date(Date.now() - 86_400_000);
+  const recentRebalanceCosts = visibleTransactions
+    .filter((transaction) => transaction.timestamp >= dayAgo && isAtomicRebalanceTransaction(transaction))
+    .map((transaction) => {
+      const details = buildRebalanceDetails(transaction, positionsByTokenId);
+      if (!details) return null;
+      const price = historicalPrices[transaction.blockNumber.toString()]?.ethPriceUsd ?? currentWethPrice;
+      return rebalanceCostValueUsd(details, transaction.tokenAmounts, price);
+    })
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const currentActivePosition = activePositions[0] ?? null;
+  const activeRangeLower = currentActivePosition ? tickToWethUsdcPrice(currentActivePosition.tickLower, currentActivePosition.token0, currentActivePosition.token1) : null;
+  const activeRangeUpper = currentActivePosition ? tickToWethUsdcPrice(currentActivePosition.tickUpper, currentActivePosition.token0, currentActivePosition.token1) : null;
+  const activeRangeLabel =
+    currentActivePosition && activeRangeLower !== null && activeRangeUpper !== null
+      ? `#${currentActivePosition.tokenId}`
+      : activePositions.length === 0
+        ? "No active range"
+        : "Active range";
+  const activeRangeDetail =
+    currentActivePosition && activeRangeLower !== null && activeRangeUpper !== null
+      ? `${formatUsd(Math.min(activeRangeLower, activeRangeUpper))} - ${formatUsd(Math.max(activeRangeLower, activeRangeUpper))}`
+      : activePositions.length === 0
+        ? "Waiting for a new position"
+        : "Range price unavailable";
+  const dailySummary: DailySummary = {
+    portfolioUsd: currentPortfolioUsd,
+    activeFeesUsd,
+    activeFeesDetail: `${formatNumber(activeFeeAmounts.weth, 6)} WETH / ${formatNumber(activeFeeAmounts.usdc, 2)} USDC uncollected`,
+    rebalanceCount24h: recentRebalanceCosts.length,
+    rebalanceCost24hUsd: recentRebalanceCosts.reduce((sum, value) => sum + value, 0),
+    activeRangeLabel,
+    activeRangeDetail,
+    syncLabel: latestRun
+      ? `Last sync ${latestRun.status} at ${latestRun.finishedAt?.toLocaleString() ?? latestRun.startedAt.toLocaleString()}`
+      : "Sync has not run yet."
+  };
+
   return (
     <main className="page">
       <div className="shell">
@@ -669,6 +820,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
                   <p className="muted">Decision state, planned range actions, immediate rebalance cost, and reversal-debt guardrails.</p>
                 </div>
               </div>
+              <AutopilotDailySummary summary={dailySummary} />
               <AutopilotPlanLive />
             </section>
           }
