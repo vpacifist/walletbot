@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { paddedPriceRangeMarkerPosition } from "@/lib/range-visual";
 
 type AutopilotPlan = {
   mode: "manual" | "approve_in_telegram" | "auto_guarded" | "auto_full";
@@ -156,9 +157,12 @@ function decisionDetail(data: AutopilotPlan | null, error: string | null) {
 function pricePositionPercent(data: AutopilotPlan | null) {
   const active = data?.ladder.find((segment) => segment.role === "active");
   if (!data || !active?.lowerPrice || !active.upperPrice) return null;
-  const range = active.upperPrice - active.lowerPrice;
-  if (range <= 0) return null;
-  return Math.min(100, Math.max(0, ((data.pool.price - active.lowerPrice) / range) * 100));
+  return paddedPriceRangeMarkerPosition({
+    lowerPrice: active.lowerPrice,
+    upperPrice: active.upperPrice,
+    currentPrice: data.pool.price,
+    paddingPercent: 8
+  });
 }
 
 function checkTone(ok: boolean | null) {
