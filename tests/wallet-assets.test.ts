@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, encodeEventTopics, parseUnits } from "viem";
-import { positionManagerAbi } from "@/lib/abi";
-import { CONTRACTS } from "@/lib/constants";
+import { poolAbi, positionManagerAbi } from "@/lib/abi";
+import { CONTRACTS, WETH_USDC_UNISWAP_V3_POOL_ADDRESSES } from "@/lib/constants";
 import {
   amountsToPortfolioSnapshot,
   executableWethSellPrice,
   getNextLpAssetAmounts,
   getTransactionAssetDelta,
+  getTransactionDirectionalSwaps,
   getTransactionLpDelta,
   getTransactionPositionLiquidityDeltas,
   subtractDelta
@@ -286,5 +287,96 @@ describe("wallet asset transaction states", () => {
         }
       })
     ).toEqual([{ tokenId: "5151970", delta: 60n }]);
+  });
+
+  it("extracts directional WETH/USDC swaps from Uniswap v3 pool logs", () => {
+    const topics = encodeEventTopics({
+      abi: poolAbi,
+      eventName: "Swap",
+      args: {
+        sender: CONTRACTS.zeroExAllowanceHolder,
+        recipient: CONTRACTS.zeroExAllowanceHolder
+      }
+    });
+
+    expect(
+      getTransactionDirectionalSwaps({
+        raw: {
+          receipt: {
+            logs: [
+              {
+                address: WETH_USDC_UNISWAP_V3_POOL_ADDRESSES[2],
+                data: encodeAbiParameters(
+                  [
+                    { type: "int256" },
+                    { type: "int256" },
+                    { type: "uint160" },
+                    { type: "uint128" },
+                    { type: "int24" }
+                  ],
+                  [parseUnits("0.324445", 18), -parseUnits("647.3", 6), 1n, 1n, -200301]
+                ),
+                topics
+              }
+            ]
+          }
+        }
+      })
+    ).toEqual([
+      {
+        side: "sell_weth",
+        wethAmount: 0.324445,
+        usdcAmount: 647.3,
+        effectivePrice: 1995.0993234600626,
+        poolAddress: WETH_USDC_UNISWAP_V3_POOL_ADDRESSES[2],
+        tick: -200301
+      }
+    ]);
+  });
+
+  it("extracts directional swaps from aggregator settlement transfers", () => {
+    const transfer = (token: string, from: string, to: string, amount: bigint) => ({
+      address: token,
+      data: encodeAbiParameters([{ type: "uint256" }], [amount]),
+      topics: encodeEventTopics({
+        abi: [
+          {
+            type: "event",
+            name: "Transfer",
+            inputs: [
+              { indexed: true, name: "from", type: "address" },
+              { indexed: true, name: "to", type: "address" },
+              { indexed: false, name: "value", type: "uint256" }
+            ]
+          }
+        ] as const,
+        eventName: "Transfer",
+        args: { from: from as `0x${string}`, to: to as `0x${string}` }
+      })
+    });
+
+    expect(
+      getTransactionDirectionalSwaps({
+        fromAddress: "0x6C28F2F5908F61f2F698c504664f777482859FA7",
+        toAddress: "0x098B9f098A124DDE83358C21fa6a0E8cf63Da76A",
+        raw: {
+          receipt: {
+            logs: [
+              transfer(CONTRACTS.weth, "0x098B9f098A124DDE83358C21fa6a0E8cf63Da76A", CONTRACTS.zeroExSettler, parseUnits("0.261706394827320499", 18)),
+              transfer(CONTRACTS.usdc, CONTRACTS.zeroExSettler, "0x098B9f098A124DDE83358C21fa6a0E8cf63Da76A", parseUnits("530.655103", 6))
+            ]
+          }
+        }
+      })
+    ).toEqual([
+      {
+        side: "sell_weth",
+        wethAmount: 0.2617063948273205,
+        usdcAmount: 530.655103,
+        effectivePrice: 2027.6734290353802,
+        poolAddress: CONTRACTS.zeroExSettler.toLowerCase(),
+        tick: 0
+      }
+    ]);
   });
 });

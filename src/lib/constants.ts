@@ -22,6 +22,15 @@ export const CONTRACTS = {
   aero: "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
 } as const satisfies Record<string, Address>;
 
+export const WETH_USDC_UNISWAP_V3_POOL_ADDRESSES = [
+  "0xb4CB800910B228ED3d0834cF79D697127BBB00e5",
+  "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+  "0x6c561B446416E1A00E8E93E221854d6eA4171372",
+  "0x0b1C2DCbBfA744ebD3fC17fF1A96A1E1Eb4B2d69"
+] as const satisfies readonly Address[];
+
+export const WETH_USDC_UNISWAP_V3_POOL_SET = new Set(WETH_USDC_UNISWAP_V3_POOL_ADDRESSES.map((address) => address.toLowerCase()));
+
 export const TOKEN_META: Record<string, { symbol: string; decimals: number }> = {
   [CONTRACTS.weth.toLowerCase()]: { symbol: "WETH", decimals: 18 },
   [CONTRACTS.usdc.toLowerCase()]: { symbol: "USDC", decimals: 6 },

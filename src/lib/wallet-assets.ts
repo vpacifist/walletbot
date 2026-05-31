@@ -1,7 +1,7 @@
 import { decodeEventLog, formatUnits, type Address } from "viem";
 import { erc20Abi, factoryAbi, poolAbi, positionManagerAbi, slipstreamPoolAbi } from "./abi";
 import { createBaseClient } from "./chain";
-import { CONTRACTS, TOKEN_META, WETH_USDC_FEE_TIERS } from "./constants";
+import { CONTRACTS, TOKEN_META, WETH_USDC_FEE_TIERS, WETH_USDC_UNISWAP_V3_POOL_SET } from "./constants";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 const UNWRAP_WETH9_SELECTOR = "0x49404b7c";
@@ -15,6 +15,14 @@ const wethWithdrawalAbi = [
     ]
   }
 ] as const;
+const SWAP_SETTLEMENT_TARGETS = [
+  CONTRACTS.zeroExSettler,
+  CONTRACTS.zeroExAllowanceHolder,
+  CONTRACTS.uniswapV3SwapRouter02,
+  CONTRACTS.kyberSwapMetaAggregationRouterV2,
+  CONTRACTS.odosSmartOrderRouterV3,
+  CONTRACTS.veloraAugustusV6
+].map((address) => address.toLowerCase());
 const historicalPriceCache = new Map<string, Promise<number | null>>();
 const poolTokenCache = new Map<string, Promise<{ token0: Address; token1: Address }>>();
 
@@ -74,6 +82,23 @@ export type PositionExitAmounts = {
 export type PositionPrincipalDelta = {
   tokenId: string;
   delta: LpAssetDelta;
+};
+
+export type TransactionDirectionalSwap = {
+  side: "buy_weth" | "sell_weth";
+  wethAmount: number;
+  usdcAmount: number;
+  effectivePrice: number;
+  poolAddress: string;
+  tick: number;
+};
+
+type TokenTransfer = {
+  token: string;
+  symbol: "WETH" | "USDC";
+  from: string;
+  to: string;
+  amount: number;
 };
 
 type TransactionAssetSource = {
@@ -544,6 +569,10 @@ function tokenAmountFromRawBigInt(token: string, rawAmount: bigint) {
   return Number(formatUnits(rawAmount, meta.decimals));
 }
 
+function absBigInt(value: bigint) {
+  return value < 0n ? -value : value;
+}
+
 function lpAmountsFromTokenPair(token0: string, token1: string, amount0: bigint, amount1: bigint) {
   const amounts: LpAssetAmounts = { weth: 0, usdc: 0 };
   const token0Amount = tokenAmountFromRawBigInt(token0, amount0);
@@ -613,6 +642,138 @@ export function getTransactionPositionExitAmounts(transaction: TransactionAssetS
     collected,
     earned: subtractKnownLpAmounts(collected, principal)
   } satisfies PositionExitAmounts;
+}
+
+function getSupportedTokenTransfers(logs: unknown[]): TokenTransfer[] {
+  const transfers: TokenTransfer[] = [];
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || !record.data || !record.topics) continue;
+    const token = record.address.toLowerCase();
+    if (token !== CONTRACTS.weth.toLowerCase() && token !== CONTRACTS.usdc.toLowerCase()) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: erc20Abi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName !== "Transfer") continue;
+      const symbol = token === CONTRACTS.weth.toLowerCase() ? "WETH" : "USDC";
+      transfers.push({
+        token,
+        symbol,
+        from: parsed.args.from.toLowerCase(),
+        to: parsed.args.to.toLowerCase(),
+        amount: Number(formatUnits(parsed.args.value, symbol === "WETH" ? 18 : 6))
+      });
+    } catch {
+      // Not an ERC-20 transfer event.
+    }
+  }
+
+  return transfers;
+}
+
+function sumTransfers(transfers: TokenTransfer[], params: { symbol: "WETH" | "USDC"; from: string; to: string }) {
+  return transfers.reduce((sum, transfer) => {
+    if (transfer.symbol !== params.symbol || transfer.from !== params.from || transfer.to !== params.to) return sum;
+    return sum + transfer.amount;
+  }, 0);
+}
+
+function getSettlementDirectionalSwaps(transaction: { raw?: unknown; fromAddress?: string; toAddress?: string | null }) {
+  const raw = readRawRecord(transaction.raw);
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  const transfers = getSupportedTokenTransfers(logs);
+  const participants = [transaction.fromAddress, transaction.toAddress]
+    .filter((address): address is string => Boolean(address))
+    .map((address) => address.toLowerCase())
+    .filter((address, index, addresses) => addresses.indexOf(address) === index && !SWAP_SETTLEMENT_TARGETS.includes(address));
+  const swaps: TransactionDirectionalSwap[] = [];
+
+  for (const participant of participants) {
+    for (const target of SWAP_SETTLEMENT_TARGETS) {
+      const wethOut = sumTransfers(transfers, { symbol: "WETH", from: participant, to: target });
+      const wethIn = sumTransfers(transfers, { symbol: "WETH", from: target, to: participant });
+      const usdcOut = sumTransfers(transfers, { symbol: "USDC", from: participant, to: target });
+      const usdcIn = sumTransfers(transfers, { symbol: "USDC", from: target, to: participant });
+
+      if (wethOut > 0 && usdcIn > 0) {
+        swaps.push({
+          side: "sell_weth",
+          wethAmount: wethOut,
+          usdcAmount: usdcIn,
+          effectivePrice: usdcIn / wethOut,
+          poolAddress: target,
+          tick: 0
+        });
+      }
+      if (usdcOut > 0 && wethIn > 0) {
+        swaps.push({
+          side: "buy_weth",
+          wethAmount: wethIn,
+          usdcAmount: usdcOut,
+          effectivePrice: usdcOut / wethIn,
+          poolAddress: target,
+          tick: 0
+        });
+      }
+    }
+  }
+
+  return swaps;
+}
+
+export function getTransactionDirectionalSwaps(transaction: { raw?: unknown; fromAddress?: string; toAddress?: string | null }): TransactionDirectionalSwap[] {
+  const raw = readRawRecord(transaction.raw);
+  const receipt = readRawRecord(raw.receipt);
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  const settlementSwaps = getSettlementDirectionalSwaps(transaction);
+  if (settlementSwaps.length > 0) return settlementSwaps;
+  const swaps: TransactionDirectionalSwap[] = [];
+
+  for (const log of logs) {
+    if (!log || typeof log !== "object") continue;
+    const record = log as { address?: string; data?: `0x${string}`; topics?: [`0x${string}`, ...`0x${string}`[]] };
+    if (!record.address || !record.data || !record.topics) continue;
+    if (!WETH_USDC_UNISWAP_V3_POOL_SET.has(record.address.toLowerCase())) continue;
+
+    try {
+      const parsed = decodeEventLog({
+        abi: poolAbi,
+        data: record.data,
+        topics: record.topics
+      });
+      if (parsed.eventName !== "Swap") continue;
+
+      const wethRaw = parsed.args.amount0;
+      const usdcRaw = parsed.args.amount1;
+      const soldWeth = wethRaw > 0n && usdcRaw < 0n;
+      const boughtWeth = wethRaw < 0n && usdcRaw > 0n;
+      if (!soldWeth && !boughtWeth) continue;
+
+      const wethAmount = Number(formatUnits(absBigInt(wethRaw), 18));
+      const usdcAmount = Number(formatUnits(absBigInt(usdcRaw), 6));
+      if (wethAmount <= 0 || usdcAmount <= 0) continue;
+
+      swaps.push({
+        side: soldWeth ? "sell_weth" : "buy_weth",
+        wethAmount,
+        usdcAmount,
+        effectivePrice: usdcAmount / wethAmount,
+        poolAddress: record.address,
+        tick: Number(parsed.args.tick)
+      });
+    } catch {
+      // Not a Uniswap v3 pool swap event.
+    }
+  }
+
+  return swaps;
 }
 
 function priceFromTick(params: { tick: number; token0: Address; token1: Address; baseToken: Address; quoteToken: Address }) {

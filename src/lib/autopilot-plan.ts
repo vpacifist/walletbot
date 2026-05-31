@@ -3,6 +3,7 @@ import { type Address } from "viem";
 import { CONTRACTS } from "./constants";
 import { priceFromTick, WETH_USDC_NARROW_FEE, WETH_USDC_NARROW_TICK_SPACING } from "./narrow-range-rebalance";
 import { calculateTripleRangeGuide, type TripleRangeGuide } from "./triple-range-guide";
+import { getTransactionDirectionalSwaps } from "./wallet-assets";
 
 export type AutopilotMode = "manual" | "approve_in_telegram" | "auto_guarded" | "auto_full";
 export type AutopilotPreset = "triple_range" | "small_capital_test";
@@ -161,7 +162,22 @@ function tokenAmount(value: unknown, symbol: "WETH" | "USDC", direction?: "in" |
   }, 0);
 }
 
-function directionalSwap(transaction: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts">): DirectionalSwap | null {
+function directionalSwap(
+  transaction: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts"> & { raw?: unknown; fromAddress?: string; toAddress?: string | null }
+): DirectionalSwap | null {
+  const rawSwap = getTransactionDirectionalSwaps(transaction).at(-1);
+  if (rawSwap) {
+    return {
+      timestamp: transaction.timestamp.toISOString(),
+      side: rawSwap.side,
+      wethAmount: rawSwap.wethAmount,
+      usdcAmount: rawSwap.usdcAmount,
+      effectivePrice: rawSwap.effectivePrice,
+      hash: transaction.hash,
+      protocol: transaction.protocol ?? "Uniswap v3"
+    };
+  }
+
   const wethIn = tokenAmount(transaction.tokenAmounts, "WETH", "in");
   const wethOut = tokenAmount(transaction.tokenAmounts, "WETH", "out");
   const usdcIn = tokenAmount(transaction.tokenAmounts, "USDC", "in");
@@ -182,9 +198,11 @@ function directionalSwap(transaction: Pick<Transaction, "timestamp" | "hash" | "
   };
 }
 
-function latestDirectionalSwap(transactions: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type">[]) {
+function latestDirectionalSwap(
+  transactions: Array<Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type"> & { raw?: unknown; fromAddress?: string; toAddress?: string | null }>
+) {
   for (const transaction of transactions) {
-    if (transaction.type !== "swap") continue;
+    if (transaction.type !== "swap" && getTransactionDirectionalSwaps(transaction).length === 0) continue;
     const swap = directionalSwap(transaction);
     if (swap) return swap;
   }
@@ -434,7 +452,7 @@ function buildTelegramSummary(plan: Omit<AutopilotPlan, "telegramSummary">) {
 
 function calculateSmallCapitalPlan(params: {
   positions: Position[];
-  transactions: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type">[];
+  transactions: Array<Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type"> & { raw?: unknown; fromAddress?: string; toAddress?: string | null }>;
   walletWeth: number | null;
   walletUsdc: number | null;
   currentTick: number;
@@ -645,7 +663,7 @@ function calculateSmallCapitalPlan(params: {
 
 export function calculateAutopilotPlan(params: {
   positions: Position[];
-  transactions: Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type">[];
+  transactions: Array<Pick<Transaction, "timestamp" | "hash" | "protocol" | "tokenAmounts" | "type"> & { raw?: unknown; fromAddress?: string; toAddress?: string | null }>;
   walletWeth: number | null;
   walletUsdc: number | null;
   currentTick: number;

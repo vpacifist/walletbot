@@ -77,7 +77,10 @@ export async function getCurrentAutopilotPlan() {
         hash: true,
         protocol: true,
         tokenAmounts: true,
-        type: true
+        type: true,
+        raw: true,
+        fromAddress: true,
+        toAddress: true
       }
     }),
     livePoolSnapshot().catch(() => null)
