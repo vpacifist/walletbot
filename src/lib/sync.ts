@@ -71,6 +71,7 @@ export async function syncWalletOnce() {
     const discoveredTokenIds = new Set<string>();
 
     for (const tx of txs) {
+      maxBlock = BigInt(tx.block_number) > maxBlock ? BigInt(tx.block_number) : maxBlock;
       if (existingTransactionHashes.has(tx.hash.toLowerCase())) continue;
       seen += 1;
       const receipt = await client.getTransactionReceipt({ hash: tx.hash as `0x${string}` }).catch((error) => {
@@ -98,8 +99,6 @@ export async function syncWalletOnce() {
       if (classification.relatedPositionTokenId) {
         discoveredTokenIds.add(classification.relatedPositionTokenId);
       }
-
-      maxBlock = BigInt(tx.block_number) > maxBlock ? BigInt(tx.block_number) : maxBlock;
 
       await prisma.transaction.upsert({
         where: {

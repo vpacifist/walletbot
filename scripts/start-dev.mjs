@@ -191,6 +191,12 @@ ensureLocalPostgres();
 
 runPnpmStep("Applying database migrations", ["db:deploy"]);
 
+if (process.env.WALLETBOT_DEV_PROD_CHECK !== "0") {
+  runPnpmStep("Comparing local wallet data with production", ["sync:dev-from-prod"]);
+} else {
+  console.log("[dev] Skipping production comparison because WALLETBOT_DEV_PROD_CHECK=0");
+}
+
 if (process.env.WALLETBOT_DEV_SYNC !== "0") {
   runPnpmStep("Refreshing wallet data", ["sync:once"]);
 } else {

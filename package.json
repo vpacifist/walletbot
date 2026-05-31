@@ -16,6 +16,7 @@
     "contracts:test": "hardhat test",
     "contracts:deploy:base": "hardhat run scripts/deploy-autopilot-rebalancer.cjs --network base",
     "sync:once": "tsx scripts/sync-once.ts",
+    "sync:dev-from-prod": "tsx scripts/sync-dev-from-prod.ts",
     "db:generate": "node ./scripts/prisma-generate-safe.mjs",
     "db:generate:raw": "prisma generate",
     "db:migrate": "prisma migrate dev",
