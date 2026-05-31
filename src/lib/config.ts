@@ -29,6 +29,7 @@ const envSchema = z.object({
   BLOCKSCOUT_BASE_URL: z.string().url().default("https://base.blockscout.com"),
   TELEGRAM_BOT_TOKEN: z.string().optional().default(""),
   TELEGRAM_CHAT_ID: z.string().optional().default(""),
+  WEB_APP_URL: z.union([z.literal(""), z.string().url()]).optional().default(""),
   APP_PASSWORD: z.string().min(8).default("change-me-now"),
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(180),
   NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot"),

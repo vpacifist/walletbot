@@ -23,7 +23,8 @@ async function main() {
       .setMyCommands([
         { command: "autopilot", description: "Show current autopilot plan" },
         { command: "status", description: "Show wallet sync and position status" },
-        { command: "positions", description: "Show latest WETH/USDC positions" }
+        { command: "positions", description: "Show latest WETH/USDC positions" },
+        { command: "web", description: "Open WalletBot web dashboard" }
       ])
       .then(() => console.log("Telegram bot commands registered"))
       .catch((error) => console.error("Telegram bot command registration failed", error));
