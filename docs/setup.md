@@ -30,12 +30,10 @@ The bot still requires a validated dry-run and a second Telegram confirmation be
 
 The Compose Postgres service is exposed on host port `5433` to avoid conflicts with a locally installed Postgres on `5432`.
 
-3. Install dependencies and create the database schema:
+3. Install dependencies:
 
 ```powershell
 pnpm install
-docker compose up -d postgres
-pnpm db:migrate
 ```
 
 4. Run the web app and worker:
@@ -44,7 +42,15 @@ pnpm db:migrate
 pnpm dev
 ```
 
-`pnpm dev` starts both the Next.js dev server and the sync/Telegram worker. The web UI is available at `http://localhost:3000`.
+`pnpm dev` starts Docker Desktop on Windows when needed, waits for the Docker daemon, starts the local Docker Compose Postgres service, applies migrations, and starts both the Next.js dev server and the sync/Telegram worker. The web UI is available at `http://localhost:3000`.
+
+If Docker does not come up automatically, start Docker Desktop manually and verify `docker info` succeeds all the way through the `Server` section before retrying `pnpm dev`.
+
+If you use an external database instead of the local Compose Postgres service, disable the Docker startup step:
+
+```powershell
+$env:WALLETBOT_DEV_DOCKER = "0"; pnpm dev
+```
 
 For UI-only work, this command starts only Next.js:
 
