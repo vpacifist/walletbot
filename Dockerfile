@@ -7,6 +7,7 @@ RUN pnpm install --frozen-lockfile=false
 FROM deps AS builder
 WORKDIR /app
 COPY . .
+ENV DATABASE_URL=postgresql://walletbot:walletbot@localhost:5432/walletbot
 RUN pnpm db:generate
 RUN pnpm build
 
