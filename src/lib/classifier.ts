@@ -1,4 +1,4 @@
-import { ClassificationStatus, TransactionType } from "@prisma/client";
+import { ClassificationStatus, TransactionType } from "@/generated/prisma/client";
 import { decodeEventLog, formatUnits, getAddress, type Address, type TransactionReceipt } from "viem";
 import { erc20Abi, poolAbi, positionManagerAbi } from "./abi";
 import { CONTRACTS, SUPPORTED_TOKEN_SET, TOKEN_META } from "./constants";

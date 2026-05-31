@@ -1,4 +1,4 @@
-import { PositionStatus, type Position } from "@prisma/client";
+import { PositionStatus, type Position } from "@/generated/prisma/client";
 import { describe, expect, it } from "vitest";
 import { sortPositionsForDisplay } from "@/lib/position-order";
 

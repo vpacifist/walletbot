@@ -1,4 +1,4 @@
-import { PositionStatus, type Position, TransactionType } from "@prisma/client";
+import { PositionStatus, type Position, TransactionType } from "@/generated/prisma/client";
 import { describe, expect, it } from "vitest";
 import { calculateAutopilotPlan } from "@/lib/autopilot-plan";
 import { CONTRACTS } from "@/lib/constants";

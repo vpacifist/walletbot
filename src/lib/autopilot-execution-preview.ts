@@ -1,4 +1,4 @@
-import { type RebalancePlan } from "@prisma/client";
+import { type RebalancePlan } from "@/generated/prisma/client";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { prisma } from "./db";
 import { quoteBestExecutableSwap, type SwapQuote, type SwapQuoteRequest } from "./swap-quote";

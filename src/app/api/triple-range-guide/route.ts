@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { type Position } from "@prisma/client";
+import { type Position } from "@/generated/prisma/client";
 import { getAddress } from "viem";
 import { factoryAbi, poolAbi } from "@/lib/abi";
 import { isAuthenticated } from "@/lib/auth";

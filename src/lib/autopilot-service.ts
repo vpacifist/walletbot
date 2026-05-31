@@ -1,4 +1,4 @@
-import { type Position } from "@prisma/client";
+import { type Position } from "@/generated/prisma/client";
 import { createHash } from "node:crypto";
 import { getAddress } from "viem";
 import { factoryAbi, poolAbi } from "./abi";

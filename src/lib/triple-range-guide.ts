@@ -1,4 +1,4 @@
-import { type Position } from "@prisma/client";
+import { type Position } from "@/generated/prisma/client";
 import { type Address } from "viem";
 import { CONTRACTS } from "./constants";
 import { priceFromTick, WETH_USDC_NARROW_FEE, WETH_USDC_NARROW_TICK_SPACING } from "./narrow-range-rebalance";

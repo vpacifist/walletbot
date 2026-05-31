@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PositionStatus } from "@prisma/client";
+import { PositionStatus } from "@/generated/prisma/client";
 import { calculateRangeStatus } from "@/lib/positions";
 
 describe("calculateRangeStatus", () => {

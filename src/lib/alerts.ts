@@ -1,4 +1,4 @@
-import { PositionStatus } from "@prisma/client";
+import { PositionStatus } from "@/generated/prisma/client";
 import { Telegraf } from "telegraf";
 import { getAddress } from "viem";
 import { getOrCreatePendingAutopilotPlan } from "./autopilot-service";

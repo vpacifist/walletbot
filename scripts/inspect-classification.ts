@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../src/lib/db";
 import { getTransactionLpDelta } from "../src/lib/wallet-assets";
-
-const prisma = new PrismaClient();
 
 async function main() {
   const hash = process.argv[2];

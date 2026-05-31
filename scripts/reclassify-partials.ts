@@ -1,4 +1,4 @@
-import { ClassificationStatus, Prisma } from "@prisma/client";
+import { ClassificationStatus, Prisma } from "../src/generated/prisma/client";
 import { getAddress } from "viem";
 import { createBaseClient } from "../src/lib/chain";
 import { classifyTransaction } from "../src/lib/classifier";

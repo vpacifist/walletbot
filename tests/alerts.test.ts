@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PositionStatus } from "@prisma/client";
+import { PositionStatus } from "@/generated/prisma/client";
 import { isOutOfRange, sendAutopilotPlanAlert } from "@/lib/alerts";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { prisma } from "@/lib/db";

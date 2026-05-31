@@ -1,4 +1,4 @@
-import { TransactionType } from "@prisma/client";
+import { TransactionType } from "@/generated/prisma/client";
 import type { ClassificationResult } from "./classifier";
 import { getTransactionPositionLiquidityDeltas } from "./wallet-assets";
 

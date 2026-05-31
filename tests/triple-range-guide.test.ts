@@ -1,4 +1,4 @@
-import { PositionStatus } from "@prisma/client";
+import { PositionStatus } from "@/generated/prisma/client";
 import { describe, expect, it } from "vitest";
 import { CONTRACTS } from "@/lib/constants";
 import { calculateTripleRangeGuide } from "@/lib/triple-range-guide";

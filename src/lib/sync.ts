@@ -1,4 +1,4 @@
-import { Prisma, SyncRunStatus } from "@prisma/client";
+import { Prisma, SyncRunStatus } from "@/generated/prisma/client";
 import { getAddress, type Address } from "viem";
 import { fetchWalletTransactions } from "./blockscout";
 import { createBaseClient } from "./chain";

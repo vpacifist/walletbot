@@ -1,4 +1,4 @@
-import { PositionStatus, type Position } from "@prisma/client";
+import { PositionStatus, type Position } from "@/generated/prisma/client";
 
 function tokenIdSortValue(tokenId: string) {
   try {

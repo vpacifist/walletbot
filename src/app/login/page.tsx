@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { isAuthenticated } from "@/lib/auth";
 import { BrandLogo } from "../brand-logo";
 
+export const dynamic = "force-dynamic";
+
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   if (await isAuthenticated()) redirect("/");
   const params = await searchParams;

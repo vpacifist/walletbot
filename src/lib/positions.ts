@@ -1,4 +1,4 @@
-import { PositionStatus } from "@prisma/client";
+import { PositionStatus } from "@/generated/prisma/client";
 import { getAddress, type Address, zeroAddress } from "viem";
 import { erc721OwnerAbi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
 import { createBaseClient } from "./chain";

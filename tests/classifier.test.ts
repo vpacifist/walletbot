@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ClassificationStatus, TransactionType } from "@prisma/client";
+import { ClassificationStatus, TransactionType } from "@/generated/prisma/client";
 import { encodeAbiParameters, encodeEventTopics, parseUnits } from "viem";
 import { classifyTransaction } from "@/lib/classifier";
 import { erc20Abi, poolAbi, positionManagerAbi } from "@/lib/abi";
