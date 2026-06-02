@@ -15,6 +15,7 @@ type AutopilotApiPlan = {
     currentTick: number;
     price: number;
   };
+  strategy: AutopilotExecutionPreview["strategy"];
   actions: AutopilotExecutionPreview["steps"];
 };
 
@@ -109,6 +110,7 @@ async function main() {
     status: "ready",
     title: plan.title,
     pool: plan.pool,
+    strategy: plan.strategy,
     reasons: [],
     checks: [],
     steps: plan.actions,

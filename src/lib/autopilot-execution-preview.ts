@@ -11,6 +11,7 @@ export type AutopilotExecutionPreview = {
     currentTick: number;
     price: number;
   };
+  strategy: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>["strategy"];
   reasons: string[];
   checks: Array<{
     label: string;
@@ -172,6 +173,7 @@ export function buildAutopilotExecutionPreview(
       currentTick: currentPlan.pool.currentTick,
       price: currentPlan.pool.price
     },
+    strategy: currentPlan.strategy,
     reasons,
     checks,
     steps,

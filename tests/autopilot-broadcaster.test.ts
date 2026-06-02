@@ -36,7 +36,8 @@ let liveExecutionEnabled = true;
 vi.mock("@/lib/config", () => {
   return {
     getConfig: vi.fn(() => ({
-      AUTOPILOT_LIVE_EXECUTION_ENABLED: liveExecutionEnabled
+      AUTOPILOT_LIVE_EXECUTION_ENABLED: liveExecutionEnabled,
+      BLOCKSCOUT_BASE_URL: "https://base.blockscout.com"
     }))
   };
 });
@@ -97,11 +98,14 @@ describe("broadcastAutopilotRebalance", () => {
 
     const mockWaitForTransactionReceipt = vi.fn().mockResolvedValue({
       status: "success",
-      transactionHash: "0xmocktxhash"
+      transactionHash: "0xmocktxhash",
+      gasUsed: 120000n
     });
     const mockCall = vi.fn().mockResolvedValue("0x");
+    const mockEstimateGas = vi.fn().mockResolvedValue(100000n);
     const mockPublicClient = {
       call: mockCall,
+      estimateGas: mockEstimateGas,
       waitForTransactionReceipt: mockWaitForTransactionReceipt
     };
     vi.mocked(chain.createBaseClient).mockReturnValue(mockPublicClient as any);
@@ -139,9 +143,51 @@ describe("broadcastAutopilotRebalance", () => {
     expect(mockSendTransaction).toHaveBeenCalledWith({
       to: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
       data: "0x12345678",
+      gas: 150000n,
       chain: mockWalletClient.chain,
       account: mockWalletClient.account
     });
+  });
+
+  it("reports out-of-gas reverted receipts with gas usage", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction: vi.fn().mockResolvedValue("0xmocktxhash"),
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockResolvedValue("0x"),
+      estimateGas: vi.fn().mockResolvedValue(100000n),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "reverted",
+        transactionHash: "0xmocktxhash",
+        gasUsed: 149000n
+      })
+    } as any);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("trace unavailable"));
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Out of gas during atomic rebalance");
+    expect(result.error).toContain("Gas used 149000 / limit 150000");
+    fetchSpy.mockRestore();
   });
 
   it("fails before broadcasting when dry-run validation fails", async () => {

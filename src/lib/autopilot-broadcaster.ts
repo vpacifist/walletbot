@@ -11,6 +11,63 @@ export type AutopilotBroadcastResult = {
 };
 
 const MAX_DECISION_NOTE_LENGTH = 1_500;
+const ATOMIC_GAS_BUFFER_BPS = 15_000;
+const ATOMIC_GAS_HARD_CAP = 12_000_000n;
+const OUT_OF_GAS_THRESHOLD_BPS = 9_800n;
+
+function bufferedGasLimit(estimatedGas: bigint) {
+  const gas = (estimatedGas * BigInt(ATOMIC_GAS_BUFFER_BPS)) / 10_000n;
+  if (gas > ATOMIC_GAS_HARD_CAP) {
+    throw new Error(
+      `Atomic rebalance gas estimate is too high for live execution: estimated ${estimatedGas.toString()}, buffered ${gas.toString()}, cap ${ATOMIC_GAS_HARD_CAP.toString()}.`
+    );
+  }
+  return gas;
+}
+
+function functionNameFromSelector(input?: string) {
+  const selector = input?.slice(0, 10).toLowerCase();
+  if (selector === "0x88316456") return "mint_position";
+  if (selector === "0x0c49ccbe") return "close_position.decreaseLiquidity";
+  if (selector === "0xfc6f7865") return "close_position.collect";
+  if (selector === "0x2213bc0b") return "swap_exact_input";
+  if (selector === "0x04e45aaf" || selector === "0x414bf389") return "swap_exact_input";
+  return null;
+}
+
+function findOutOfGasCall(call: Record<string, unknown>): string | null {
+  const error = typeof call.error === "string" ? call.error : "";
+  if (/out of gas/i.test(error)) {
+    return functionNameFromSelector(typeof call.input === "string" ? call.input : undefined) ?? "atomic rebalance";
+  }
+
+  const calls = Array.isArray(call.calls) ? call.calls : [];
+  for (const child of calls) {
+    if (child && typeof child === "object") {
+      const result = findOutOfGasCall(child as Record<string, unknown>);
+      if (result) return result;
+    }
+  }
+  return null;
+}
+
+async function explainRevertedReceipt(hash: `0x${string}`, gasUsed: bigint, gasLimit: bigint) {
+  if ((gasUsed * 10_000n) / gasLimit < OUT_OF_GAS_THRESHOLD_BPS) return `On-chain transaction reverted. Hash: ${hash}`;
+
+  const baseUrl = getConfig().BLOCKSCOUT_BASE_URL.replace(/\/+$/, "");
+  try {
+    const response = await fetch(`${baseUrl}/api/v2/transactions/${hash}/raw-trace`);
+    const trace = (await response.json()) as Record<string, unknown>;
+    const step = findOutOfGasCall(trace);
+    if (step) {
+      return `Out of gas during ${step}. Gas used ${gasUsed.toString()} / limit ${gasLimit.toString()}. Tx Hash: ${hash}`;
+    }
+  } catch {
+    // Blockscout traces are best-effort and can lag immediately after mining.
+  }
+
+  return `Out of gas during atomic rebalance. Gas used ${gasUsed.toString()} / limit ${gasLimit.toString()}. Tx Hash: ${hash}`;
+}
 
 function conciseError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -89,9 +146,17 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
       data
     });
 
+    const estimatedGas = await publicClient.estimateGas({
+      account: walletClient.account.address,
+      to: rebalancerAddress,
+      data
+    });
+    const gas = bufferedGasLimit(estimatedGas);
+
     const hash = await walletClient.sendTransaction({
       to: rebalancerAddress,
       data,
+      gas,
       chain: walletClient.chain,
       account: walletClient.account
     });
@@ -103,7 +168,7 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
     });
 
     if (receipt.status !== "success") {
-      throw new Error(`On-chain transaction reverted. Hash: ${hash}`);
+      throw new Error(await explainRevertedReceipt(hash, receipt.gasUsed, gas));
     }
 
     await prisma.rebalancePlan.update({

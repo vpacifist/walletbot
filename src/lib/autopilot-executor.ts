@@ -26,6 +26,7 @@ type TransactionIntent =
       tokenOutAddress: Address;
       amountInRaw: string;
       minAmountOutRaw: string | null;
+      gasEstimate: string | null;
       sourceType: "uniswap_v3" | "zeroex_allowance_holder" | "aggregator_required" | null;
       executable: boolean;
       approvalTarget?: Address;
@@ -71,6 +72,7 @@ const SWAP_SLIPPAGE_BPS = 15;
 // between planning and execution. A wider mint guard avoids reverting while
 // unused token dust is still refunded to the vault.
 const MINT_SLIPPAGE_BPS = 100;
+const SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS = 2_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =
@@ -244,6 +246,7 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         tokenOutAddress: step.quoteRequest.tokenOut,
         amountInRaw: rawAmount(step.quoteRequest.amountIn, step.quoteRequest.tokenIn),
         minAmountOutRaw: quote ? rawAmount(minAmountOut(quote.amountOut), step.quoteRequest.tokenOut) : null,
+        gasEstimate: quote?.gasEstimate ?? null,
         sourceType: quote?.sourceType ?? null,
         executable: quote?.executable ?? false,
         approvalTarget: quote?.approvalTarget,
@@ -941,17 +944,24 @@ function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildE
   ];
 }
 
-function buildSwapSourceChecks(intents: TransactionIntent[]) {
+function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotExecutionPreview) {
   return intents
     .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
     .map((intent) => {
+      const routeGas = intent.gasEstimate ? BigInt(intent.gasEstimate) : 0n;
+      const routeTooComplex =
+        preview.strategy.preset === "small_capital_test" &&
+        intent.sourceType === "zeroex_allowance_holder" &&
+        routeGas > SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS;
       const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder") && intent.executable;
       return {
         label: "Swap source",
-        ok: executableSource,
-        detail: executableSource
-          ? `${intent.target} is executable by the deployed rebalancer`
-          : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
+        ok: executableSource && !routeTooComplex,
+        detail: routeTooComplex
+          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS.toString()}; retry later or use a simpler route.`
+          : executableSource
+            ? `${intent.target} is executable by the deployed rebalancer`
+            : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
       };
     });
 }
@@ -1011,7 +1021,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   const intents = buildIntents(preview);
   const approvalChecks = buildApprovalChecks(intents, options);
   const rebalancerRoleChecks = buildRebalancerRoleChecks(intents, options);
-  const swapSourceChecks = buildSwapSourceChecks(intents);
+  const swapSourceChecks = buildSwapSourceChecks(intents, preview);
   const calls = buildCalls(intents, {
     ...options,
     pool: options.pool ?? preview.pool

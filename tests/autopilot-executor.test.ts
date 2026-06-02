@@ -12,6 +12,16 @@ function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecu
       currentTick: -199687,
       price: 2128.81
     },
+    strategy: {
+      preset: "triple_range",
+      label: "Triple range",
+      targetWidthTicks: 60,
+      confirmationSeconds: 300,
+      maxDriftBps: 30,
+      maxImmediateCostUsd: 10,
+      maxUncoveredDebtUsd: 25,
+      feeCreditMustCoverCosts: false
+    },
     reasons: [],
     checks: [
       {
@@ -82,6 +92,16 @@ function preview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecu
 
 function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): AutopilotExecutionPreview {
   return preview({
+    strategy: {
+      preset: "small_capital_test",
+      label: "Small capital test",
+      targetWidthTicks: 240,
+      confirmationSeconds: 30,
+      maxDriftBps: 30,
+      maxImmediateCostUsd: 5,
+      maxUncoveredDebtUsd: 1.5,
+      feeCreditMustCoverCosts: false
+    },
     steps: [
       {
         type: "close",
@@ -412,6 +432,57 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.atomicCall.status).toBe("prepared");
     expect(execution.telegramSummary).toContain("0x AllowanceHolder");
     expect(execution.telegramSummary).toContain("Swap source: 0x AllowanceHolder is executable");
+  });
+
+  it("blocks high-gas 0x routes in the small-capital preset", () => {
+    const execution = buildAutopilotDryRunExecution(
+      smallCapitalPreview({
+        quote: {
+          status: "available",
+          data: {
+            tokenIn: CONTRACTS.usdc,
+            tokenOut: CONTRACTS.weth,
+            fee: 3000,
+            amountIn: 400,
+            spendSymbol: "USDC",
+            receiveSymbol: "WETH",
+            amountInRaw: "400000000",
+            amountOut: 0.19,
+            amountOutRaw: "190000000000000000",
+            effectivePrice: 2105,
+            gasEstimate: "5758600",
+            source: "0x AllowanceHolder",
+            sourceType: "zeroex_allowance_holder",
+            executable: true,
+            executionNote: "0x AllowanceHolder calldata can be executed by the allowlisted atomic rebalancer.",
+            approvalTarget: CONTRACTS.zeroExAllowanceHolder,
+            transactionTarget: CONTRACTS.zeroExAllowanceHolder,
+            transactionData: "0x12345678",
+            routeSummary: "complex route"
+          }
+        }
+      }),
+      {
+        closePositions: {
+          "1": {
+            status: "available",
+            tokenId: "1",
+            liquidity: 123n,
+            tokensOwed0: 0n,
+            tokensOwed1: 0n,
+            decreaseAmount0: 300_000_000_000_000_000n,
+            decreaseAmount1: 600_000_000n
+          }
+        },
+        rebalancerRoles: {
+          status: "roles_match",
+          detail: "Rebalancer roles match configured executor and vault"
+        }
+      }
+    );
+
+    expect(execution.status).toBe("blocked");
+    expect(execution.telegramSummary).toContain("route gas estimate 5758600 exceeds small-capital limit 2000000");
   });
 
   it("blocks execution when preview guardrails are blocked", () => {
