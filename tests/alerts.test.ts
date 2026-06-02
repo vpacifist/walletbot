@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
-import { isOutOfRange, sendAutopilotPlanAlert } from "@/lib/alerts";
+import { isOutOfRange, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { prisma } from "@/lib/db";
 
@@ -29,6 +29,11 @@ vi.mock("@/lib/db", () => {
       },
       rebalancePlan: {
         update: vi.fn()
+      },
+      position: {
+        findMany: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn()
       }
     }
   };
@@ -178,6 +183,59 @@ describe("sendAutopilotPlanAlert", () => {
       })
     });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendOutOfRangeAlerts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.position.update).mockResolvedValue({} as any);
+    vi.mocked(prisma.position.updateMany).mockResolvedValue({ count: 0 } as any);
+  });
+
+  it("does not send a duplicate range alert when the autopilot plan message was already sent", async () => {
+    vi.mocked(prisma.position.findMany).mockResolvedValue([
+      {
+        id: "position-row-1",
+        tokenId: "5199548",
+        status: PositionStatus.below_range,
+        lastAlertStatus: PositionStatus.in_range,
+        currentTick: -200120,
+        tickLower: -200100,
+        tickUpper: -199860,
+        poolAddress: "0x6c56d16237190256f56b6b148e0d8a6017c1372",
+        wallet: { address: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057" }
+      }
+    ] as any);
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        record: {
+          telegramMessageId: "42"
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendOutOfRangeAlerts(testBot as any);
+
+    expect(result).toEqual({ sent: 0, skippedAutopilotPlanMessage: 1 });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        positionId: "position-row-1",
+        alertType: "out_of_range",
+        dedupeKey: "out-of-range:position-row-1:below_range:-200120",
+        payload: expect.objectContaining({
+          skippedBecause: "autopilot_plan_message_exists",
+          planId: "plan-1"
+        })
+      })
+    });
+    expect(prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-row-1" },
+      data: { lastAlertStatus: PositionStatus.below_range }
+    });
   });
 });
 

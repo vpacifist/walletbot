@@ -104,6 +104,7 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
   });
 
   let sent = 0;
+  let skippedAutopilotPlanMessage = 0;
 
   for (const position of positions) {
     if (isOutOfRange(position.lastAlertStatus ?? PositionStatus.unknown)) continue;
@@ -114,6 +115,28 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
 
     const direction = position.status === PositionStatus.above_range ? "above range" : "below range";
     const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID }).catch(() => null);
+    if (autopilotPlan?.record.telegramMessageId && autopilotPlanNeedsAttention(autopilotPlan.plan)) {
+      await prisma.telegramEvent.create({
+        data: {
+          positionId: position.id,
+          alertType: "out_of_range",
+          dedupeKey,
+          payload: {
+            tokenId: position.tokenId,
+            status: position.status,
+            currentTick: position.currentTick,
+            skippedBecause: "autopilot_plan_message_exists",
+            planId: autopilotPlan.record.id
+          }
+        }
+      });
+      await prisma.position.update({
+        where: { id: position.id },
+        data: { lastAlertStatus: position.status }
+      });
+      skippedAutopilotPlanMessage += 1;
+      continue;
+    }
     const planSummary = autopilotPlan ? ["", "Autopilot plan", autopilotPlan.plan.telegramSummary, "", `Plan id: ${autopilotPlan.record.id}`].join("\n") : "";
 
     const message = await bot.telegram.sendMessage(
@@ -167,7 +190,7 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
     data: { lastAlertStatus: PositionStatus.in_range }
   });
 
-  return { sent };
+  return { sent, skippedAutopilotPlanMessage };
 }
 
 export async function sendAutopilotPlanAlert(bot: Telegraf) {
