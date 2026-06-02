@@ -43,6 +43,48 @@ describe("approval presentation helpers", () => {
     });
   });
 
+  it("detects ERC-721 setApprovalForAll transactions", () => {
+    const approval = tx({
+      raw: {
+        blockscout: {
+          decoded_input: {
+            method_call: "setApprovalForAll(address operator, bool approved)",
+            parameters: [
+              { name: "operator", value: spender },
+              { name: "approved", value: true }
+            ]
+          }
+        }
+      }
+    });
+
+    expect(isApprovalTransaction(approval)).toBe(true);
+    expect(getApprovalBadge(approval)).toEqual({
+      hash: "0xhash",
+      token,
+      spender,
+      amount: "all"
+    });
+  });
+
+  it("ignores revoked ERC-721 operator approvals", () => {
+    const approval = tx({
+      raw: {
+        blockscout: {
+          decoded_input: {
+            method_call: "setApprovalForAll(address operator, bool approved)",
+            parameters: [
+              { name: "operator", value: spender },
+              { name: "approved", value: false }
+            ]
+          }
+        }
+      }
+    });
+
+    expect(isApprovalTransaction(approval)).toBe(false);
+  });
+
   it("maps an approval to the next transaction sent to the approved spender", () => {
     const approval = tx({
       id: "approval",

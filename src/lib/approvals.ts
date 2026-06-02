@@ -39,7 +39,23 @@ function parameterValue(parameters: ApprovalParameter[] | undefined, names: stri
 
 export function getApprovalBadge(transaction: ApprovalTransaction): ApprovalBadge | null {
   const decoded = decodedInput(transaction);
-  if (!decoded?.method_call?.toLowerCase().startsWith("approve(")) return null;
+  if (!decoded?.method_call) return null;
+  const method = decoded.method_call.toLowerCase();
+
+  if (method.startsWith("setapprovalforall(")) {
+    const operator = parameterValue(decoded.parameters, ["operator"]);
+    const approved = parameterValue(decoded.parameters, ["approved"]);
+    if (typeof operator !== "string" || approved !== true) return null;
+
+    return {
+      hash: transaction.hash,
+      token: transaction.toAddress ?? null,
+      spender: operator,
+      amount: "all"
+    };
+  }
+
+  if (!method.startsWith("approve(")) return null;
 
   const spender = parameterValue(decoded.parameters, ["spender", "guy", "to"]);
   const amount = parameterValue(decoded.parameters, ["amount", "value", "wad", "tokenId"]);
