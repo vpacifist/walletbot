@@ -23,13 +23,18 @@ export type ApprovalBadge = {
 function rawBlockscout(transaction: { raw?: unknown }) {
   if (!transaction.raw || typeof transaction.raw !== "object") return undefined;
   const raw = transaction.raw as { blockscout?: unknown };
-  return raw.blockscout && typeof raw.blockscout === "object" ? (raw.blockscout as { decoded_input?: unknown }) : undefined;
+  return raw.blockscout && typeof raw.blockscout === "object" ? (raw.blockscout as { decoded_input?: unknown; method?: unknown }) : undefined;
 }
 
 function decodedInput(transaction: { raw?: unknown }) {
   const blockscout = rawBlockscout(transaction);
   if (!blockscout?.decoded_input || typeof blockscout.decoded_input !== "object") return undefined;
   return blockscout.decoded_input as { method_call?: string; parameters?: ApprovalParameter[] };
+}
+
+function blockscoutMethod(transaction: { raw?: unknown }) {
+  const method = rawBlockscout(transaction)?.method;
+  return typeof method === "string" ? method.toLowerCase() : null;
 }
 
 function parameterValue(parameters: ApprovalParameter[] | undefined, names: string[]) {
@@ -70,7 +75,10 @@ export function getApprovalBadge(transaction: ApprovalTransaction): ApprovalBadg
 }
 
 export function isApprovalTransaction(transaction: ApprovalTransaction) {
-  return getApprovalBadge(transaction) !== null;
+  if (getApprovalBadge(transaction) !== null) return true;
+
+  const method = blockscoutMethod(transaction);
+  return method === "approve" || method === "setapprovalforall";
 }
 
 export function mapApprovalsToTransactions<T extends ApprovalTransaction>(transactions: T[]) {

@@ -85,6 +85,19 @@ describe("approval presentation helpers", () => {
     expect(isApprovalTransaction(approval)).toBe(false);
   });
 
+  it("detects Blockscout list approval methods without decoded parameters", () => {
+    const approval = tx({
+      raw: {
+        blockscout: {
+          method: "setApprovalForAll"
+        }
+      }
+    });
+
+    expect(isApprovalTransaction(approval)).toBe(true);
+    expect(getApprovalBadge(approval)).toBe(null);
+  });
+
   it("maps an approval to the next transaction sent to the approved spender", () => {
     const approval = tx({
       id: "approval",
