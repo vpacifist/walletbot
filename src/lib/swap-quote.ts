@@ -150,7 +150,8 @@ export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Pro
     sellToken: request.tokenIn,
     buyToken: request.tokenOut,
     sellAmount: amountInRaw.toString(),
-    taker: getConfig().AUTOPILOT_REBALANCER_ADDRESS || getConfig().BASE_WALLET_ADDRESS
+    taker: getConfig().AUTOPILOT_REBALANCER_ADDRESS || getConfig().BASE_WALLET_ADDRESS,
+    slippageBps: String(getConfig().AUTOPILOT_SWAP_SLIPPAGE_BPS)
   });
 
   const response = await fetch(`https://api.0x.org/swap/allowance-holder/quote?${params.toString()}`, {

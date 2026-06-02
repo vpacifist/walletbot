@@ -79,6 +79,9 @@ function conciseError(error: unknown) {
 
   if (/execution reverted/i.test(message)) {
     const reason = message.match(/execution reverted(?::| with reason:)?\s*([^\n.]*)/i)?.[1]?.trim();
+    if (/price slippage check/i.test(reason ?? message)) {
+      return "Swap price moved beyond slippage tolerance during preflight simulation. No transaction was sent; retry with a fresh plan or wider AUTOPILOT_SWAP_SLIPPAGE_BPS.";
+    }
     return reason ? `Execution reverted: ${reason}` : "Execution reverted during preflight simulation. No transaction was sent.";
   }
 

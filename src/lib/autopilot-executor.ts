@@ -67,7 +67,6 @@ export type AutopilotDryRunExecution = {
   telegramSummary: string;
 };
 
-const SWAP_SLIPPAGE_BPS = 15;
 // Uniswap v3 mint can consume slightly different token amounts as price moves
 // between planning and execution. A wider mint guard avoids reverting while
 // unused token dust is still refunded to the vault.
@@ -179,7 +178,7 @@ function formatUsd(value: number) {
 }
 
 function minAmountOut(amountOut: number) {
-  return amountOut * (1 - SWAP_SLIPPAGE_BPS / 10_000);
+  return amountOut * (1 - getConfig().AUTOPILOT_SWAP_SLIPPAGE_BPS / 10_000);
 }
 
 function tokenDecimals(address: string) {
@@ -241,7 +240,7 @@ function buildIntents(preview: AutopilotExecutionPreview): TransactionIntent[] {
         amountIn: step.quoteRequest.amountIn,
         expectedAmountOut: quote?.amountOut ?? null,
         minAmountOut: quote ? minAmountOut(quote.amountOut) : null,
-        slippageBps: SWAP_SLIPPAGE_BPS,
+        slippageBps: getConfig().AUTOPILOT_SWAP_SLIPPAGE_BPS,
         tokenInAddress: step.quoteRequest.tokenIn,
         tokenOutAddress: step.quoteRequest.tokenOut,
         amountInRaw: rawAmount(step.quoteRequest.amountIn, step.quoteRequest.tokenIn),

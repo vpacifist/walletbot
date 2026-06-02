@@ -13,6 +13,7 @@ const envSchema = z.object({
     .enum(["uniswap_v3", "llamaswap", "zeroex", "odos", "kyber", "paraswap"])
     .optional()
     .default("uniswap_v3"),
+  AUTOPILOT_SWAP_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).optional().default(100),
   AUTOPILOT_BASELINE_AT: z
     .string()
     .datetime()
