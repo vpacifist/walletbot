@@ -22,6 +22,13 @@ export type TransactionTableRow = {
     closed: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
     minted: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
     earned: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
+    boundaryDrift?: {
+      side: "sell_weth" | "buy_weth";
+      boundaryPrice: number;
+      executionPrice: number;
+      wethAmount: number;
+      costUsd: number;
+    } | null;
   } | null;
   assets: {
     weth: number | null;
@@ -189,6 +196,11 @@ function rebalanceCostUsd(
   return closedValue + earnedValue - mintedValue - leftoverValue;
 }
 
+function boundaryDriftLabel(drift: NonNullable<NonNullable<TransactionTableRow["rebalanceDetails"]>["boundaryDrift"]>) {
+  const verb = drift.side === "sell_weth" ? "sold" : "bought";
+  return `${verb} ${formatNumber(drift.wethAmount, 6)} WETH @ ${formatUsd(drift.executionPrice)} vs ${formatUsd(drift.boundaryPrice)} boundary`;
+}
+
 function rebalanceAmountRows(
   rebalanceDetails: NonNullable<TransactionTableRow["rebalanceDetails"]>,
   leftovers: unknown,
@@ -204,6 +216,10 @@ function rebalanceAmountRows(
         #{fromTokenId ?? "?"} -&gt; #{toTokenId ?? "?"}
       </strong>
       <span className="rebalance-cost">Cost {formatUsd(costUsd)}</span>
+      {rebalanceDetails.boundaryDrift ? (
+        <span className="historical-note">Boundary drift {formatUsd(rebalanceDetails.boundaryDrift.costUsd)}</span>
+      ) : null}
+      {rebalanceDetails.boundaryDrift ? <span className="historical-note">{boundaryDriftLabel(rebalanceDetails.boundaryDrift)}</span> : null}
       {rebalanceDetails.closed[0] ? <span>Closed {compactLpAmounts(rebalanceDetails.closed[0])}</span> : null}
       {rebalanceDetails.minted[0] ? <span>Minted {compactLpAmounts(rebalanceDetails.minted[0])}</span> : null}
       {rebalanceDetails.earned[0] ? <span>Fees {compactLpAmounts(rebalanceDetails.earned[0])}</span> : null}

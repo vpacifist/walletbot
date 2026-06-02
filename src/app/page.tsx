@@ -14,6 +14,7 @@ import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
   addLpDelta,
   getTransactionAssetDelta,
+  getTransactionDirectionalSwaps,
   getTransactionLpDelta,
   getTransactionPositionExitAmounts,
   getTransactionPositionLiquidityDeltas,
@@ -165,7 +166,7 @@ function isAtomicRebalanceTransaction(transaction: { raw: unknown }) {
 
 function buildRebalanceDetails(
   transaction: { fromAddress: string; tokenAmounts: unknown; raw: unknown },
-  positionsByTokenId: Map<string, { token0: string; token1: string }>
+  positionsByTokenId: Map<string, { token0: string; token1: string; tickLower: number; tickUpper: number }>
 ): TransactionTableRow["rebalanceDetails"] {
   const principalDeltas = getTransactionPositionPrincipalDeltas(transaction, positionsByTokenId);
   const closed = principalDeltas
@@ -197,8 +198,30 @@ function buildRebalanceDetails(
         : null;
     })
     .filter((item): item is { tokenId: string; weth: number | null; usdc: number | null } => item !== null);
+  const swap = getTransactionDirectionalSwaps(transaction)[0];
+  const closedPosition = closed[0] ? positionsByTokenId.get(closed[0].tokenId) : null;
+  const boundaryPrice =
+    swap && closedPosition
+      ? tickToWethUsdcPrice(swap.side === "sell_weth" ? closedPosition.tickLower : closedPosition.tickUpper, closedPosition.token0, closedPosition.token1)
+      : null;
+  const driftCostUsd =
+    swap && boundaryPrice !== null
+      ? swap.side === "sell_weth"
+        ? Math.max(0, (boundaryPrice - swap.effectivePrice) * swap.wethAmount)
+        : Math.max(0, (swap.effectivePrice - boundaryPrice) * swap.wethAmount)
+      : null;
+  const boundaryDrift =
+    swap && boundaryPrice !== null && driftCostUsd !== null
+      ? {
+          side: swap.side,
+          boundaryPrice,
+          executionPrice: swap.effectivePrice,
+          wethAmount: swap.wethAmount,
+          costUsd: driftCostUsd
+        }
+      : null;
 
-  return closed.length > 0 && minted.length > 0 ? { closed, minted, earned } : null;
+  return closed.length > 0 && minted.length > 0 ? { closed, minted, earned, boundaryDrift } : null;
 }
 
 function lpAmountValueUsd(amounts: LpAssetAmounts, wethPriceUsd: number | null) {
