@@ -32,9 +32,6 @@ function autopilotKeyboard(planId: string) {
         { text: "Approve", callback_data: `ap:approve:${planId}` },
         { text: "Skip", callback_data: `ap:skip:${planId}` },
         { text: "Pause", callback_data: `ap:pause:${planId}` }
-      ],
-      [
-        { text: "Open web", url: getWebAppUrl() }
       ]
     ]
   };
@@ -43,8 +40,7 @@ function autopilotKeyboard(planId: string) {
 function autopilotExecutionKeyboard(planId: string) {
   return {
     inline_keyboard: [
-      [{ text: "Run executor dry-run", callback_data: `ap:execute:${planId}` }],
-      [{ text: "Open web", url: getWebAppUrl() }]
+      [{ text: "Run executor dry-run", callback_data: `ap:execute:${planId}` }]
     ]
   };
 }
@@ -55,8 +51,7 @@ function autopilotLiveKeyboard(planId: string) {
   if (!config.AUTOPILOT_LIVE_EXECUTION_ENABLED || !executorPrivateKey || !config.AUTOPILOT_REBALANCER_ADDRESS) return undefined;
   return {
     inline_keyboard: [
-      [{ text: "Review live transaction", callback_data: `ap:live_review:${planId}` }],
-      [{ text: "Open web", url: getWebAppUrl() }]
+      [{ text: "Review live transaction", callback_data: `ap:live_review:${planId}` }]
     ]
   };
 }
@@ -67,9 +62,6 @@ function autopilotLiveConfirmKeyboard(planId: string) {
       [
         { text: "Confirm live transaction", callback_data: `ap:execute_live:${planId}` },
         { text: "Cancel", callback_data: `ap:pause:${planId}` }
-      ],
-      [
-        { text: "Open web", url: getWebAppUrl() }
       ]
     ]
   };
@@ -100,9 +92,7 @@ export function createBot() {
 
   bot.start((ctx) => {
     if (!assertAllowedChat(ctx)) return;
-    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, or /web.", {
-      reply_markup: webKeyboard()
-    });
+    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, or /web.");
   });
 
   bot.command("web", async (ctx) => {
@@ -133,8 +123,6 @@ export function createBot() {
       ]
         .filter(Boolean)
         .join("\n")
-      ,
-      { reply_markup: webKeyboard() }
     );
   });
 
@@ -145,9 +133,7 @@ export function createBot() {
       ? await prisma.position.findMany({ where: { walletId: wallet.id }, orderBy: { updatedAt: "desc" }, take: 10 })
       : [];
     if (positions.length === 0) {
-      await ctx.reply("No WETH/USDC Uniswap v3 positions found yet.", {
-        reply_markup: webKeyboard()
-      });
+      await ctx.reply("No WETH/USDC Uniswap v3 positions found yet.");
       return;
     }
 
@@ -158,8 +144,6 @@ export function createBot() {
             `#${position.tokenId}: ${position.status}\nTick ${position.currentTick ?? "?"} | Range ${position.tickLower} - ${position.tickUpper}\nLiquidity ${position.liquidity}`
         )
         .join("\n\n")
-      ,
-      { reply_markup: webKeyboard() }
     );
   });
 

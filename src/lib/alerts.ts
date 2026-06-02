@@ -5,7 +5,6 @@ import { getOrCreatePendingAutopilotPlan } from "./autopilot-service";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
-import { getWebAppUrl } from "./web-app-url";
 import { getWalletAssetSnapshot } from "./wallet-assets";
 
 const LOW_NATIVE_ETH_THRESHOLD_USD = 10;
@@ -17,17 +16,8 @@ function autopilotKeyboard(planId: string) {
         { text: "Approve", callback_data: `ap:approve:${planId}` },
         { text: "Skip", callback_data: `ap:skip:${planId}` },
         { text: "Pause", callback_data: `ap:pause:${planId}` }
-      ],
-      [
-        { text: "Open web", url: getWebAppUrl() }
       ]
     ]
-  };
-}
-
-function webKeyboard() {
-  return {
-    inline_keyboard: [[{ text: "Open WalletBot web", url: getWebAppUrl() }]]
   };
 }
 
@@ -264,8 +254,7 @@ export async function sendLowNativeEthAlert(bot: Telegraf, now = new Date()) {
       `Native ETH balance is below $${LOW_NATIVE_ETH_THRESHOLD_USD}.`,
       `Wallet: ${shortAddress(wallet.address)}`,
       `ETH: ${formatNumber(snapshot.eth.amount, 6)} ($${formatNumber(snapshot.eth.valueUsd, 2)})`
-    ].join("\n"),
-    { reply_markup: webKeyboard() }
+    ].join("\n")
   );
 
   await prisma.telegramEvent.create({
