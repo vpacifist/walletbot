@@ -69,6 +69,18 @@ type AutopilotPlan = {
     decisionNote: string | null;
     txHash: string | null;
   } | null;
+  executionAudit?: Array<{
+    id: string;
+    status: string;
+    mode: string;
+    title: string;
+    state: string;
+    decisionNote: string | null;
+    createdAt: string;
+    updatedAt: string;
+    decidedAt: string | null;
+    txHash: string | null;
+  }>;
 };
 
 const STATE_ORDER: AutopilotPlan["state"][] = ["idle", "armed", "confirming", "ready", "cooldown"];
@@ -134,6 +146,15 @@ function dbStatusLabel(status?: string) {
 
 function primaryAction(data: AutopilotPlan | null) {
   return data?.actions[0] ?? null;
+}
+
+function auditTime(record: NonNullable<AutopilotPlan["executionAudit"]>[number]) {
+  return shortDateTime(record.decidedAt ?? record.updatedAt ?? record.createdAt);
+}
+
+function auditNote(note: string | null) {
+  if (!note) return "No decision note recorded.";
+  return shortError(note);
 }
 
 function decisionTitle(data: AutopilotPlan | null, error: string | null) {
@@ -341,6 +362,40 @@ export function AutopilotPlanLive() {
             <strong>{state}</strong>
           </div>
         ))}
+      </div>
+
+      <div className="autopilot-audit" aria-label="Execution audit">
+        <div className="section-title-row">
+          <div>
+            <p className="metric-label">Execution audit</p>
+            <strong>Recent autopilot decisions</strong>
+          </div>
+          <span className="status muted">{data?.executionAudit?.length ?? 0} records</span>
+        </div>
+        <div className="autopilot-audit-list">
+          {(data?.executionAudit ?? []).length === 0 ? (
+            <p className="muted">No execution records yet.</p>
+          ) : (
+            data!.executionAudit!.map((record) => (
+              <div className="autopilot-audit-row" key={record.id}>
+                <div>
+                  <span className={`status ${dbStatusTone(record.status)}`}>{record.status}</span>
+                  <strong>{record.title}</strong>
+                  <p className="muted">{auditNote(record.decisionNote)}</p>
+                </div>
+                <div className="autopilot-audit-meta">
+                  <span>{auditTime(record)}</span>
+                  <span>{record.mode}</span>
+                  {record.txHash ? (
+                    <a href={`https://base.blockscout.com/tx/${record.txHash}`} target="_blank" rel="noopener noreferrer">
+                      tx
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       {error ? <p className="error">{error}</p> : null}

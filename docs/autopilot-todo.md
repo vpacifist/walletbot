@@ -37,4 +37,5 @@
 
 ## P2 Transaction And Audit UI
 
-- Review whether failed preflight/live attempts should remain in the main Transactions table or move into a separate execution/audit log view.
+- Review first real `auto_guarded` event tomorrow or the day after: compare Telegram messages, web positions, transaction row, execution audit, debt, drift, immediate cost, and whether manual observation found anything surprising.
+- After 3-5 auto/manual rebalances, revisit limits: boundary drift bps, immediate cost limit, slippage bps, and whether auto-accepted uncovered debt is economically acceptable.

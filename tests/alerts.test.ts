@@ -4,6 +4,7 @@ import { PositionStatus } from "@/generated/prisma/client";
 import { isOutOfRange, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
+import { isAutopilotRuntimePaused } from "@/lib/autopilot-pause";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { prisma } from "@/lib/db";
@@ -36,13 +37,20 @@ vi.mock("@/lib/autopilot-broadcaster", () => {
   };
 });
 
+vi.mock("@/lib/autopilot-pause", () => {
+  return {
+    isAutopilotRuntimePaused: vi.fn()
+  };
+});
+
 vi.mock("@/lib/db", () => {
   return {
     prisma: {
       telegramEvent: {
         findUnique: vi.fn(),
         create: vi.fn(),
-        deleteMany: vi.fn()
+        deleteMany: vi.fn(),
+        upsert: vi.fn()
       },
       rebalancePlan: {
         update: vi.fn()
@@ -98,6 +106,7 @@ describe("sendAutopilotPlanAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue(null);
+    vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(false);
     vi.mocked(recordAutopilotPlanDecision).mockImplementation(async (id) => ({ ...planRecord().record, id, status: "approved" }) as any);
     vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
       status: "validated",
@@ -241,6 +250,67 @@ describe("sendAutopilotPlanAlert", () => {
         dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
       })
     });
+  });
+
+  it("falls back to manual review when auto_guarded is runtime-paused", async () => {
+    vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(true);
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded"
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 1, planId: "plan-1" });
+    expect(recordAutopilotPlanDecision).not.toHaveBeenCalled();
+    expect(createAutopilotDryRunExecution).not.toHaveBeenCalled();
+    expect(broadcastAutopilotRebalance).not.toHaveBeenCalled();
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      "Small-capital plan\nState: confirming\n\nPlan id: plan-1",
+      expect.objectContaining({
+        reply_markup: expect.objectContaining({
+          inline_keyboard: expect.any(Array)
+        })
+      })
+    );
+  });
+
+  it("blocks auto_guarded execution when boundary drift fails", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded"
+        }
+      }) as any
+    );
+    vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
+      status: "blocked",
+      checks: [{ label: "Boundary drift", ok: false, detail: "35 bps above upper boundary; limit 30 bps" }],
+      telegramSummary: "Executor dry run\nStatus: blocked\nBLOCKED Boundary drift"
+    } as any);
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "blocked" });
+    expect(broadcastAutopilotRebalance).not.toHaveBeenCalled();
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded blocked"),
+      expect.objectContaining({
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Accept drift & review live transaction", callback_data: "ap:accept_drift:plan-1" }],
+            [{ text: "Wait", callback_data: "ap:pause:plan-1" }]
+          ]
+        }
+      })
+    );
   });
 });
 

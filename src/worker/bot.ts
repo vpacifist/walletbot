@@ -1,6 +1,7 @@
 import { Context, Telegraf } from "telegraf";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
+import { pauseAutopilotRuntime, resumeAutopilotRuntime } from "@/lib/autopilot-pause";
 import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { getConfig } from "@/lib/config";
@@ -218,7 +219,19 @@ export function createBot() {
 
   bot.start((ctx) => {
     if (!assertAllowedChat(ctx)) return;
-    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, or /web.");
+    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, /autopilot_pause, /autopilot_resume, or /web.");
+  });
+
+  bot.command("autopilot_pause", async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+    await pauseAutopilotRuntime("Paused from Telegram command");
+    await ctx.reply("Auto-guarded execution is paused. Manual /autopilot review still works. Use /autopilot_resume to enable auto-guarded execution again.");
+  });
+
+  bot.command("autopilot_resume", async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+    await resumeAutopilotRuntime();
+    await ctx.reply("Auto-guarded execution is resumed. Guardrails still apply before any automatic rebalance.");
   });
 
   bot.command("web", async (ctx) => {

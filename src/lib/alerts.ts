@@ -3,6 +3,7 @@ import { Telegraf } from "telegraf";
 import { getAddress } from "viem";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
+import { isAutopilotRuntimePaused } from "./autopilot-pause";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./autopilot-service";
 import { getConfig } from "./config";
 import { prisma } from "./db";
@@ -291,6 +292,7 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
 
+  const runtimePaused = await isAutopilotRuntimePaused();
   const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
   if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) {
     await prisma.telegramEvent.deleteMany({
@@ -304,7 +306,7 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
-  if (autopilotPlan.plan.mode === "auto_guarded") {
+  if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused) {
     return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey);
   }
   if (autopilotPlan.record.telegramMessageId) {

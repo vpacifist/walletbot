@@ -1361,6 +1361,57 @@ input {
   background: var(--accent);
 }
 
+.autopilot-audit {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-3);
+}
+
+.autopilot-audit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.autopilot-audit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.autopilot-audit-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.autopilot-audit-row strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.autopilot-audit-row p {
+  margin: 5px 0 0;
+}
+
+.autopilot-audit-meta {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.autopilot-audit-meta a {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .autopilot-economics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2214,6 +2265,16 @@ th {
     grid-template-columns: repeat(5, minmax(76px, 1fr));
     overflow-x: auto;
     padding-bottom: 2px;
+  }
+
+  .autopilot-audit-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .autopilot-audit-meta {
+    justify-items: start;
+    white-space: normal;
   }
 
   .triple-ladder {
