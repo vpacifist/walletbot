@@ -13,12 +13,18 @@ type GrowthChartProps = {
 
 const CHART_WIDTH = 900;
 const CHART_HEIGHT = 330;
-const PADDING = { top: 22, right: 24, bottom: 34, left: 88 };
+const PADDING = { top: 24, right: 132, bottom: 34, left: 88 };
 
 function formatPercent(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "-";
   const sign = value > 0 ? "+" : "";
   return `${sign}${formatNumber(value, 2)}%`;
+}
+
+function formatPercentagePoints(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatNumber(value, 2)} pp`;
 }
 
 function formatUsd(value: number | null) {
@@ -40,6 +46,17 @@ function latestFinite(values: Array<number | null>) {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     const value = values[index];
     if (value !== null && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function latestFinitePoint(
+  points: ReturnType<typeof cashFlowNeutralGrowthSeries>,
+  key: "portfolioGrowthPercent" | "wethGrowthPercent"
+) {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const value = points[index][key];
+    if (value !== null && Number.isFinite(value)) return { index, point: points[index], value };
   }
   return null;
 }
@@ -84,6 +101,10 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
   const latestPoint = chartPoints.at(-1);
   const latestPortfolioGrowth = latestFinite(portfolioValues);
   const latestWethGrowth = latestFinite(wethValues);
+  const portfolioComparison =
+    latestPortfolioGrowth === null || latestWethGrowth === null ? null : latestPortfolioGrowth - latestWethGrowth;
+  const latestPortfolioPoint = latestFinitePoint(chartPoints, "portfolioGrowthPercent");
+  const latestWethPoint = latestFinitePoint(chartPoints, "wethGrowthPercent");
   const cashFlowCount = points.filter((point) => point.isCashFlow).length;
   const minValue = Math.min(0, ...allValues);
   const maxValue = Math.max(0, ...allValues);
@@ -106,6 +127,11 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
   const yTicks = [maxValue, minValue + valueSpan / 2, minValue];
   const firstDate = chartPoints[0] ? new Date(chartPoints[0].timestamp) : null;
   const lastDate = latestPoint ? new Date(latestPoint.timestamp) : null;
+  const dateRangeLabel =
+    firstDate && lastDate ? `${firstDate.toLocaleDateString()} - ${lastDate.toLocaleDateString()}` : "No priced range yet";
+  const chartDescription = `Portfolio growth ${formatPercent(latestPortfolioGrowth)}, WETH growth ${formatPercent(
+    latestWethGrowth
+  )}, over ${dateRangeLabel}.`;
 
   return (
     <div className="growth-layout">
@@ -115,7 +141,9 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
           <strong className={latestPortfolioGrowth !== null && latestPortfolioGrowth < 0 ? "negative-text" : ""}>
             {formatPercent(latestPortfolioGrowth)}
           </strong>
-          <span>cash-flow neutral</span>
+          <span>
+            {portfolioComparison === null ? "cash-flow neutral" : `${formatPercentagePoints(portfolioComparison)} vs WETH`}
+          </span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">WETH growth</p>
@@ -135,8 +163,14 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         {chartPoints.length < 2 || allValues.length === 0 ? (
           <div className="chart-empty">Need at least two priced transactions to draw growth.</div>
         ) : (
-          <svg className="growth-chart" role="img" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
-            <title>Cash-flow neutral portfolio growth compared with WETH growth</title>
+          <svg
+            aria-labelledby="growth-chart-title growth-chart-description"
+            className="growth-chart"
+            role="img"
+            viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+          >
+            <title id="growth-chart-title">Cash-flow neutral portfolio growth compared with WETH growth</title>
+            <desc id="growth-chart-description">{chartDescription}</desc>
             {yTicks.map((tick) => (
               <g key={tick.toFixed(4)}>
                 <line
@@ -160,6 +194,24 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
             />
             <path className="chart-line portfolio-line" d={portfolioPath} />
             <path className="chart-line weth-line" d={wethPath} />
+            {latestPortfolioPoint ? (
+              <text
+                className="chart-end-label portfolio-label"
+                x={scaleX(latestPortfolioPoint.index) + 12}
+                y={scaleY(latestPortfolioPoint.value) + 4}
+              >
+                Portfolio {formatPercent(latestPortfolioPoint.value)}
+              </text>
+            ) : null}
+            {latestWethPoint ? (
+              <text
+                className="chart-end-label weth-label"
+                x={scaleX(latestWethPoint.index) + 12}
+                y={scaleY(latestWethPoint.value) + 4}
+              >
+                WETH {formatPercent(latestWethPoint.value)}
+              </text>
+            ) : null}
             {chartPoints.map((point, index) =>
               point.isCashFlow && point.portfolioGrowthPercent !== null ? (
                 <circle
@@ -171,6 +223,18 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
                 />
               ) : null
             )}
+            {chartPoints.map((point, index) => (
+              <g className="chart-hit-point" key={`${point.id}-hit`} tabIndex={0}>
+                <title>
+                  {new Date(point.timestamp).toLocaleDateString()} - Portfolio {formatPercent(point.portfolioGrowthPercent)},
+                  WETH {formatPercent(point.wethGrowthPercent)}, value {formatUsd(point.portfolioTotalUsd)}
+                </title>
+                {point.portfolioGrowthPercent !== null ? (
+                  <circle cx={scaleX(index)} cy={scaleY(point.portfolioGrowthPercent)} r="9" />
+                ) : null}
+                {point.wethGrowthPercent !== null ? <circle cx={scaleX(index)} cy={scaleY(point.wethGrowthPercent)} r="9" /> : null}
+              </g>
+            ))}
             <text className="chart-date-label" x={PADDING.left} y={CHART_HEIGHT - 10}>
               {firstDate?.toLocaleDateString() ?? ""}
             </text>
@@ -181,6 +245,12 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         )}
       </div>
 
+      <div className="chart-summary" aria-hidden="true">
+        <span>{dateRangeLabel}</span>
+        <span>{chartPoints.length} priced points</span>
+        {portfolioComparison !== null ? <span>{formatPercentagePoints(portfolioComparison)} vs WETH</span> : null}
+      </div>
+
       <div className="chart-legend">
         <span>
           <i className="legend-swatch portfolio" /> Portfolio
@@ -188,9 +258,11 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         <span>
           <i className="legend-swatch weth" /> WETH
         </span>
-        <span>
-          <i className="legend-dot" /> Deposit/withdrawal reset point
-        </span>
+        {cashFlowCount > 0 ? (
+          <span>
+            <i className="legend-dot" /> Deposit/withdrawal reset point
+          </span>
+        ) : null}
       </div>
     </div>
   );

@@ -413,8 +413,7 @@ input {
 
 .chart-frame {
   width: 100%;
-  min-height: 330px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-3);
@@ -423,9 +422,7 @@ input {
 .growth-chart {
   display: block;
   width: 100%;
-  height: auto;
-  min-width: 720px;
-  min-height: 300px;
+  height: clamp(180px, 37vw, 420px);
 }
 
 .chart-grid {
@@ -452,11 +449,39 @@ input {
 
 .weth-line {
   stroke: var(--accent-2);
+  stroke-dasharray: 7 6;
+}
+
+.chart-end-label {
+  font-size: 13px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--surface-3);
+  stroke-linejoin: round;
+  stroke-width: 5px;
+}
+
+.portfolio-label {
+  fill: var(--accent);
+}
+
+.weth-label {
+  fill: var(--accent-2);
 }
 
 .cash-flow-marker {
   fill: var(--surface);
   stroke: var(--warning);
+  stroke-width: 2;
+}
+
+.chart-hit-point circle {
+  fill: transparent;
+  outline: none;
+}
+
+.chart-hit-point:focus-visible circle {
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
@@ -1307,6 +1332,20 @@ input {
 .autopilot-swap-reference {
   display: grid;
   gap: 6px;
+}
+
+.chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-summary span:not(:last-child)::after {
+  content: "/";
+  margin-left: 14px;
+  color: var(--border);
 }
 
 .autopilot-next-action strong,
@@ -2234,6 +2273,16 @@ th {
 
   .growth-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .chart-axis-label,
+  .chart-date-label,
+  .chart-end-label {
+    display: none;
+  }
+
+  .chart-summary span:not(:last-child)::after {
+    content: none;
   }
 
   .rebalance-primary {
