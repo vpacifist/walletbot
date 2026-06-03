@@ -103,12 +103,18 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
     return { success: false, error: "Live execution is disabled. Set AUTOPILOT_LIVE_EXECUTION_ENABLED=true to enable it." };
   }
 
-  const plan = await prisma.rebalancePlan.findUnique({ where: { id: planId } });
-  if (!plan) {
-    return { success: false, error: `Rebalance plan #${planId} not found.` };
-  }
-
-  if (plan.status !== "approved") {
+  const locked = await prisma.rebalancePlan.updateMany({
+    where: { id: planId, status: "approved" },
+    data: {
+      status: "executing",
+      decisionNote: "Initiating on-chain transaction execution..."
+    }
+  });
+  if (locked.count !== 1) {
+    const plan = await prisma.rebalancePlan.findUnique({ where: { id: planId } });
+    if (!plan) {
+      return { success: false, error: `Rebalance plan #${planId} not found.` };
+    }
     return { success: false, error: `Plan status is ${plan.status}; live execution requires an approved plan.` };
   }
 
@@ -128,17 +134,6 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
 
     const rebalancerAddress = getAddress(execution.atomicCall.target);
     const data = execution.atomicCall.data;
-
-    const locked = await prisma.rebalancePlan.updateMany({
-      where: { id: planId, status: "approved" },
-      data: {
-        status: "executing",
-        decisionNote: "Initiating on-chain transaction execution..."
-      }
-    });
-    if (locked.count !== 1) {
-      return { success: false, error: "Plan was already executed or changed before transaction submission." };
-    }
 
     const walletClient = createAutopilotExecutorWalletClient();
     const publicClient = createBaseClient();

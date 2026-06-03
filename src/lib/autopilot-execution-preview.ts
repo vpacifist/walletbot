@@ -109,7 +109,7 @@ export function buildAutopilotExecutionPreview(
   currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>,
   quote: SwapQuoteResult = { status: "not_requested" }
 ) {
-  const isApproved = record.status === "approved";
+  const isApproved = record.status === "approved" || record.status === "executing";
   const isFresh = currentPlanKey === record.planKey;
   const hasAction = currentPlan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
   const costOk = currentPlan.economics.immediateCostUsd <= currentPlan.strategy.maxImmediateCostUsd;
@@ -121,7 +121,12 @@ export function buildAutopilotExecutionPreview(
     {
       label: "Approval",
       ok: isApproved,
-      detail: isApproved ? "Telegram approval recorded" : `Plan status is ${record.status}`
+      detail:
+        record.status === "executing"
+          ? "Telegram approval recorded; live execution is in progress"
+          : isApproved
+            ? "Telegram approval recorded"
+            : `Plan status is ${record.status}`
     },
     {
       label: "Live plan freshness",

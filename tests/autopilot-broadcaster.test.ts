@@ -193,8 +193,9 @@ describe("broadcastAutopilotRebalance", () => {
   it("fails before broadcasting when dry-run validation fails", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",
-      status: "approved"
+      status: "executing"
     } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
 
     vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
       planId: "test-plan-id",
@@ -207,7 +208,13 @@ describe("broadcastAutopilotRebalance", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Dry-run validation blocked: check1: failed check detail");
-    expect(prisma.rebalancePlan.updateMany).not.toHaveBeenCalled();
+    expect(prisma.rebalancePlan.updateMany).toHaveBeenCalledWith({
+      where: { id: "test-plan-id", status: "approved" },
+      data: {
+        status: "executing",
+        decisionNote: "Initiating on-chain transaction execution..."
+      }
+    });
     expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
       where: { id: "test-plan-id" },
       data: {
@@ -230,27 +237,18 @@ describe("broadcastAutopilotRebalance", () => {
     expect(prisma.rebalancePlan.updateMany).not.toHaveBeenCalled();
   });
 
-  it("does not broadcast when the plan was already changed before submission", async () => {
+  it("does not build a dry-run or broadcast when the plan is already executing", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",
-      status: "approved"
-    } as any);
-    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
-      planId: "test-plan-id",
-      status: "validated",
-      checks: [],
-      atomicCall: {
-        status: "prepared",
-        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
-        data: "0x12345678"
-      }
+      status: "executing"
     } as any);
     vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 0 } as any);
 
     const result = await broadcastAutopilotRebalance("test-plan-id");
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("already executed or changed");
+    expect(result.error).toContain("Plan status is executing");
+    expect(executor.createAutopilotDryRunExecution).not.toHaveBeenCalled();
     expect(chain.createAutopilotExecutorWalletClient).not.toHaveBeenCalled();
     expect(prisma.rebalancePlan.update).not.toHaveBeenCalled();
   });
