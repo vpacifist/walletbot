@@ -41,6 +41,7 @@ export type SwapQuoteResult =
 
 export type AutopilotExecutionPreviewOptions = {
   allowUncoveredDebt?: boolean;
+  allowBoundaryDrift?: boolean;
 };
 
 function formatUsd(value: number) {
@@ -67,6 +68,38 @@ function actionStepLabel(type: string) {
   if (type === "hold") return "Hold";
   if (type === "wait") return "Wait";
   return type;
+}
+
+function boundaryDrift(plan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>) {
+  const activeRange = plan.ladder.find((segment) => segment.role === "active");
+  if (!activeRange || !Number.isFinite(plan.strategy.maxDriftBps)) {
+    return { ok: true, detail: "No active range boundary drift to check" };
+  }
+
+  const currentPrice = plan.pool.price;
+  if (plan.pool.currentTick < activeRange.lowerTick) {
+    if (activeRange.lowerPrice === null) return { ok: true, detail: "No lower boundary price available for drift check" };
+    const boundaryPrice = activeRange.lowerPrice;
+    const driftBps = Math.abs(((boundaryPrice - currentPrice) / boundaryPrice) * 10_000);
+    return {
+      ok: driftBps <= plan.strategy.maxDriftBps,
+      driftBps,
+      detail: `${driftBps.toFixed(1)} bps below lower boundary ${formatUsd(boundaryPrice)}; limit ${plan.strategy.maxDriftBps} bps`
+    };
+  }
+
+  if (plan.pool.currentTick >= activeRange.upperTick) {
+    if (activeRange.upperPrice === null) return { ok: true, detail: "No upper boundary price available for drift check" };
+    const boundaryPrice = activeRange.upperPrice;
+    const driftBps = Math.abs(((currentPrice - boundaryPrice) / boundaryPrice) * 10_000);
+    return {
+      ok: driftBps <= plan.strategy.maxDriftBps,
+      driftBps,
+      detail: `${driftBps.toFixed(1)} bps above upper boundary ${formatUsd(boundaryPrice)}; limit ${plan.strategy.maxDriftBps} bps`
+    };
+  }
+
+  return { ok: true, driftBps: 0, detail: `Inside active range; limit ${plan.strategy.maxDriftBps} bps` };
 }
 
 function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegramSummary">) {
@@ -120,6 +153,8 @@ export function buildAutopilotExecutionPreview(
   const costOk = currentPlan.economics.immediateCostUsd <= currentPlan.strategy.maxImmediateCostUsd;
   const uncoveredDebtWithinLimit = currentPlan.economics.uncoveredReversalDebtUsd <= currentPlan.strategy.maxUncoveredDebtUsd;
   const uncoveredDebtOk = uncoveredDebtWithinLimit || Boolean(options.allowUncoveredDebt);
+  const boundaryDriftCheck = boundaryDrift(currentPlan);
+  const boundaryDriftOk = boundaryDriftCheck.ok || Boolean(options.allowBoundaryDrift);
   const strategyAllowsExecution = currentPlan.strategy.preset !== "small_capital_test" || currentPlan.actions.some((action) => action.type === "close" || action.type === "mint");
   const notIdle = currentPlan.state !== "idle";
 
@@ -157,6 +192,15 @@ export function buildAutopilotExecutionPreview(
         : options.allowUncoveredDebt
           ? `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} accepted by user; normal limit ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
           : `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+    },
+    {
+      label: "Boundary drift",
+      ok: boundaryDriftOk,
+      detail: boundaryDriftCheck.ok
+        ? boundaryDriftCheck.detail
+        : options.allowBoundaryDrift
+          ? `${boundaryDriftCheck.detail}; accepted by user`
+          : boundaryDriftCheck.detail
     },
     {
       label: "Strategy preset",

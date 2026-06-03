@@ -11,9 +11,11 @@ import { getWebAppUrl } from "@/lib/web-app-url";
 const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
 const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
 const AUTOPILOT_ACCEPT_DEBT_PATTERN = /^ap:accept_debt:(.+)$/;
+const AUTOPILOT_ACCEPT_DRIFT_PATTERN = /^ap:accept_drift:(.+)$/;
 const AUTOPILOT_LIVE_REVIEW_PATTERN = /^ap:live_review:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN = /^ap:execute_live_debt:(.+)$/;
+const AUTOPILOT_LIVE_EXECUTE_DRIFT_PATTERN = /^ap:execute_live_drift:(.+)$/;
 
 function telegramSafeMessage(message: string, maxLength = 3_800) {
   if (message.length <= maxLength) return message;
@@ -56,6 +58,15 @@ function autopilotAcceptDebtKeyboard(planId: string) {
   };
 }
 
+function autopilotAcceptDriftKeyboard(planId: string) {
+  return {
+    inline_keyboard: [
+      [{ text: "Accept drift & review live transaction", callback_data: `ap:accept_drift:${planId}` }],
+      [{ text: "Wait", callback_data: `ap:pause:${planId}` }]
+    ]
+  };
+}
+
 function autopilotLiveKeyboard(planId: string) {
   const config = getConfig();
   const executorPrivateKey = config.AUTOPILOT_EXECUTOR_PRIVATE_KEY || config.BASE_WALLET_PRIVATE_KEY;
@@ -67,13 +78,19 @@ function autopilotLiveKeyboard(planId: string) {
   };
 }
 
-function autopilotLiveConfirmKeyboard(planId: string, options: { allowUncoveredDebt?: boolean } = {}) {
+function autopilotLiveConfirmKeyboard(planId: string, options: { allowUncoveredDebt?: boolean; allowBoundaryDrift?: boolean } = {}) {
+  const callbackPrefix = options.allowUncoveredDebt ? "ap:execute_live_debt" : options.allowBoundaryDrift ? "ap:execute_live_drift" : "ap:execute_live";
+  const confirmText = options.allowUncoveredDebt
+    ? "Confirm accepted-debt transaction"
+    : options.allowBoundaryDrift
+      ? "Confirm accepted-drift transaction"
+      : "Confirm live transaction";
   return {
     inline_keyboard: [
       [
         {
-          text: options.allowUncoveredDebt ? "Confirm accepted-debt transaction" : "Confirm live transaction",
-          callback_data: `${options.allowUncoveredDebt ? "ap:execute_live_debt" : "ap:execute_live"}:${planId}`
+          text: confirmText,
+          callback_data: `${callbackPrefix}:${planId}`
         },
         { text: "Cancel", callback_data: `ap:pause:${planId}` }
       ]
@@ -102,18 +119,28 @@ function blockedOnlyByUncoveredDebt(result: { status: string; reasons?: string[]
   return result.status === "blocked" && result.reasons?.length === 1 && result.reasons[0] === "Uncovered debt";
 }
 
+function blockedOnlyByBoundaryDrift(result: { status: string; reasons?: string[] }) {
+  return result.status === "blocked" && result.reasons?.length === 1 && result.reasons[0] === "Boundary drift";
+}
+
 function uncoveredDebtText(execution: { checks: Array<{ label: string; detail: string }> }) {
   return execution.checks.find((check) => check.label === "Uncovered debt")?.detail;
 }
 
-function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: { allowUncoveredDebt?: boolean } = {}) {
+function boundaryDriftText(execution: { checks: Array<{ label: string; detail: string }> }) {
+  return execution.checks.find((check) => check.label === "Boundary drift")?.detail;
+}
+
+function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: { allowUncoveredDebt?: boolean; allowBoundaryDrift?: boolean } = {}) {
   return [
     "Live execution review",
     `Plan id: ${planId}`,
     "",
     options.allowUncoveredDebt ? `You are accepting uncovered debt: ${uncoveredDebtText(execution) ?? "above normal limit"}` : undefined,
     options.allowUncoveredDebt ? "This may lock in a worse buyback/sell price." : undefined,
-    options.allowUncoveredDebt ? "" : undefined,
+    options.allowBoundaryDrift ? `You are accepting boundary drift: ${boundaryDriftText(execution) ?? "above normal limit"}` : undefined,
+    options.allowBoundaryDrift ? "This may lock in a worse swap price." : undefined,
+    options.allowUncoveredDebt || options.allowBoundaryDrift ? "" : undefined,
     "This will submit one atomic rebalance transaction on Base from the configured executor wallet.",
     "Only continue if the dry-run output still matches the action you expect.",
     "",
@@ -236,7 +263,14 @@ export function createBot() {
       if (record.status === "approved") {
         const preview = await createAutopilotExecutionPreview(record.id);
         await ctx.reply(preview.telegramSummary, {
-          reply_markup: preview.status === "ready" ? autopilotExecutionKeyboard(record.id) : blockedOnlyByUncoveredDebt(preview) ? autopilotAcceptDebtKeyboard(record.id) : undefined
+          reply_markup:
+            preview.status === "ready"
+              ? autopilotExecutionKeyboard(record.id)
+              : blockedOnlyByUncoveredDebt(preview)
+                ? autopilotAcceptDebtKeyboard(record.id)
+                : blockedOnlyByBoundaryDrift(preview)
+                  ? autopilotAcceptDriftKeyboard(record.id)
+                  : undefined
         });
       }
     } catch (error) {
@@ -288,6 +322,34 @@ export function createBot() {
     } catch (error) {
       await ctx.answerCbQuery("Debt override failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Debt override failed: ${error.message}` : "Debt override failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_ACCEPT_DRIFT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Preparing accepted-drift live review...");
+      const normalPreview = await createAutopilotExecutionPreview(planId);
+      if (!blockedOnlyByBoundaryDrift(normalPreview)) {
+        await ctx.reply(["Drift override is not available for this plan.", "", normalPreview.telegramSummary].join("\n"));
+        return;
+      }
+
+      const execution = await createAutopilotDryRunExecution(planId, { allowBoundaryDrift: true });
+      if (execution.status !== "validated") {
+        await ctx.reply(["Accepted-drift live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        return;
+      }
+
+      await ctx.reply(liveReviewMessage(planId, execution, { allowBoundaryDrift: true }), {
+        reply_markup: autopilotLiveConfirmKeyboard(planId, { allowBoundaryDrift: true })
+      });
+    } catch (error) {
+      await ctx.answerCbQuery("Drift override failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Drift override failed: ${error.message}` : "Drift override failed.");
     }
   });
 
@@ -354,6 +416,36 @@ export function createBot() {
       await ctx.reply("Sending accepted-debt atomic rebalance transaction to Base. Please wait...");
 
       const result = await broadcastAutopilotRebalance(planId, { allowUncoveredDebt: true });
+
+      if (result.success && result.txHash) {
+        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+        await ctx.reply(
+          [
+            "**Transaction executed successfully on-chain!**",
+            `Tx Hash: \`${result.txHash}\``,
+            `[View on Blockscout](${explorerUrl})`
+          ].join("\n"),
+          { parse_mode: "Markdown" }
+        );
+      } else {
+        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
+      }
+    } catch (error) {
+      await ctx.answerCbQuery("Live execution failed", { show_alert: true });
+      await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
+    }
+  });
+
+  bot.action(AUTOPILOT_LIVE_EXECUTE_DRIFT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Broadcasting accepted-drift transaction...");
+      await ctx.reply("Sending accepted-drift atomic rebalance transaction to Base. Please wait...");
+
+      const result = await broadcastAutopilotRebalance(planId, { allowBoundaryDrift: true });
 
       if (result.success && result.txHash) {
         const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;

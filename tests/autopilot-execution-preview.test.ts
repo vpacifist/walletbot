@@ -217,4 +217,74 @@ describe("buildAutopilotExecutionPreview", () => {
     expect(accepted.reasons).not.toContain("Uncovered debt");
     expect(accepted.telegramSummary).toContain("OK Uncovered debt: $8.39 accepted by user; normal limit $1.5 after $0 fee credit");
   });
+
+  it("blocks boundary drift until the user accepts the override", () => {
+    const currentPlan = plan({
+      title: "Small-capital plan",
+      strategy: {
+        preset: "small_capital_test",
+        label: "Small capital test",
+        targetWidthTicks: 240,
+        confirmationSeconds: 30,
+        maxDriftBps: 30,
+        maxImmediateCostUsd: 5,
+        maxUncoveredDebtUsd: 1.5,
+        feeCreditMustCoverCosts: false
+      },
+      pool: {
+        currentTick: -200781,
+        baseTick: -200820,
+        price: 1907.45,
+        triggerBufferPercent: 0.1,
+        reverseBufferPercent: 0.15,
+        confirmationMinutes: 0.5,
+        cooldownMinutes: 20
+      },
+      economics: {
+        immediateCostUsd: 0.93,
+        estimatedSlippageUsd: 0.83,
+        estimatedGasUsd: 0.1,
+        reversalDebtUsd: 0,
+        feeCreditUsd: 0,
+        collectedFeesSinceLastSwapUsd: 0,
+        uncollectedFeesUsd: 0,
+        uncoveredReversalDebtUsd: 0.93,
+        feesNeededToReverseUsd: 0.93,
+        lastDirectionalSwap: null
+      },
+      ladder: [
+        {
+          role: "active",
+          range: "-201060 - -200820",
+          lowerTick: -201060,
+          upperTick: -200820,
+          lowerPrice: 1855.72,
+          upperPrice: 1900.79,
+          tokenId: "5245558",
+          status: "above_range",
+          plannedAction: "Close current test range"
+        }
+      ],
+      actions: [
+        { type: "close", label: "Close current test range #5245558", detail: "Close the current single test range.", estimatedCostUsd: 0.93, tokenId: "5245558" },
+        { type: "mint", label: "Mint next 240-tick range", detail: "Target ticks -200820 - -200580.", estimatedCostUsd: 0.93, lowerTick: -200820, upperTick: -200580 }
+      ]
+    });
+
+    const blocked = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", currentPlan);
+    const accepted = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "same" },
+      "same",
+      currentPlan,
+      { status: "not_requested" },
+      { allowBoundaryDrift: true }
+    );
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.reasons).toEqual(["Boundary drift"]);
+    expect(blocked.telegramSummary).toContain("BLOCKED Boundary drift: 35.0 bps above upper boundary $1,900.79; limit 30 bps");
+    expect(accepted.status).toBe("ready");
+    expect(accepted.reasons).not.toContain("Boundary drift");
+    expect(accepted.telegramSummary).toContain("OK Boundary drift: 35.0 bps above upper boundary $1,900.79; limit 30 bps; accepted by user");
+  });
 });

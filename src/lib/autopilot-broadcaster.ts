@@ -12,6 +12,7 @@ export type AutopilotBroadcastResult = {
 
 export type AutopilotBroadcastOptions = {
   allowUncoveredDebt?: boolean;
+  allowBoundaryDrift?: boolean;
 };
 
 const MAX_DECISION_NOTE_LENGTH = 1_500;
@@ -102,6 +103,16 @@ function decisionNote(message: string) {
   return message.length > MAX_DECISION_NOTE_LENGTH ? `${message.slice(0, MAX_DECISION_NOTE_LENGTH - 3)}...` : message;
 }
 
+function executionDecisionNote(options: AutopilotBroadcastOptions) {
+  const accepted = [
+    options.allowUncoveredDebt ? "user-accepted uncovered debt" : null,
+    options.allowBoundaryDrift ? "user-accepted boundary drift" : null
+  ].filter(Boolean);
+  return accepted.length > 0
+    ? `Initiating on-chain transaction execution with ${accepted.join(" and ")}...`
+    : "Initiating on-chain transaction execution...";
+}
+
 export async function broadcastAutopilotRebalance(
   planId: string,
   options: AutopilotBroadcastOptions = {}
@@ -114,9 +125,7 @@ export async function broadcastAutopilotRebalance(
     where: { id: planId, status: "approved" },
     data: {
       status: "executing",
-      decisionNote: options.allowUncoveredDebt
-        ? "Initiating on-chain transaction execution with user-accepted uncovered debt..."
-        : "Initiating on-chain transaction execution..."
+      decisionNote: executionDecisionNote(options)
     }
   });
   if (locked.count !== 1) {
