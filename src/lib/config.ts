@@ -3,6 +3,8 @@ import { loadEnvConfig } from "@next/env";
 
 loadEnvConfig(process.cwd());
 
+const WEAK_APP_PASSWORDS = new Set(["change-me", "change-me-now", "password", "walletbot", "replace-with-long-random-password"]);
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   BASE_WALLET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
@@ -51,6 +53,22 @@ const envSchema = z.object({
     .string()
     .optional()
     .default("")
+}).superRefine((env, ctx) => {
+  if (env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_CHAT_ID) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TELEGRAM_CHAT_ID"],
+      message: "TELEGRAM_CHAT_ID is required when TELEGRAM_BOT_TOKEN is configured."
+    });
+  }
+
+  if (process.env.NODE_ENV === "production" && WEAK_APP_PASSWORDS.has(env.APP_PASSWORD.toLowerCase())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["APP_PASSWORD"],
+      message: "APP_PASSWORD must be set to a non-default value in production."
+    });
+  }
 });
 
 let cachedConfig: z.infer<typeof envSchema> | undefined;

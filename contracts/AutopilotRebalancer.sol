@@ -40,6 +40,7 @@ interface INonfungiblePositionManager {
     function decreaseLiquidity(DecreaseLiquidityParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
     function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
     function mint(MintParams calldata params) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    function ownerOf(uint256 tokenId) external view returns (address owner);
 }
 
 interface ISwapRouter02 {
@@ -65,6 +66,8 @@ contract AutopilotRebalancer {
     error UnsupportedFee();
     error InvalidRecipient();
     error InvalidAmount();
+    error InvalidTokenOrder();
+    error NotVaultPosition();
     error UnsupportedSwapTarget();
     error SwapFailed(bytes data);
     error InsufficientSwapOutput(uint256 amountOut, uint256 amountOutMinimum);
@@ -157,7 +160,12 @@ contract AutopilotRebalancer {
         if (owner_ == address(0)) revert InvalidRecipient();
         if (executor_ == address(0)) revert InvalidRecipient();
         if (vault_ == address(0)) revert InvalidRecipient();
+        if (weth_ == address(0)) revert InvalidRecipient();
+        if (usdc_ == address(0)) revert InvalidRecipient();
+        if (positionManager_ == address(0)) revert InvalidRecipient();
+        if (swapRouter_ == address(0)) revert InvalidRecipient();
         if (allowanceHolder_ == address(0)) revert InvalidRecipient();
+        if (weth_ >= usdc_) revert InvalidTokenOrder();
         owner = owner_;
         executor = executor_;
         vault = vault_;
@@ -180,6 +188,7 @@ contract AutopilotRebalancer {
         _validateMint(params.mintPosition);
 
         if (params.closePosition.liquidity == 0) revert InvalidAmount();
+        if (positionManager.ownerOf(params.closePosition.tokenId) != vault) revert NotVaultPosition();
         positionManager.decreaseLiquidity(
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: params.closePosition.tokenId,
@@ -243,6 +252,7 @@ contract AutopilotRebalancer {
 
     function _validateSwap(SwapParams calldata swap) private view {
         if (swap.amountIn == 0) revert InvalidAmount();
+        if (swap.amountOutMinimum == 0) revert InvalidAmount();
         if (swap.data.length == 0) {
             if (swap.spender != address(0) && swap.spender != address(swapRouter)) revert UnsupportedSwapTarget();
             if (swap.target != address(0) && swap.target != address(swapRouter)) revert UnsupportedSwapTarget();

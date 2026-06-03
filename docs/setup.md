@@ -22,6 +22,8 @@ corepack prepare pnpm@10.12.1 --activate
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
+If `TELEGRAM_BOT_TOKEN` is configured, `TELEGRAM_CHAT_ID` is required. In production, do not use a default or placeholder `APP_PASSWORD`; startup validation rejects known weak values.
+
 Live execution is off by default. To enable it, set both:
 
 - `AUTOPILOT_LIVE_EXECUTION_ENABLED=true`

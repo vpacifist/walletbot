@@ -47,6 +47,13 @@ export const erc721OwnerAbi = [
   },
   {
     type: "function",
+    name: "ownerOf",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
     name: "getApproved",
     stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],

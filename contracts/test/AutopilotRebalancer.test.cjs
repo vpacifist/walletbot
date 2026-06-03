@@ -189,7 +189,7 @@ describe("AutopilotRebalancer", function () {
           tokenIn: BASE_ADDRESSES.weth,
           tokenOut: BASE_ADDRESSES.usdc,
           amountIn: 1,
-          amountOutMinimum: 0,
+          amountOutMinimum: 1,
           sqrtPriceLimitX96: 0,
           spender: other.address,
           target: other.address,

@@ -24,7 +24,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <input id="password" name="password" type="password" autoComplete="current-password" required />
         </div>
 
-        {params.error ? <p className="error">Invalid password.</p> : null}
+        {params.error ? <p className="error">{params.error === "rate_limited" ? "Too many attempts. Try again later." : "Invalid password."}</p> : null}
         <button className="button primary" type="submit">
           Sign in
         </button>

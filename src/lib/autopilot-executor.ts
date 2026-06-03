@@ -71,6 +71,7 @@ export type AutopilotDryRunExecution = {
 // between planning and execution. A wider mint guard avoids reverting while
 // unused token dust is still refunded to the vault.
 const MINT_SLIPPAGE_BPS = 100;
+const CLOSE_SLIPPAGE_BPS = 100;
 const SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS = 2_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
@@ -718,6 +719,21 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
 
+  const decreaseAmount0 = closeState.decreaseAmount0;
+  const decreaseAmount1 = closeState.decreaseAmount1;
+  if (decreaseAmount0 === undefined || decreaseAmount1 === undefined) {
+    return {
+      status: "blocked",
+      target,
+      functionName: "rebalance",
+      data: null,
+      dataPreview: null,
+      reason: closeState.decreaseQuoteError
+        ? `Atomic rebalance needs simulated close token amounts: ${closeState.decreaseQuoteError}`
+        : "Atomic rebalance needs simulated close token amounts."
+    };
+  }
+
   const atomicAmounts = atomicMintAmounts(mintIntent, swapIntent, closeState, options.pool);
   if (atomicAmounts.status === "blocked") {
     return {
@@ -730,6 +746,8 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
   const mintAmounts = atomicAmounts.amounts;
+  const closeAmount0Min = (decreaseAmount0 * BigInt(10_000 - CLOSE_SLIPPAGE_BPS)) / 10_000n;
+  const closeAmount1Min = (decreaseAmount1 * BigInt(10_000 - CLOSE_SLIPPAGE_BPS)) / 10_000n;
 
   const data = encodeFunctionData({
     abi: autopilotRebalancerAbi,
@@ -739,8 +757,8 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
         closePosition: {
           tokenId: BigInt(closeIntent.tokenId),
           liquidity: closeState.liquidity,
-          amount0Min: 0n,
-          amount1Min: 0n
+          amount0Min: closeAmount0Min,
+          amount1Min: closeAmount1Min
         },
         swap: {
           tokenIn: swapIntent.tokenInAddress,
@@ -1124,7 +1142,13 @@ async function fetchNftApproval(tokenId: string): Promise<NftApprovalState> {
   try {
     const owner = getAddress(getConfig().BASE_WALLET_ADDRESS);
     const operator = getAddress(rebalancerAddress);
-    const [approved, approvedForAll] = await Promise.all([
+    const [actualOwner, approved, approvedForAll] = await Promise.all([
+      createBaseClient().readContract({
+        address: CONTRACTS.nonfungiblePositionManager,
+        abi: positionManagerAbi,
+        functionName: "ownerOf",
+        args: [BigInt(tokenId)]
+      }),
       createBaseClient().readContract({
         address: CONTRACTS.nonfungiblePositionManager,
         abi: positionManagerAbi,
@@ -1138,6 +1162,13 @@ async function fetchNftApproval(tokenId: string): Promise<NftApprovalState> {
         args: [owner, operator]
       })
     ]);
+    if (actualOwner.toLowerCase() !== owner.toLowerCase()) {
+      return {
+        status: "not_approved",
+        tokenId,
+        detail: `Position #${tokenId} is owned by ${actualOwner}, not configured vault ${owner}`
+      };
+    }
     const isApproved = approvedForAll || approved.toLowerCase() === operator.toLowerCase();
     return {
       status: isApproved ? "approved" : "not_approved",

@@ -27,7 +27,7 @@ function telegramSafeMessage(message: string, maxLength = 3_800) {
 
 function assertAllowedChat(ctx: Context) {
   const expected = getConfig().TELEGRAM_CHAT_ID;
-  if (!expected) return true;
+  if (!expected) return false;
   const chatId = ctx.chat?.id ?? (ctx.callbackQuery?.message && "chat" in ctx.callbackQuery.message ? ctx.callbackQuery.message.chat.id : undefined);
   return String(chatId) === expected;
 }
