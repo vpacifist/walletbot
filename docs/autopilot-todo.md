@@ -33,7 +33,6 @@
   - if boundary drift is within the auto limit and all gates are green, `auto_guarded` should execute;
   - if execution is blocked only by uncovered debt, show `Accept debt` review;
   - if blocked only by boundary drift, show `Accept drift` review;
-  - if both uncovered debt and boundary drift block execution, show a combined `Accept debt + drift` review;
   - waiting is an explicit user choice, not the default near-boundary behavior.
 
 ## P2 Transaction And Audit UI

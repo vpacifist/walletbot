@@ -235,6 +235,52 @@ describe("broadcastAutopilotRebalance", () => {
     });
   });
 
+  it("executes with accepted uncovered debt and boundary drift overrides", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [
+        { label: "Uncovered debt", ok: true, detail: "$8.39 accepted by user; normal limit $1.5 after $0 fee credit" },
+        { label: "Boundary drift", ok: true, detail: "35.0 bps above upper boundary $1,900.79; limit 30 bps; accepted by user" }
+      ],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction: vi.fn().mockResolvedValue("0xmocktxhash"),
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockResolvedValue("0x"),
+      estimateGas: vi.fn().mockResolvedValue(100000n),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        gasUsed: 100000n
+      })
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id", { allowUncoveredDebt: true, allowBoundaryDrift: true });
+
+    expect(result.success).toBe(true);
+    expect(executor.createAutopilotDryRunExecution).toHaveBeenCalledWith("test-plan-id", { allowUncoveredDebt: true, allowBoundaryDrift: true });
+    expect(prisma.rebalancePlan.updateMany).toHaveBeenCalledWith({
+      where: { id: "test-plan-id", status: "approved" },
+      data: {
+        status: "executing",
+        decisionNote: "Initiating on-chain transaction execution with user-accepted uncovered debt and user-accepted boundary drift..."
+      }
+    });
+  });
+
   it("reports out-of-gas reverted receipts with gas usage", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",

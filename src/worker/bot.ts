@@ -12,10 +12,12 @@ const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
 const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
 const AUTOPILOT_ACCEPT_DEBT_PATTERN = /^ap:accept_debt:(.+)$/;
 const AUTOPILOT_ACCEPT_DRIFT_PATTERN = /^ap:accept_drift:(.+)$/;
+const AUTOPILOT_ACCEPT_DEBT_DRIFT_PATTERN = /^ap:accept_debt_drift:(.+)$/;
 const AUTOPILOT_LIVE_REVIEW_PATTERN = /^ap:live_review:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN = /^ap:execute_live_debt:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DRIFT_PATTERN = /^ap:execute_live_drift:(.+)$/;
+const AUTOPILOT_LIVE_EXECUTE_DEBT_DRIFT_PATTERN = /^ap:execute_live_debt_drift:(.+)$/;
 
 function telegramSafeMessage(message: string, maxLength = 3_800) {
   if (message.length <= maxLength) return message;
@@ -67,6 +69,15 @@ function autopilotAcceptDriftKeyboard(planId: string) {
   };
 }
 
+function autopilotAcceptDebtDriftKeyboard(planId: string) {
+  return {
+    inline_keyboard: [
+      [{ text: "Accept debt + drift & review live transaction", callback_data: `ap:accept_debt_drift:${planId}` }],
+      [{ text: "Wait", callback_data: `ap:pause:${planId}` }]
+    ]
+  };
+}
+
 function autopilotLiveKeyboard(planId: string) {
   const config = getConfig();
   const executorPrivateKey = config.AUTOPILOT_EXECUTOR_PRIVATE_KEY || config.BASE_WALLET_PRIVATE_KEY;
@@ -79,8 +90,17 @@ function autopilotLiveKeyboard(planId: string) {
 }
 
 function autopilotLiveConfirmKeyboard(planId: string, options: AutopilotBroadcastOptions & { refreshed?: boolean } = {}) {
-  const callbackPrefix = options.allowUncoveredDebt ? "ap:execute_live_debt" : options.allowBoundaryDrift ? "ap:execute_live_drift" : "ap:execute_live";
-  const confirmText = options.allowUncoveredDebt
+  const callbackPrefix =
+    options.allowUncoveredDebt && options.allowBoundaryDrift
+      ? "ap:execute_live_debt_drift"
+      : options.allowUncoveredDebt
+        ? "ap:execute_live_debt"
+        : options.allowBoundaryDrift
+          ? "ap:execute_live_drift"
+          : "ap:execute_live";
+  const confirmText = options.allowUncoveredDebt && options.allowBoundaryDrift
+    ? "Confirm accepted-risk transaction"
+    : options.allowUncoveredDebt
     ? "Confirm accepted-debt transaction"
     : options.allowBoundaryDrift
       ? "Confirm accepted-drift transaction"
@@ -121,6 +141,11 @@ function blockedOnlyByUncoveredDebt(result: { status: string; reasons?: string[]
 
 function blockedOnlyByBoundaryDrift(result: { status: string; reasons?: string[] }) {
   return result.status === "blocked" && result.reasons?.length === 1 && result.reasons[0] === "Boundary drift";
+}
+
+function blockedOnlyByUncoveredDebtAndBoundaryDrift(result: { status: string; reasons?: string[] }) {
+  const reasons = result.reasons ?? [];
+  return result.status === "blocked" && reasons.length === 2 && reasons.includes("Uncovered debt") && reasons.includes("Boundary drift");
 }
 
 function uncoveredDebtText(execution: { checks: Array<{ label: string; detail: string }> }) {
@@ -294,7 +319,9 @@ export function createBot() {
           reply_markup:
             preview.status === "ready"
               ? autopilotExecutionKeyboard(record.id)
-              : blockedOnlyByUncoveredDebt(preview)
+              : blockedOnlyByUncoveredDebtAndBoundaryDrift(preview)
+                ? autopilotAcceptDebtDriftKeyboard(record.id)
+                : blockedOnlyByUncoveredDebt(preview)
                 ? autopilotAcceptDebtKeyboard(record.id)
                 : blockedOnlyByBoundaryDrift(preview)
                   ? autopilotAcceptDriftKeyboard(record.id)
@@ -378,6 +405,34 @@ export function createBot() {
     } catch (error) {
       await ctx.answerCbQuery("Drift override failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Drift override failed: ${error.message}` : "Drift override failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_ACCEPT_DEBT_DRIFT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Preparing accepted-risk live review...");
+      const normalPreview = await createAutopilotExecutionPreview(planId);
+      if (!blockedOnlyByUncoveredDebtAndBoundaryDrift(normalPreview)) {
+        await ctx.reply(["Debt + drift override is not available for this plan.", "", normalPreview.telegramSummary].join("\n"));
+        return;
+      }
+
+      const execution = await createAutopilotDryRunExecution(planId, { allowUncoveredDebt: true, allowBoundaryDrift: true });
+      if (execution.status !== "validated") {
+        await ctx.reply(["Accepted-risk live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        return;
+      }
+
+      await ctx.reply(liveReviewMessage(planId, execution, { allowUncoveredDebt: true, allowBoundaryDrift: true }), {
+        reply_markup: autopilotLiveConfirmKeyboard(planId, { allowUncoveredDebt: true, allowBoundaryDrift: true })
+      });
+    } catch (error) {
+      await ctx.answerCbQuery("Risk override failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Risk override failed: ${error.message}` : "Risk override failed.");
     }
   });
 
@@ -489,6 +544,37 @@ export function createBot() {
         );
       } else {
         if (await replyWithFastRetryReview(ctx, result, { allowBoundaryDrift: true })) return;
+        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
+      }
+    } catch (error) {
+      await ctx.answerCbQuery("Live execution failed", { show_alert: true });
+      await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
+    }
+  });
+
+  bot.action(AUTOPILOT_LIVE_EXECUTE_DEBT_DRIFT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Broadcasting accepted-risk transaction...");
+      await ctx.reply("Sending accepted-risk atomic rebalance transaction to Base. Please wait...");
+
+      const result = await broadcastAutopilotRebalance(planId, { allowUncoveredDebt: true, allowBoundaryDrift: true });
+
+      if (result.success && result.txHash) {
+        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+        await ctx.reply(
+          [
+            "**Transaction executed successfully on-chain!**",
+            `Tx Hash: \`${result.txHash}\``,
+            `[View on Blockscout](${explorerUrl})`
+          ].join("\n"),
+          { parse_mode: "Markdown" }
+        );
+      } else {
+        if (await replyWithFastRetryReview(ctx, result, { allowUncoveredDebt: true, allowBoundaryDrift: true })) return;
         await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
       }
     } catch (error) {
