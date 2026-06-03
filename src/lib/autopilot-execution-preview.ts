@@ -39,6 +39,10 @@ export type SwapQuoteResult =
   | { status: "available"; data: SwapQuote }
   | { status: "unavailable"; request: SwapQuoteRequest; reason: string };
 
+export type AutopilotExecutionPreviewOptions = {
+  allowUncoveredDebt?: boolean;
+};
+
 function formatUsd(value: number) {
   return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
@@ -107,13 +111,15 @@ export function buildAutopilotExecutionPreview(
   record: Pick<RebalancePlan, "id" | "status" | "planKey">,
   currentPlanKey: string,
   currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>,
-  quote: SwapQuoteResult = { status: "not_requested" }
+  quote: SwapQuoteResult = { status: "not_requested" },
+  options: AutopilotExecutionPreviewOptions = {}
 ) {
   const isApproved = record.status === "approved" || record.status === "executing";
   const isFresh = currentPlanKey === record.planKey;
   const hasAction = currentPlan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
   const costOk = currentPlan.economics.immediateCostUsd <= currentPlan.strategy.maxImmediateCostUsd;
-  const uncoveredDebtOk = currentPlan.economics.uncoveredReversalDebtUsd <= currentPlan.strategy.maxUncoveredDebtUsd;
+  const uncoveredDebtWithinLimit = currentPlan.economics.uncoveredReversalDebtUsd <= currentPlan.strategy.maxUncoveredDebtUsd;
+  const uncoveredDebtOk = uncoveredDebtWithinLimit || Boolean(options.allowUncoveredDebt);
   const strategyAllowsExecution = currentPlan.strategy.preset !== "small_capital_test" || currentPlan.actions.some((action) => action.type === "close" || action.type === "mint");
   const notIdle = currentPlan.state !== "idle";
 
@@ -146,7 +152,11 @@ export function buildAutopilotExecutionPreview(
     {
       label: "Uncovered debt",
       ok: uncoveredDebtOk,
-      detail: `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+      detail: uncoveredDebtWithinLimit
+        ? `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+        : options.allowUncoveredDebt
+          ? `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} accepted by user; normal limit ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
+          : `${formatUsd(currentPlan.economics.uncoveredReversalDebtUsd)} <= ${formatUsd(currentPlan.strategy.maxUncoveredDebtUsd)} after ${formatUsd(currentPlan.economics.feeCreditUsd)} fee credit`
     },
     {
       label: "Strategy preset",
@@ -191,7 +201,10 @@ export function buildAutopilotExecutionPreview(
   };
 }
 
-export async function createAutopilotExecutionPreview(planId: string): Promise<AutopilotExecutionPreview> {
+export async function createAutopilotExecutionPreview(
+  planId: string,
+  options: AutopilotExecutionPreviewOptions = {}
+): Promise<AutopilotExecutionPreview> {
   const record = await prisma.rebalancePlan.findUnique({ where: { id: planId } });
   if (!record) throw new Error("Rebalance plan not found");
 
@@ -202,5 +215,5 @@ export async function createAutopilotExecutionPreview(planId: string): Promise<A
         .then((data): SwapQuoteResult => ({ status: "available", data }))
         .catch((error): SwapQuoteResult => ({ status: "unavailable", request: quoteRequest, reason: shortError(error) }))
     : { status: "not_requested" };
-  return buildAutopilotExecutionPreview(record, autopilotPlanKey(currentPlan), currentPlan, quote);
+  return buildAutopilotExecutionPreview(record, autopilotPlanKey(currentPlan), currentPlan, quote, options);
 }

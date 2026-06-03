@@ -174,4 +174,47 @@ describe("buildAutopilotExecutionPreview", () => {
     expect(preview.reasons).not.toContain("Uncovered debt");
     expect(preview.telegramSummary).toContain("OK Uncovered debt: $0.93 <= $1.5 after $0 fee credit");
   });
+
+  it("allows uncovered debt only when the user accepted the override", () => {
+    const currentPlan = plan({
+      title: "Small-capital plan",
+      strategy: {
+        preset: "small_capital_test",
+        label: "Small capital test",
+        targetWidthTicks: 240,
+        confirmationSeconds: 30,
+        maxDriftBps: 30,
+        maxImmediateCostUsd: 5,
+        maxUncoveredDebtUsd: 1.5,
+        feeCreditMustCoverCosts: false
+      },
+      economics: {
+        immediateCostUsd: 0.56,
+        estimatedSlippageUsd: 0.46,
+        estimatedGasUsd: 0.1,
+        reversalDebtUsd: 7.82,
+        feeCreditUsd: 0,
+        collectedFeesSinceLastSwapUsd: 0,
+        uncollectedFeesUsd: 0,
+        uncoveredReversalDebtUsd: 8.39,
+        feesNeededToReverseUsd: 8.39,
+        lastDirectionalSwap: null
+      }
+    });
+
+    const blocked = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", currentPlan);
+    const accepted = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "same" },
+      "same",
+      currentPlan,
+      { status: "not_requested" },
+      { allowUncoveredDebt: true }
+    );
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.reasons).toEqual(["Uncovered debt"]);
+    expect(accepted.status).toBe("ready");
+    expect(accepted.reasons).not.toContain("Uncovered debt");
+    expect(accepted.telegramSummary).toContain("OK Uncovered debt: $8.39 accepted by user; normal limit $1.5 after $0 fee credit");
+  });
 });

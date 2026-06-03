@@ -1,6 +1,6 @@
 import { encodeFunctionData, getAddress, parseUnits, type Address } from "viem";
 import { autopilotRebalancerAbi, erc20Abi, positionManagerAbi, swapRouter02Abi } from "./abi";
-import { createAutopilotExecutionPreview, type AutopilotExecutionPreview } from "./autopilot-execution-preview";
+import { createAutopilotExecutionPreview, type AutopilotExecutionPreview, type AutopilotExecutionPreviewOptions } from "./autopilot-execution-preview";
 import { autopilotExecutorAddress, createBaseClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS, TOKEN_META } from "./constants";
@@ -1253,8 +1253,8 @@ async function simulatePreparedCalls(calls: ExecutionCall[]) {
   );
 }
 
-export async function createAutopilotDryRunExecution(planId: string) {
-  const preview = await createAutopilotExecutionPreview(planId);
+export async function createAutopilotDryRunExecution(planId: string, options: AutopilotExecutionPreviewOptions = {}) {
+  const preview = await createAutopilotExecutionPreview(planId, options);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
   const [closeStates, nftApprovals, rebalancerRoles, wethAllowance, usdcAllowance] = await Promise.all([
     Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId))),

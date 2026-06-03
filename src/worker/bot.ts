@@ -10,8 +10,10 @@ import { getWebAppUrl } from "@/lib/web-app-url";
 
 const AUTOPILOT_DECISION_PATTERN = /^ap:(approve|skip|pause):(.+)$/;
 const AUTOPILOT_EXECUTE_PATTERN = /^ap:execute:(.+)$/;
+const AUTOPILOT_ACCEPT_DEBT_PATTERN = /^ap:accept_debt:(.+)$/;
 const AUTOPILOT_LIVE_REVIEW_PATTERN = /^ap:live_review:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
+const AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN = /^ap:execute_live_debt:(.+)$/;
 
 function telegramSafeMessage(message: string, maxLength = 3_800) {
   if (message.length <= maxLength) return message;
@@ -45,6 +47,15 @@ function autopilotExecutionKeyboard(planId: string) {
   };
 }
 
+function autopilotAcceptDebtKeyboard(planId: string) {
+  return {
+    inline_keyboard: [
+      [{ text: "Accept debt & review live transaction", callback_data: `ap:accept_debt:${planId}` }],
+      [{ text: "Wait", callback_data: `ap:pause:${planId}` }]
+    ]
+  };
+}
+
 function autopilotLiveKeyboard(planId: string) {
   const config = getConfig();
   const executorPrivateKey = config.AUTOPILOT_EXECUTOR_PRIVATE_KEY || config.BASE_WALLET_PRIVATE_KEY;
@@ -56,11 +67,14 @@ function autopilotLiveKeyboard(planId: string) {
   };
 }
 
-function autopilotLiveConfirmKeyboard(planId: string) {
+function autopilotLiveConfirmKeyboard(planId: string, options: { allowUncoveredDebt?: boolean } = {}) {
   return {
     inline_keyboard: [
       [
-        { text: "Confirm live transaction", callback_data: `ap:execute_live:${planId}` },
+        {
+          text: options.allowUncoveredDebt ? "Confirm accepted-debt transaction" : "Confirm live transaction",
+          callback_data: `${options.allowUncoveredDebt ? "ap:execute_live_debt" : "ap:execute_live"}:${planId}`
+        },
         { text: "Cancel", callback_data: `ap:pause:${planId}` }
       ]
     ]
@@ -82,6 +96,38 @@ function decisionLabel(decision: string) {
 
 function configuredWalletWhere() {
   return { address: getConfig().BASE_WALLET_ADDRESS };
+}
+
+function blockedOnlyByUncoveredDebt(result: { status: string; reasons?: string[] }) {
+  return result.status === "blocked" && result.reasons?.length === 1 && result.reasons[0] === "Uncovered debt";
+}
+
+function uncoveredDebtText(execution: { checks: Array<{ label: string; detail: string }> }) {
+  return execution.checks.find((check) => check.label === "Uncovered debt")?.detail;
+}
+
+function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: { allowUncoveredDebt?: boolean } = {}) {
+  return [
+    "Live execution review",
+    `Plan id: ${planId}`,
+    "",
+    options.allowUncoveredDebt ? `You are accepting uncovered debt: ${uncoveredDebtText(execution) ?? "above normal limit"}` : undefined,
+    options.allowUncoveredDebt ? "This may lock in a worse buyback/sell price." : undefined,
+    options.allowUncoveredDebt ? "" : undefined,
+    "This will submit one atomic rebalance transaction on Base from the configured executor wallet.",
+    "Only continue if the dry-run output still matches the action you expect.",
+    "",
+    "Prepared operations",
+    ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`),
+    "",
+    "Atomic transaction",
+    execution.atomicCall.status === "prepared" ? `Target: ${execution.atomicCall.target}` : `Status: ${execution.atomicCall.status}`,
+    execution.atomicCall.dataPreview ? `Calldata: ${execution.atomicCall.dataPreview}` : undefined,
+    "",
+    "Final confirmation is required before broadcasting."
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
 }
 
 export function createBot() {
@@ -190,7 +236,7 @@ export function createBot() {
       if (record.status === "approved") {
         const preview = await createAutopilotExecutionPreview(record.id);
         await ctx.reply(preview.telegramSummary, {
-          reply_markup: preview.status === "ready" ? autopilotExecutionKeyboard(record.id) : undefined
+          reply_markup: preview.status === "ready" ? autopilotExecutionKeyboard(record.id) : blockedOnlyByUncoveredDebt(preview) ? autopilotAcceptDebtKeyboard(record.id) : undefined
         });
       }
     } catch (error) {
@@ -217,6 +263,34 @@ export function createBot() {
     }
   });
 
+  bot.action(AUTOPILOT_ACCEPT_DEBT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Preparing accepted-debt live review...");
+      const normalPreview = await createAutopilotExecutionPreview(planId);
+      if (!blockedOnlyByUncoveredDebt(normalPreview)) {
+        await ctx.reply(["Debt override is not available for this plan.", "", normalPreview.telegramSummary].join("\n"));
+        return;
+      }
+
+      const execution = await createAutopilotDryRunExecution(planId, { allowUncoveredDebt: true });
+      if (execution.status !== "validated") {
+        await ctx.reply(["Accepted-debt live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        return;
+      }
+
+      await ctx.reply(liveReviewMessage(planId, execution, { allowUncoveredDebt: true }), {
+        reply_markup: autopilotLiveConfirmKeyboard(planId, { allowUncoveredDebt: true })
+      });
+    } catch (error) {
+      await ctx.answerCbQuery("Debt override failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Debt override failed: ${error.message}` : "Debt override failed.");
+    }
+  });
+
   bot.action(AUTOPILOT_LIVE_REVIEW_PATTERN, async (ctx) => {
     if (!assertAllowedChat(ctx)) return;
 
@@ -231,29 +305,9 @@ export function createBot() {
         return;
       }
 
-      await ctx.reply(
-        [
-          "Live execution review",
-          `Plan id: ${planId}`,
-          "",
-          "This will submit one atomic rebalance transaction on Base from the configured executor wallet.",
-          "Only continue if the dry-run output still matches the action you expect.",
-          "",
-          "Prepared operations",
-          ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`),
-          "",
-          "Atomic transaction",
-          execution.atomicCall.status === "prepared" ? `Target: ${execution.atomicCall.target}` : `Status: ${execution.atomicCall.status}`,
-          execution.atomicCall.dataPreview ? `Calldata: ${execution.atomicCall.dataPreview}` : undefined,
-          "",
-          "Final confirmation is required before broadcasting."
-        ]
-          .filter((line) => line !== undefined)
-          .join("\n"),
-        {
-          reply_markup: autopilotLiveConfirmKeyboard(planId)
-        }
-      );
+      await ctx.reply(liveReviewMessage(planId, execution), {
+        reply_markup: autopilotLiveConfirmKeyboard(planId)
+      });
     } catch (error) {
       await ctx.answerCbQuery("Live review failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Live review failed: ${error.message}` : "Live review failed.");
@@ -270,6 +324,36 @@ export function createBot() {
       await ctx.reply("Sending atomic rebalance transaction to Base. Please wait...");
 
       const result = await broadcastAutopilotRebalance(planId);
+
+      if (result.success && result.txHash) {
+        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+        await ctx.reply(
+          [
+            "**Transaction executed successfully on-chain!**",
+            `Tx Hash: \`${result.txHash}\``,
+            `[View on Blockscout](${explorerUrl})`
+          ].join("\n"),
+          { parse_mode: "Markdown" }
+        );
+      } else {
+        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
+      }
+    } catch (error) {
+      await ctx.answerCbQuery("Live execution failed", { show_alert: true });
+      await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
+    }
+  });
+
+  bot.action(AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+
+    try {
+      await ctx.answerCbQuery("Broadcasting accepted-debt transaction...");
+      await ctx.reply("Sending accepted-debt atomic rebalance transaction to Base. Please wait...");
+
+      const result = await broadcastAutopilotRebalance(planId, { allowUncoveredDebt: true });
 
       if (result.success && result.txHash) {
         const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;

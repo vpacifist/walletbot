@@ -10,6 +10,10 @@ export type AutopilotBroadcastResult = {
   error?: string;
 };
 
+export type AutopilotBroadcastOptions = {
+  allowUncoveredDebt?: boolean;
+};
+
 const MAX_DECISION_NOTE_LENGTH = 1_500;
 const ATOMIC_GAS_BUFFER_BPS = 15_000;
 const ATOMIC_GAS_HARD_CAP = 12_000_000n;
@@ -98,7 +102,10 @@ function decisionNote(message: string) {
   return message.length > MAX_DECISION_NOTE_LENGTH ? `${message.slice(0, MAX_DECISION_NOTE_LENGTH - 3)}...` : message;
 }
 
-export async function broadcastAutopilotRebalance(planId: string): Promise<AutopilotBroadcastResult> {
+export async function broadcastAutopilotRebalance(
+  planId: string,
+  options: AutopilotBroadcastOptions = {}
+): Promise<AutopilotBroadcastResult> {
   if (!getConfig().AUTOPILOT_LIVE_EXECUTION_ENABLED) {
     return { success: false, error: "Live execution is disabled. Set AUTOPILOT_LIVE_EXECUTION_ENABLED=true to enable it." };
   }
@@ -107,7 +114,9 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
     where: { id: planId, status: "approved" },
     data: {
       status: "executing",
-      decisionNote: "Initiating on-chain transaction execution..."
+      decisionNote: options.allowUncoveredDebt
+        ? "Initiating on-chain transaction execution with user-accepted uncovered debt..."
+        : "Initiating on-chain transaction execution..."
     }
   });
   if (locked.count !== 1) {
@@ -119,7 +128,7 @@ export async function broadcastAutopilotRebalance(planId: string): Promise<Autop
   }
 
   try {
-    const execution = await createAutopilotDryRunExecution(planId);
+    const execution = await createAutopilotDryRunExecution(planId, options);
     if (execution.status === "blocked") {
       const failedChecks = execution.checks
         .filter((c) => !c.ok)
