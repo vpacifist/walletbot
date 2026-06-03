@@ -524,9 +524,10 @@ function calculateSmallCapitalPlan(params: {
     preferredPosition?.tickLower === target.lowerTick &&
     preferredPosition?.tickUpper === target.upperTick &&
     currentWidth === strategy.targetWidthTicks;
+  const preferredContainsCurrentTick =
+    preferredPosition !== null && preferredPosition.tickLower <= params.currentTick && params.currentTick < preferredPosition.tickUpper;
   const hasExtraPositions = activePositions.length > 1;
-  const shouldHoldCurrentRange =
-    preferredPosition?.status === "in_range" && currentWidth === strategy.targetWidthTicks && !hasExtraPositions;
+  const shouldHoldCurrentRange = preferredContainsCurrentTick && currentWidth === strategy.targetWidthTicks && !hasExtraPositions;
   const lastSwap = latestDirectionalSwap(params.transactions);
   const debt = reversalDebtUsd(lastSwap, price);
   const collectedFeeCredit = collectedFeesSinceLastSwapUsd(params.transactions, lastSwap, price);

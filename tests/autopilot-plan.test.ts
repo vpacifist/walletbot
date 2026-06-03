@@ -209,4 +209,33 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.economics.immediateCostUsd).toBe(0);
     expect(plan.economics.uncoveredReversalDebtUsd).toBe(0);
   });
+
+  it("does not hold a stale in_range small-capital position when the live tick is outside", () => {
+    const plan = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "5245558",
+          tickLower: -201060,
+          tickUpper: -200820,
+          status: PositionStatus.in_range,
+          wethAmount: "0.5",
+          usdcAmount: "0"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -201147,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    expect(plan.state).toBe("confirming");
+    expect(plan.ladder[0].status).toBe("warn");
+    expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
+    expect(plan.actions[0].tokenId).toBe("5245558");
+    expect(plan.actions[0].detail).not.toContain("still contains price");
+  });
 });
