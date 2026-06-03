@@ -119,6 +119,29 @@ function buildAutoGuardedPostCheckSummary(plan: Awaited<ReturnType<typeof getOrC
     .join("\n");
 }
 
+function checkText(execution: { checks: Array<{ label: string; detail: string }> }, label: string) {
+  return execution.checks.find((check) => check.label === label)?.detail;
+}
+
+function autoGuardedBlockedMessage(planId: string, summary: string, reasons: string[], execution?: { checks: Array<{ label: string; detail: string; ok: boolean }> }) {
+  if (!reasons.includes("Boundary drift") || !execution) {
+    return ["Auto-guarded blocked", `Plan id: ${planId}`, reasons.length > 0 ? `Reason: ${reasons.join("; ")}` : undefined, "", summary].filter(Boolean).join("\n");
+  }
+
+  return [
+    "Auto-guarded blocked: Boundary drift",
+    `Plan id: ${planId}`,
+    "Price moved too far from the crossed range boundary for automatic execution.",
+    `Boundary drift: ${checkText(execution, "Boundary drift") ?? "above normal limit"}`,
+    `Uncovered debt: ${checkText(execution, "Uncovered debt") ?? "not available"}`,
+    `Immediate cost: ${checkText(execution, "Immediate cost") ?? "not available"}`,
+    "",
+    "Accept drift only if you want to rebalance despite the worse boundary price. Other guardrails still apply.",
+    "",
+    summary
+  ].join("\n");
+}
+
 async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return;
@@ -140,13 +163,13 @@ async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
   }
 }
 
-async function sendAutoGuardedBlocked(bot: Telegraf, planId: string, summary: string, reasons: string[] = []) {
+async function sendAutoGuardedBlocked(bot: Telegraf, planId: string, summary: string, reasons: string[] = [], execution?: { checks: Array<{ label: string; detail: string; ok: boolean }> }) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return;
 
   await bot.telegram.sendMessage(
     TELEGRAM_CHAT_ID,
-    ["Auto-guarded blocked", `Plan id: ${planId}`, reasons.length > 0 ? `Reason: ${reasons.join("; ")}` : undefined, "", summary].filter(Boolean).join("\n"),
+    autoGuardedBlockedMessage(planId, summary, reasons, execution),
     { reply_markup: autopilotManualReviewKeyboard(planId, reasons) }
   );
 }
@@ -164,7 +187,7 @@ async function executeAutoGuardedPlan(
   const execution = await createAutopilotDryRunExecution(approved.id, { allowUncoveredDebt: true });
 
   if (execution.status !== "validated") {
-    await sendAutoGuardedBlocked(bot, approved.id, execution.telegramSummary, execution.checks.filter((check) => !check.ok).map((check) => check.label));
+    await sendAutoGuardedBlocked(bot, approved.id, execution.telegramSummary, execution.checks.filter((check) => !check.ok).map((check) => check.label), execution);
     await recordAutopilotPlanEvent({
       dedupeKey,
       plan: autopilotPlan.plan,

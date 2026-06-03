@@ -17,23 +17,9 @@
 
 ## P1 Manual Override Flows
 
-- Boundary drift: 30 bps is the max distance from the crossed boundary for automatic execution, not a minimum move required before proposing a rebalance.
-- If drift is <= 30 bps and all other guardrails pass, `auto_guarded` may execute.
-- If drift is > 30 bps, autopilot must stop and ask for manual review.
-- Boundary drift Telegram UI:
-  - title: `Execution preview blocked: Boundary drift`;
-  - explain that price moved too far from the crossed boundary;
-  - show boundary price, current price, drift bps, normal auto limit, uncovered debt, and immediate cost;
-  - buttons: `Accept drift & review live transaction` and `Wait`;
-  - live review warning: `You are accepting boundary drift. This may lock in a worse swap price.`;
-  - final confirmation button: `Confirm accepted-drift transaction`.
-- Accept drift bypasses only the boundary-drift guardrail; stale plan, quote, preflight, roles, approval, route, and immediate-cost guardrails still apply.
-- Out-of-range blocked execution:
-  - when the position is outside range, do not wait by default;
-  - if boundary drift is within the auto limit and all gates are green, `auto_guarded` should execute;
-  - if execution is blocked only by uncovered debt, show `Accept debt` review;
-  - if blocked only by boundary drift, show `Accept drift` review;
-  - waiting is an explicit user choice, not the default near-boundary behavior.
+- Implemented: boundary drift is an auto-execution blocker only when drift is above the max distance from the crossed boundary.
+- Implemented: Telegram shows a dedicated boundary-drift review block with current price, drift detail, uncovered debt, immediate cost, and `Accept drift & review live transaction` / `Wait`.
+- Implemented: accepted-drift live review warns that this can lock in a worse swap price, while stale plan, quote, preflight, roles, approval, route, and immediate-cost guardrails still apply.
 
 ## P2 Transaction And Audit UI
 

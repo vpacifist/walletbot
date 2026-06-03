@@ -157,6 +157,46 @@ function boundaryDriftText(execution: { checks: Array<{ label: string; detail: s
   return execution.checks.find((check) => check.label === "Boundary drift")?.detail;
 }
 
+function checkText(execution: { checks: Array<{ label: string; detail: string }> }, label: string) {
+  return execution.checks.find((check) => check.label === label)?.detail;
+}
+
+function blockedPreviewMessage(preview: Awaited<ReturnType<typeof createAutopilotExecutionPreview>>) {
+  if (!preview.reasons.includes("Boundary drift")) return preview.telegramSummary;
+
+  return [
+    "Execution preview blocked: Boundary drift",
+    "Price moved too far from the crossed range boundary for automatic execution.",
+    `Current price: $${preview.pool.price.toLocaleString("en-US", { maximumFractionDigits: 2 })} | Tick ${preview.pool.currentTick}`,
+    `Boundary drift: ${checkText(preview, "Boundary drift") ?? "above normal limit"}`,
+    `Uncovered debt: ${checkText(preview, "Uncovered debt") ?? "not available"}`,
+    `Immediate cost: ${checkText(preview, "Immediate cost") ?? "not available"}`,
+    "",
+    "Accept drift only if you want to rebalance despite the worse boundary price. Other guardrails still apply.",
+    "",
+    preview.telegramSummary
+  ].join("\n");
+}
+
+function blockedExecutionMessage(title: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>) {
+  const hasBoundaryDrift = execution.checks.some((check) => check.label === "Boundary drift" && !check.ok);
+  if (!hasBoundaryDrift) return [title, "", execution.telegramSummary].join("\n");
+
+  return [
+    title,
+    "",
+    "Execution blocked: Boundary drift",
+    "Price moved too far from the crossed range boundary for automatic execution.",
+    `Boundary drift: ${boundaryDriftText(execution) ?? "above normal limit"}`,
+    `Uncovered debt: ${checkText(execution, "Uncovered debt") ?? "not available"}`,
+    `Immediate cost: ${checkText(execution, "Immediate cost") ?? "not available"}`,
+    "",
+    "Accepting drift may lock in a worse swap price. Stale plan, quote, preflight, roles, approval, route, and immediate-cost checks still apply.",
+    "",
+    execution.telegramSummary
+  ].join("\n");
+}
+
 function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: AutopilotBroadcastOptions & { refreshed?: boolean } = {}) {
   return [
     options.refreshed ? "Price moved, refreshed quote is ready" : "Live execution review",
@@ -201,7 +241,7 @@ async function replyWithFastRetryReview(ctx: Context, result: AutopilotBroadcast
   const execution = await createAutopilotDryRunExecution(approved.id, options);
 
   if (execution.status !== "validated") {
-    await ctx.reply(["Price moved, refreshed plan is still blocked.", "", execution.telegramSummary].join("\n"));
+    await ctx.reply(blockedExecutionMessage("Price moved, refreshed plan is still blocked.", execution));
     return true;
   }
 
@@ -328,7 +368,7 @@ export function createBot() {
       );
       if (record.status === "approved") {
         const preview = await createAutopilotExecutionPreview(record.id);
-        await ctx.reply(preview.telegramSummary, {
+        await ctx.reply(blockedPreviewMessage(preview), {
           reply_markup:
             preview.status === "ready"
               ? autopilotExecutionKeyboard(record.id)
@@ -356,7 +396,7 @@ export function createBot() {
       await ctx.answerCbQuery("Executor dry-run started");
       const execution = await createAutopilotDryRunExecution(planId);
       const liveKeyboard = execution.status === "validated" ? autopilotLiveKeyboard(planId) : undefined;
-      await ctx.reply(execution.telegramSummary, {
+      await ctx.reply(execution.status === "validated" ? execution.telegramSummary : blockedExecutionMessage("Executor dry-run blocked.", execution), {
         reply_markup: liveKeyboard
       });
     } catch (error) {
@@ -408,7 +448,7 @@ export function createBot() {
 
       const execution = await createAutopilotDryRunExecution(planId, { allowBoundaryDrift: true });
       if (execution.status !== "validated") {
-        await ctx.reply(["Accepted-drift live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        await ctx.reply(blockedExecutionMessage("Accepted-drift live execution review blocked.", execution));
         return;
       }
 
@@ -436,7 +476,7 @@ export function createBot() {
 
       const execution = await createAutopilotDryRunExecution(planId, { allowUncoveredDebt: true, allowBoundaryDrift: true });
       if (execution.status !== "validated") {
-        await ctx.reply(["Accepted-risk live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        await ctx.reply(blockedExecutionMessage("Accepted-risk live execution review blocked.", execution));
         return;
       }
 
@@ -459,7 +499,7 @@ export function createBot() {
       const execution = await createAutopilotDryRunExecution(planId);
 
       if (execution.status !== "validated") {
-        await ctx.reply(["Live execution review blocked.", "", execution.telegramSummary].join("\n"));
+        await ctx.reply(blockedExecutionMessage("Live execution review blocked.", execution));
         return;
       }
 
