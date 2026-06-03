@@ -1,5 +1,5 @@
 import { Context, Telegraf } from "telegraf";
-import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
+import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
@@ -78,7 +78,7 @@ function autopilotLiveKeyboard(planId: string) {
   };
 }
 
-function autopilotLiveConfirmKeyboard(planId: string, options: { allowUncoveredDebt?: boolean; allowBoundaryDrift?: boolean } = {}) {
+function autopilotLiveConfirmKeyboard(planId: string, options: AutopilotBroadcastOptions & { refreshed?: boolean } = {}) {
   const callbackPrefix = options.allowUncoveredDebt ? "ap:execute_live_debt" : options.allowBoundaryDrift ? "ap:execute_live_drift" : "ap:execute_live";
   const confirmText = options.allowUncoveredDebt
     ? "Confirm accepted-debt transaction"
@@ -89,10 +89,10 @@ function autopilotLiveConfirmKeyboard(planId: string, options: { allowUncoveredD
     inline_keyboard: [
       [
         {
-          text: confirmText,
+          text: options.refreshed ? "Confirm refreshed transaction" : confirmText,
           callback_data: `${callbackPrefix}:${planId}`
         },
-        { text: "Cancel", callback_data: `ap:pause:${planId}` }
+        { text: options.refreshed ? "Wait" : "Cancel", callback_data: `ap:pause:${planId}` }
       ]
     ]
   };
@@ -131,11 +131,13 @@ function boundaryDriftText(execution: { checks: Array<{ label: string; detail: s
   return execution.checks.find((check) => check.label === "Boundary drift")?.detail;
 }
 
-function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: { allowUncoveredDebt?: boolean; allowBoundaryDrift?: boolean } = {}) {
+function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof createAutopilotDryRunExecution>>, options: AutopilotBroadcastOptions & { refreshed?: boolean } = {}) {
   return [
-    "Live execution review",
+    options.refreshed ? "Price moved, refreshed quote is ready" : "Live execution review",
     `Plan id: ${planId}`,
     "",
+    options.refreshed ? "A fresh plan, quote, and dry-run were prepared after the previous preflight moved beyond tolerance." : undefined,
+    options.refreshed ? "" : undefined,
     options.allowUncoveredDebt ? `You are accepting uncovered debt: ${uncoveredDebtText(execution) ?? "above normal limit"}` : undefined,
     options.allowUncoveredDebt ? "This may lock in a worse buyback/sell price." : undefined,
     options.allowBoundaryDrift ? `You are accepting boundary drift: ${boundaryDriftText(execution) ?? "above normal limit"}` : undefined,
@@ -155,6 +157,32 @@ function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof 
   ]
     .filter((line) => line !== undefined)
     .join("\n");
+}
+
+function retryablePriceMovementFailure(result: AutopilotBroadcastResult) {
+  return !result.success && /Swap price moved beyond slippage tolerance|retry with a fresh plan/i.test(result.error ?? "");
+}
+
+async function replyWithFastRetryReview(ctx: Context, result: AutopilotBroadcastResult, options: AutopilotBroadcastOptions = {}) {
+  if (!retryablePriceMovementFailure(result)) return false;
+
+  await ctx.reply("Price moved during preflight. Rebuilding a fresh plan and quote...");
+
+  const { record } = await getOrCreatePendingAutopilotPlan({
+    telegramChatId: String(ctx.chat?.id ?? "")
+  });
+  const approved = await recordAutopilotPlanDecision(record.id, "approved");
+  const execution = await createAutopilotDryRunExecution(approved.id, options);
+
+  if (execution.status !== "validated") {
+    await ctx.reply(["Price moved, refreshed plan is still blocked.", "", execution.telegramSummary].join("\n"));
+    return true;
+  }
+
+  await ctx.reply(liveReviewMessage(approved.id, execution, { ...options, refreshed: true }), {
+    reply_markup: autopilotLiveConfirmKeyboard(approved.id, { ...options, refreshed: true })
+  });
+  return true;
 }
 
 export function createBot() {
@@ -398,6 +426,7 @@ export function createBot() {
           { parse_mode: "Markdown" }
         );
       } else {
+        if (await replyWithFastRetryReview(ctx, result)) return;
         await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
       }
     } catch (error) {
@@ -428,6 +457,7 @@ export function createBot() {
           { parse_mode: "Markdown" }
         );
       } else {
+        if (await replyWithFastRetryReview(ctx, result, { allowUncoveredDebt: true })) return;
         await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
       }
     } catch (error) {
@@ -458,6 +488,7 @@ export function createBot() {
           { parse_mode: "Markdown" }
         );
       } else {
+        if (await replyWithFastRetryReview(ctx, result, { allowBoundaryDrift: true })) return;
         await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
       }
     } catch (error) {

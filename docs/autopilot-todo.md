@@ -36,14 +36,6 @@
   - if both uncovered debt and boundary drift block execution, show a combined `Accept debt + drift` review;
   - waiting is an explicit user choice, not the default near-boundary behavior.
 
-## P1 Fast Retry
-
-- If live preflight or slippage fails because price moved, do not send a transaction.
-- Immediately rebuild a fresh plan, fetch a fresh quote, and re-simulate.
-- If the refreshed plan passes all gates, show a Telegram live review saying `Price moved, refreshed quote is ready` with `Confirm refreshed transaction` / `Wait`.
-- If the refreshed plan is still blocked, show the specific blocking reason, such as uncovered debt, boundary drift, stale plan, quote unavailable, route/preflight failed, or another non-overridable guardrail.
-- The user should not need to restart the full `/autopilot -> approve -> dry-run -> review` flow for a pure price-movement refresh.
-
 ## P2 Transaction And Audit UI
 
 - Review whether failed preflight/live attempts should remain in the main Transactions table or move into a separate execution/audit log view.
