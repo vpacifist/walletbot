@@ -38,6 +38,10 @@ Start-Process -FilePath "pnpm.cmd" -ArgumentList "worker" -WorkingDirectory "C:\
 
 When testing any Telegram command or notification behavior, verify a worker is running in addition to the web health check.
 
+For production Telegram/live-execution incidents, first reconstruct the exact user flow and timeline before changing code. Do not assume repeated Telegram messages came from a duplicate callback; distinguish duplicate callbacks from separate user cycles such as `/autopilot -> approve -> live review/confirm`.
+
+Before coding product or UI behavior changes, describe the intended change in user-facing/UI terms without deep implementation detail and wait for explicit user approval. Do not start coding until the user confirms what exactly should be changed.
+
 ## UI verification tools
 
 For browser/UI verification, first try to use the Codex Browser plugin / in-app browser when it is callable. If the Browser MCP tools are not exposed in the current session, do not stop to ask the user to reconfigure plugins. Use Playwright from the local project as the fallback and state that fallback briefly in the work log or final answer.
