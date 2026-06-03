@@ -1,7 +1,9 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { Telegraf } from "telegraf";
 import { getAddress } from "viem";
-import { getOrCreatePendingAutopilotPlan } from "./autopilot-service";
+import { broadcastAutopilotRebalance, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
+import { createAutopilotDryRunExecution } from "./autopilot-executor";
+import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./autopilot-service";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
@@ -19,6 +21,19 @@ function autopilotKeyboard(planId: string) {
       ]
     ]
   };
+}
+
+function autopilotManualReviewKeyboard(planId: string, reasons: string[] = []) {
+  if (reasons.length === 1 && reasons[0] === "Boundary drift") {
+    return {
+      inline_keyboard: [
+        [{ text: "Accept drift & review live transaction", callback_data: `ap:accept_drift:${planId}` }],
+        [{ text: "Wait", callback_data: `ap:pause:${planId}` }]
+      ]
+    };
+  }
+
+  return autopilotKeyboard(planId);
 }
 
 function autopilotPlanNeedsAttention(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"]) {
@@ -66,6 +81,92 @@ async function recordAutopilotPlanEvent(input: {
   });
 }
 
+function retryablePriceMovementFailure(result: AutopilotBroadcastResult) {
+  return !result.success && /Swap price moved beyond slippage tolerance|retry with a fresh plan/i.test(result.error ?? "");
+}
+
+async function sendAutoGuardedBlocked(bot: Telegraf, planId: string, summary: string, reasons: string[] = []) {
+  const { TELEGRAM_CHAT_ID } = getConfig();
+  if (!TELEGRAM_CHAT_ID) return;
+
+  await bot.telegram.sendMessage(
+    TELEGRAM_CHAT_ID,
+    ["Auto-guarded blocked", `Plan id: ${planId}`, reasons.length > 0 ? `Reason: ${reasons.join("; ")}` : undefined, "", summary].filter(Boolean).join("\n"),
+    { reply_markup: autopilotManualReviewKeyboard(planId, reasons) }
+  );
+}
+
+async function executeAutoGuardedPlan(
+  bot: Telegraf,
+  autopilotPlan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>,
+  dedupeKey: string,
+  retried = false
+) {
+  const { TELEGRAM_CHAT_ID, BLOCKSCOUT_BASE_URL } = getConfig();
+  if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
+
+  const approved = await recordAutopilotPlanDecision(autopilotPlan.record.id, "approved");
+  const execution = await createAutopilotDryRunExecution(approved.id, { allowUncoveredDebt: true });
+
+  if (execution.status !== "validated") {
+    await sendAutoGuardedBlocked(bot, approved.id, execution.telegramSummary, execution.checks.filter((check) => !check.ok).map((check) => check.label));
+    await recordAutopilotPlanEvent({
+      dedupeKey,
+      plan: autopilotPlan.plan,
+      planId: approved.id,
+      planKey: approved.planKey
+    });
+    return { sent: 1, planId: approved.id, autoGuarded: "blocked" };
+  }
+
+  await bot.telegram.sendMessage(
+    TELEGRAM_CHAT_ID,
+    [
+      retried ? "Auto-guarded refreshed rebalance is being sent" : "Auto-guarded rebalance is being sent",
+      `Plan id: ${approved.id}`,
+      "Uncovered debt is accepted automatically in auto_guarded mode.",
+      "",
+      "Prepared operations",
+      ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`)
+    ].join("\n")
+  );
+
+  const result = await broadcastAutopilotRebalance(approved.id, { allowUncoveredDebt: true });
+  if (result.success && result.txHash) {
+    const explorerUrl = `${BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+    await bot.telegram.sendMessage(
+      TELEGRAM_CHAT_ID,
+      ["Auto-guarded rebalance sent", `Plan id: ${approved.id}`, `Tx Hash: ${result.txHash}`, `Blockscout: ${explorerUrl}`].join("\n")
+    );
+    await recordAutopilotPlanEvent({
+      dedupeKey,
+      plan: autopilotPlan.plan,
+      planId: approved.id,
+      planKey: approved.planKey
+    });
+    return { sent: 1, planId: approved.id, autoGuarded: "sent", txHash: result.txHash };
+  }
+
+  if (!retried && retryablePriceMovementFailure(result)) {
+    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, "Auto-guarded price moved during preflight. Rebuilding a fresh plan and quote...");
+    const refreshed = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
+    return executeAutoGuardedPlan(bot, refreshed, dedupeKey, true);
+  }
+
+  await bot.telegram.sendMessage(
+    TELEGRAM_CHAT_ID,
+    ["Auto-guarded execution failed", `Plan id: ${approved.id}`, result.error ?? "Unknown error", "", "Manual review is required."].join("\n"),
+    { reply_markup: autopilotKeyboard(approved.id) }
+  );
+  await recordAutopilotPlanEvent({
+    dedupeKey,
+    plan: autopilotPlan.plan,
+    planId: approved.id,
+    planKey: approved.planKey
+  });
+  return { sent: 1, planId: approved.id, autoGuarded: "failed" };
+}
+
 export function isOutOfRange(status: PositionStatus) {
   return status === PositionStatus.above_range || status === PositionStatus.below_range;
 }
@@ -105,7 +206,10 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
 
     const direction = position.status === PositionStatus.above_range ? "above range" : "below range";
     const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID }).catch(() => null);
-    if (autopilotPlan?.record.telegramMessageId && autopilotPlanNeedsAttention(autopilotPlan.plan)) {
+    const autopilotIncidentAlreadyHandled = autopilotPlan
+      ? await prisma.telegramEvent.findUnique({ where: { dedupeKey: autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey) } })
+      : null;
+    if (autopilotPlan && autopilotPlanNeedsAttention(autopilotPlan.plan) && (autopilotPlan.record.telegramMessageId || autopilotIncidentAlreadyHandled)) {
       await prisma.telegramEvent.create({
         data: {
           positionId: position.id,
@@ -115,7 +219,7 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
             tokenId: position.tokenId,
             status: position.status,
             currentTick: position.currentTick,
-            skippedBecause: "autopilot_plan_message_exists",
+            skippedBecause: autopilotPlan.record.telegramMessageId ? "autopilot_plan_message_exists" : "autopilot_incident_already_handled",
             planId: autopilotPlan.record.id
           }
         }
@@ -200,6 +304,9 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
+  if (autopilotPlan.plan.mode === "auto_guarded") {
+    return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey);
+  }
   if (autopilotPlan.record.telegramMessageId) {
     await recordAutopilotPlanEvent({
       dedupeKey,

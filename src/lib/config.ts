@@ -9,6 +9,7 @@ const envSchema = z.object({
   BASE_RPC_URL: z.string().url(),
   BASE_RPC_ADD_URLS: z.string().optional().default(""),
   AUTOPILOT_PRESET: z.enum(["triple_range", "small_capital_test"]).optional().default("triple_range"),
+  AUTOPILOT_MODE: z.enum(["manual", "approve_in_telegram", "auto_guarded", "auto_full"]).optional().default("approve_in_telegram"),
   AUTOPILOT_SWAP_PROVIDER: z
     .enum(["uniswap_v3", "llamaswap", "zeroex", "odos", "kyber", "paraswap"])
     .optional()

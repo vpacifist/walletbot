@@ -97,6 +97,7 @@ export async function getCurrentAutopilotPlan() {
     token0: pool.token0,
     token1: pool.token1,
     preset: getConfig().AUTOPILOT_PRESET,
+    mode: getConfig().AUTOPILOT_MODE,
     baselineAt: autopilotBaselineAt()
   });
 
@@ -125,6 +126,7 @@ export async function getCurrentAutopilotPlan() {
     token0: pool.token0,
     token1: pool.token1,
     preset: getConfig().AUTOPILOT_PRESET,
+    mode: getConfig().AUTOPILOT_MODE,
     baselineAt: autopilotBaselineAt(),
     uncollectedFeeCreditUsd
   });
