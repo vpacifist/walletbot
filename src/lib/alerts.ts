@@ -8,6 +8,7 @@ import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
+import { syncWalletOnce } from "./sync";
 import { getWalletAssetSnapshot } from "./wallet-assets";
 
 const LOW_NATIVE_ETH_THRESHOLD_USD = 10;
@@ -86,6 +87,59 @@ function retryablePriceMovementFailure(result: AutopilotBroadcastResult) {
   return !result.success && /Swap price moved beyond slippage tolerance|retry with a fresh plan/i.test(result.error ?? "");
 }
 
+function formatUsd(value: number) {
+  return `$${formatNumber(value, 2)}`;
+}
+
+function formatPriceRange(lowerPrice: number | null, upperPrice: number | null) {
+  if (lowerPrice === null || upperPrice === null) return "-";
+  return `${formatUsd(lowerPrice)} - ${formatUsd(upperPrice)}`;
+}
+
+function buildAutoGuardedPostCheckSummary(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"], txHash: string) {
+  const active = plan.ladder.find((segment) => segment.role === "active");
+  const primaryAction = plan.actions[0];
+  const lastSwap = plan.economics.lastDirectionalSwap;
+
+  return [
+    "Auto-guarded post-check",
+    `State: ${plan.state}`,
+    `Price: ${formatUsd(plan.pool.price)} | Tick ${plan.pool.currentTick}`,
+    active
+      ? `Active range: ${active.tokenId ? `#${active.tokenId} ` : ""}${active.range} (${formatPriceRange(active.lowerPrice, active.upperPrice)})`
+      : "Active range: not found",
+    `Next: ${primaryAction?.label ?? "No action"}`,
+    `Reversal debt: ${formatUsd(plan.economics.reversalDebtUsd)}`,
+    `Fee credit: ${formatUsd(plan.economics.feeCreditUsd)}`,
+    `Uncovered debt: ${formatUsd(plan.economics.uncoveredReversalDebtUsd)}`,
+    lastSwap ? `Last directional swap: ${lastSwap.side === "sell_weth" ? "Sold WETH" : "Bought WETH"} @ ${formatUsd(lastSwap.effectivePrice)}` : undefined,
+    `Tx: ${shortAddress(txHash)}`
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
+  const { TELEGRAM_CHAT_ID } = getConfig();
+  if (!TELEGRAM_CHAT_ID) return;
+
+  try {
+    await syncWalletOnce();
+    const postCheck = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
+    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, buildAutoGuardedPostCheckSummary(postCheck.plan, txHash));
+  } catch (error) {
+    await bot.telegram.sendMessage(
+      TELEGRAM_CHAT_ID,
+      [
+        "Auto-guarded post-check failed",
+        `Tx: ${shortAddress(txHash)}`,
+        error instanceof Error ? error.message : "Unable to refresh the plan after execution.",
+        "Use /autopilot to refresh manually."
+      ].join("\n")
+    );
+  }
+}
+
 async function sendAutoGuardedBlocked(bot: Telegraf, planId: string, summary: string, reasons: string[] = []) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return;
@@ -139,6 +193,7 @@ async function executeAutoGuardedPlan(
       TELEGRAM_CHAT_ID,
       ["Auto-guarded rebalance sent", `Plan id: ${approved.id}`, `Tx Hash: ${result.txHash}`, `Blockscout: ${explorerUrl}`].join("\n")
     );
+    await sendAutoGuardedPostCheck(bot, result.txHash);
     await recordAutopilotPlanEvent({
       dedupeKey,
       plan: autopilotPlan.plan,

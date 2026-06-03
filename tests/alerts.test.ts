@@ -8,6 +8,7 @@ import { isAutopilotRuntimePaused } from "@/lib/autopilot-pause";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { prisma } from "@/lib/db";
+import { syncWalletOnce } from "@/lib/sync";
 
 vi.mock("@/lib/config", () => {
   return {
@@ -64,6 +65,12 @@ vi.mock("@/lib/db", () => {
   };
 });
 
+vi.mock("@/lib/sync", () => {
+  return {
+    syncWalletOnce: vi.fn()
+  };
+});
+
 function planRecord(input: any = {}) {
   return {
     plan: {
@@ -108,6 +115,7 @@ describe("sendAutopilotPlanAlert", () => {
     vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue(null);
     vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(false);
     vi.mocked(recordAutopilotPlanDecision).mockImplementation(async (id) => ({ ...planRecord().record, id, status: "approved" }) as any);
+    vi.mocked(syncWalletOnce).mockResolvedValue({ transactionsSeen: 1, positionsSeen: 1, toBlock: 1n } as any);
     vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
       status: "validated",
       operations: [{ label: "Close/review stale range", detail: "Close current test range" }],
@@ -221,13 +229,52 @@ describe("sendAutopilotPlanAlert", () => {
   });
 
   it("auto-executes auto_guarded plans with uncovered debt accepted", async () => {
-    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
-      planRecord({
-        plan: {
-          mode: "auto_guarded"
-        }
-      }) as any
-    );
+    vi.mocked(getOrCreatePendingAutopilotPlan)
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            mode: "auto_guarded"
+          }
+        }) as any
+      )
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            state: "idle",
+            mode: "auto_guarded",
+            title: "Small test range active",
+            pool: { currentTick: -201081, price: 1851.82 },
+            economics: {
+              reversalDebtUsd: 1.3,
+              feeCreditUsd: 0,
+              uncoveredReversalDebtUsd: 1.3,
+              lastDirectionalSwap: {
+                timestamp: "2026-06-03T15:06:43.000Z",
+                side: "sell_weth",
+                wethAmount: 0.34,
+                usdcAmount: 630.61,
+                effectivePrice: 1848.02,
+                hash: "0xabc",
+                protocol: "Uniswap v3"
+              }
+            },
+            ladder: [
+              {
+                role: "active",
+                tokenId: "5246424",
+                range: "-201240 - -201000",
+                lowerTick: -201240,
+                upperTick: -201000,
+                lowerPrice: 1822.61,
+                upperPrice: 1866.88,
+                status: "ok",
+                plannedAction: "Keep current 240-tick test range until breakout"
+              }
+            ],
+            actions: [{ type: "hold", label: "Hold single test range" }]
+          }
+        }) as any
+      );
     const testBot = bot();
 
     const result = await sendAutopilotPlanAlert(testBot as any);
@@ -236,6 +283,7 @@ describe("sendAutopilotPlanAlert", () => {
     expect(recordAutopilotPlanDecision).toHaveBeenCalledWith("plan-1", "approved");
     expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true });
     expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true });
+    expect(syncWalletOnce).toHaveBeenCalled();
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
       expect.stringContaining("Auto-guarded rebalance is being sent")
@@ -243,6 +291,14 @@ describe("sendAutopilotPlanAlert", () => {
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
       expect.stringContaining("Auto-guarded rebalance sent")
+    );
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded post-check")
+    );
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Active range: #5246424 -201240 - -201000")
     );
     expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
