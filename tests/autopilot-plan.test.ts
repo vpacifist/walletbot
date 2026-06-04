@@ -209,6 +209,57 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions[2].upperTick).toBe(-199980);
   });
 
+  it("does not spend wallet leftovers in an atomic small-capital rebalance plan", () => {
+    const withoutLeftovers = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "1",
+          tickLower: -199980,
+          tickUpper: -199740,
+          status: PositionStatus.below_range,
+          wethAmount: "0.42",
+          usdcAmount: "0"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -200020,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+    const withLeftovers = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "1",
+          tickLower: -199980,
+          tickUpper: -199740,
+          status: PositionStatus.below_range,
+          wethAmount: "0.42",
+          usdcAmount: "0"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0.015,
+      walletUsdc: 25,
+      currentTick: -200020,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    const withoutSwap = withoutLeftovers.actions.find((action) => action.type === "partial_swap");
+    const withSwap = withLeftovers.actions.find((action) => action.type === "partial_swap");
+    const withoutMint = withoutLeftovers.actions.find((action) => action.type === "mint");
+    const withMint = withLeftovers.actions.find((action) => action.type === "mint");
+
+    expect(withSwap?.quoteRequest?.amountIn).toBe(withoutSwap?.quoteRequest?.amountIn);
+    expect(withMint?.budgetUsd).toBe(withoutMint?.budgetUsd);
+  });
+
   it("does not recenter a small-capital position while it is still in range", () => {
     const plan = calculateAutopilotPlan({
       preset: "small_capital_test",

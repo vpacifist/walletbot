@@ -25,3 +25,4 @@
 
 - Review first real `auto_guarded` event tomorrow or the day after: compare Telegram messages, web positions, transaction row, execution audit, debt, drift, immediate cost, and whether manual observation found anything surprising.
 - After 3-5 auto/manual rebalances, revisit limits: boundary drift bps, immediate cost limit, slippage bps, and whether auto-accepted uncovered debt is economically acceptable.
+- Decide how to handle wallet leftovers in atomic rebalances. Current safe behavior should not spend pre-existing wallet WETH/USDC inside the rebalancer transaction; future options include periodic manual sweep, explicit `transferFrom` into the rebalancer, or a separate leftover-compounding flow.

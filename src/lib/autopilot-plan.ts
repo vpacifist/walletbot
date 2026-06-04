@@ -529,9 +529,9 @@ function calculateSmallCapitalPlan(params: {
   const walletValueUsd = (params.walletWeth ?? 0) * price + (params.walletUsdc ?? 0);
   const portfolioValueUsd = activeValueUsd + walletValueUsd;
   const selectedPositionValueUsd = preferredPosition ? positionValueUsd(preferredPosition, price) : 0;
-  const executionBudgetUsd = Math.max(selectedPositionValueUsd + walletValueUsd, portfolioValueUsd);
-  const totalWeth = (params.walletWeth ?? 0) + (preferredPosition ? numericAmount(preferredPosition.wethAmount) : 0);
-  const totalUsdc = (params.walletUsdc ?? 0) + (preferredPosition ? numericAmount(preferredPosition.usdcAmount) : 0);
+  const executionBudgetUsd = preferredPosition ? selectedPositionValueUsd : portfolioValueUsd;
+  const totalWeth = preferredPosition ? numericAmount(preferredPosition.wethAmount) : (params.walletWeth ?? 0);
+  const totalUsdc = preferredPosition ? numericAmount(preferredPosition.usdcAmount) : (params.walletUsdc ?? 0);
   const desired = desiredTokenAmountsForRange({
     price,
     lowerTick: target.lowerTick,
