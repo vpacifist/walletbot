@@ -40,6 +40,27 @@ When testing any Telegram command or notification behavior, verify a worker is r
 
 For production Telegram/live-execution incidents, first reconstruct the exact user flow and timeline before changing code. Do not assume repeated Telegram messages came from a duplicate callback; distinguish duplicate callbacks from separate user cycles such as `/autopilot -> approve -> live review/confirm`.
 
+Production incident investigation checklist:
+
+1. Reconstruct the timeline first from Telegram export, production API/database state, transaction hashes, pool tick/price, and Berlin local time.
+2. Separate event types before drawing conclusions: auto trigger, auto retry, manual `/autopilot`, approve callback, live review, final execute, failed/reverted transaction, and mined transaction.
+3. Do not treat repeated Telegram messages as duplicates until the timeline proves they came from the same callback or worker cycle.
+4. Verify the on-chain result before explaining impact: whether a transaction was sent, mined, reverted, which NFT was closed, and which NFT was minted.
+5. Compare ranges by ticks first, then prices/UI labels. For anchored-vs-centered questions, use the old and new tick boundaries as the source of truth.
+6. Classify the actual blocking reason precisely: slippage/preflight, live plan freshness, boundary drift, uncovered debt, NFT approval, role mismatch, contract revert, RPC/rate limit, or Telegram delivery.
+7. Before saying "autopilot did not work", distinguish no trigger from triggered-but-blocked-by-guardrail.
+8. Before coding a fix, state the incident hypothesis and the intended user-facing behavior change, then wait for explicit approval.
+
+Data access during incident investigations:
+
+1. Prefer existing production API endpoints first, such as `/api/autopilot`, `/api/positions`, and `/api/transactions`, when they contain enough evidence.
+2. For production API reads that require authentication, use the normal authenticated web session/cookie flow and only call read-only endpoints unless the user explicitly asks to mutate production state.
+3. Never print or expose `APP_PASSWORD`, cookies, `DATABASE_URL`, private keys, RPC keys, or other secrets while investigating.
+4. If direct database facts are needed and the production `DATABASE_URL` points to Railway's private hostname such as `postgres.railway.internal`, do not keep retrying from the local machine. Use a Railway-side command/shell or a safe read-only diagnostic endpoint instead.
+5. If direct SQL is available from the current environment, use SQL from the resolved production database URL instead of importing the app Prisma client into one-off `tsx` diagnostics.
+6. Do not infer that Prisma, the app database layer, or production sync is broken from a failure in a one-off diagnostic import.
+7. If Prisma access is required, use existing project entrypoints or scripts that already load env, aliases, and the generated client correctly.
+
 Before coding product or UI behavior changes, describe the intended change in user-facing/UI terms without deep implementation detail and wait for explicit user approval. Do not start coding until the user confirms what exactly should be changed.
 
 ## UI verification tools

@@ -267,6 +267,10 @@ function alignToSpacing(tick: number) {
   return Math.floor(tick / WETH_USDC_NARROW_TICK_SPACING) * WETH_USDC_NARROW_TICK_SPACING;
 }
 
+function nextSpacingTickAbove(tick: number) {
+  return alignToSpacing(tick) + WETH_USDC_NARROW_TICK_SPACING;
+}
+
 function singleRangeTarget(currentTick: number, widthTicks: number) {
   const intervals = widthTicks / WETH_USDC_NARROW_TICK_SPACING;
   const baseTick = alignToSpacing(currentTick);
@@ -277,31 +281,26 @@ function singleRangeTarget(currentTick: number, widthTicks: number) {
   };
 }
 
-function adjacentSingleRangeTarget(currentTick: number, widthTicks: number, position: Position | null) {
+function nearestBoundarySingleRangeTarget(currentTick: number, widthTicks: number, position: Position | null) {
   if (!position) return singleRangeTarget(currentTick, widthTicks);
 
-  let lowerTick: number;
-  let upperTick: number;
   if (currentTick < position.tickLower) {
-    upperTick = position.tickLower;
-    lowerTick = upperTick - widthTicks;
-  } else if (currentTick >= position.tickUpper) {
-    lowerTick = position.tickUpper;
-    upperTick = lowerTick + widthTicks;
-  } else {
-    return singleRangeTarget(currentTick, widthTicks);
+    const upperTick = nextSpacingTickAbove(currentTick);
+    return {
+      lowerTick: upperTick - widthTicks,
+      upperTick
+    };
   }
 
-  while (currentTick < lowerTick) {
-    upperTick = lowerTick;
-    lowerTick = upperTick - widthTicks;
-  }
-  while (currentTick >= upperTick) {
-    lowerTick = upperTick;
-    upperTick = lowerTick + widthTicks;
+  if (currentTick >= position.tickUpper) {
+    const lowerTick = alignToSpacing(currentTick);
+    return {
+      lowerTick,
+      upperTick: lowerTick + widthTicks
+    };
   }
 
-  return { lowerTick, upperTick };
+  return singleRangeTarget(currentTick, widthTicks);
 }
 
 function desiredTokenAmountsForRange(params: { price: number; lowerTick: number; upperTick: number; budgetUsd: number; token0: Address; token1: Address }) {
@@ -510,7 +509,7 @@ function calculateSmallCapitalPlan(params: {
       }))
       .sort((left, right) => left.distance - right.distance)[0]?.position ??
     null;
-  const target = adjacentSingleRangeTarget(params.currentTick, strategy.targetWidthTicks, preferredPosition);
+  const target = nearestBoundarySingleRangeTarget(params.currentTick, strategy.targetWidthTicks, preferredPosition);
   const targetLowerPrice = priceFromTick({
     tick: target.lowerTick,
     token0: params.token0,
@@ -584,7 +583,7 @@ function calculateSmallCapitalPlan(params: {
         (isTargetRange && !hasExtraPositions) || shouldHoldCurrentRange
           ? "Keep current 240-tick test range until breakout"
           : preferredPosition
-            ? "Rebalance to the adjacent 240-tick range from the crossed boundary"
+            ? "Rebalance to the nearest 240-tick range around the live boundary"
             : "Do not build guard ranges; prepare one 240-tick range"
     }
   ];
@@ -620,7 +619,7 @@ function calculateSmallCapitalPlan(params: {
       actions.push({
         type: "close",
         label: `Close current test range #${preferredPosition.tokenId}`,
-        detail: `Close the current single test range before minting adjacent range ${targetRange}.`,
+        detail: `Close the current single test range before minting nearest-boundary range ${targetRange}.`,
         estimatedCostUsd: immediateCostUsd,
         tokenId: preferredPosition.tokenId
       });

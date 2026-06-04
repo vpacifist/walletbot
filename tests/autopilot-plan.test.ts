@@ -150,7 +150,7 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions[0].type).toBe("hold");
   });
 
-  it("plans an adjacent close, split rebalance, and mint after an upside small-capital breakout", () => {
+  it("plans a nearest-boundary close, split rebalance, and mint after an upside small-capital breakout", () => {
     const plan = calculateAutopilotPlan({
       preset: "small_capital_test",
       positions: [
@@ -167,7 +167,7 @@ describe("calculateAutopilotPlan", () => {
       transactions: [],
       walletWeth: 0,
       walletUsdc: 0,
-      currentTick: -199700,
+      currentTick: -199650,
       token0: CONTRACTS.weth,
       token1: CONTRACTS.usdc
     });
@@ -176,11 +176,11 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
     expect(plan.actions[0].tokenId).toBe("1");
     expect(plan.actions[1].quoteRequest?.spendSymbol).toBe("USDC");
-    expect(plan.actions[2].lowerTick).toBe(-199740);
-    expect(plan.actions[2].upperTick).toBe(-199500);
+    expect(plan.actions[2].lowerTick).toBe(-199680);
+    expect(plan.actions[2].upperTick).toBe(-199440);
   });
 
-  it("plans an adjacent lower range after a downside small-capital breakout", () => {
+  it("plans a nearest-boundary lower range after a downside small-capital breakout", () => {
     const plan = calculateAutopilotPlan({
       preset: "small_capital_test",
       positions: [
@@ -197,7 +197,7 @@ describe("calculateAutopilotPlan", () => {
       transactions: [],
       walletWeth: 0,
       walletUsdc: 0,
-      currentTick: -200020,
+      currentTick: -200090,
       token0: CONTRACTS.weth,
       token1: CONTRACTS.usdc
     });
@@ -205,8 +205,8 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
     expect(plan.actions[0].tokenId).toBe("1");
     expect(plan.actions[1].quoteRequest?.spendSymbol).toBe("WETH");
-    expect(plan.actions[2].lowerTick).toBe(-200220);
-    expect(plan.actions[2].upperTick).toBe(-199980);
+    expect(plan.actions[2].lowerTick).toBe(-200280);
+    expect(plan.actions[2].upperTick).toBe(-200040);
   });
 
   it("does not spend wallet leftovers in an atomic small-capital rebalance plan", () => {
@@ -317,7 +317,7 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
     expect(plan.actions[0].tokenId).toBe("5245558");
     expect(plan.actions[0].detail).not.toContain("still contains price");
-    expect(plan.actions[2].lowerTick).toBe(-201300);
-    expect(plan.actions[2].upperTick).toBe(-201060);
+    expect(plan.actions[2].lowerTick).toBe(-201360);
+    expect(plan.actions[2].upperTick).toBe(-201120);
   });
 });
