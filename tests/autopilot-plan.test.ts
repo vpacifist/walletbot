@@ -150,7 +150,7 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions[0].type).toBe("hold");
   });
 
-  it("plans a close, split rebalance, and mint after a small-capital breakout", () => {
+  it("plans an adjacent close, split rebalance, and mint after an upside small-capital breakout", () => {
     const plan = calculateAutopilotPlan({
       preset: "small_capital_test",
       positions: [
@@ -176,8 +176,37 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
     expect(plan.actions[0].tokenId).toBe("1");
     expect(plan.actions[1].quoteRequest?.spendSymbol).toBe("USDC");
-    expect(plan.actions[2].lowerTick).toBe(-199860);
-    expect(plan.actions[2].upperTick).toBe(-199620);
+    expect(plan.actions[2].lowerTick).toBe(-199740);
+    expect(plan.actions[2].upperTick).toBe(-199500);
+  });
+
+  it("plans an adjacent lower range after a downside small-capital breakout", () => {
+    const plan = calculateAutopilotPlan({
+      preset: "small_capital_test",
+      positions: [
+        position({
+          id: "active",
+          tokenId: "1",
+          tickLower: -199980,
+          tickUpper: -199740,
+          status: PositionStatus.below_range,
+          wethAmount: "0.5",
+          usdcAmount: "0"
+        })
+      ],
+      transactions: [],
+      walletWeth: 0,
+      walletUsdc: 0,
+      currentTick: -200020,
+      token0: CONTRACTS.weth,
+      token1: CONTRACTS.usdc
+    });
+
+    expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
+    expect(plan.actions[0].tokenId).toBe("1");
+    expect(plan.actions[1].quoteRequest?.spendSymbol).toBe("WETH");
+    expect(plan.actions[2].lowerTick).toBe(-200220);
+    expect(plan.actions[2].upperTick).toBe(-199980);
   });
 
   it("does not recenter a small-capital position while it is still in range", () => {
@@ -237,5 +266,7 @@ describe("calculateAutopilotPlan", () => {
     expect(plan.actions.map((action) => action.type)).toEqual(["close", "partial_swap", "mint"]);
     expect(plan.actions[0].tokenId).toBe("5245558");
     expect(plan.actions[0].detail).not.toContain("still contains price");
+    expect(plan.actions[2].lowerTick).toBe(-201300);
+    expect(plan.actions[2].upperTick).toBe(-201060);
   });
 });

@@ -277,6 +277,33 @@ function singleRangeTarget(currentTick: number, widthTicks: number) {
   };
 }
 
+function adjacentSingleRangeTarget(currentTick: number, widthTicks: number, position: Position | null) {
+  if (!position) return singleRangeTarget(currentTick, widthTicks);
+
+  let lowerTick: number;
+  let upperTick: number;
+  if (currentTick < position.tickLower) {
+    upperTick = position.tickLower;
+    lowerTick = upperTick - widthTicks;
+  } else if (currentTick >= position.tickUpper) {
+    lowerTick = position.tickUpper;
+    upperTick = lowerTick + widthTicks;
+  } else {
+    return singleRangeTarget(currentTick, widthTicks);
+  }
+
+  while (currentTick < lowerTick) {
+    upperTick = lowerTick;
+    lowerTick = upperTick - widthTicks;
+  }
+  while (currentTick >= upperTick) {
+    lowerTick = upperTick;
+    upperTick = lowerTick + widthTicks;
+  }
+
+  return { lowerTick, upperTick };
+}
+
 function desiredTokenAmountsForRange(params: { price: number; lowerTick: number; upperTick: number; budgetUsd: number; token0: Address; token1: Address }) {
   if (params.budgetUsd <= 0 || params.price <= 0) return { weth: 0, usdc: 0 };
   if (params.upperTick <= params.lowerTick) return { weth: 0, usdc: 0 };
@@ -483,7 +510,7 @@ function calculateSmallCapitalPlan(params: {
       }))
       .sort((left, right) => left.distance - right.distance)[0]?.position ??
     null;
-  const target = singleRangeTarget(params.currentTick, strategy.targetWidthTicks);
+  const target = adjacentSingleRangeTarget(params.currentTick, strategy.targetWidthTicks, preferredPosition);
   const targetLowerPrice = priceFromTick({
     tick: target.lowerTick,
     token0: params.token0,
@@ -556,7 +583,9 @@ function calculateSmallCapitalPlan(params: {
       plannedAction:
         (isTargetRange && !hasExtraPositions) || shouldHoldCurrentRange
           ? "Keep current 240-tick test range until breakout"
-          : "Do not build guard ranges; prepare one 240-tick range"
+          : preferredPosition
+            ? "Rebalance to the adjacent 240-tick range from the crossed boundary"
+            : "Do not build guard ranges; prepare one 240-tick range"
     }
   ];
   const actions: AutopilotPlan["actions"] = [];
@@ -591,7 +620,7 @@ function calculateSmallCapitalPlan(params: {
       actions.push({
         type: "close",
         label: `Close current test range #${preferredPosition.tokenId}`,
-        detail: `Close the current single test range before minting ${targetRange}.`,
+        detail: `Close the current single test range before minting adjacent range ${targetRange}.`,
         estimatedCostUsd: immediateCostUsd,
         tokenId: preferredPosition.tokenId
       });
