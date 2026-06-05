@@ -231,26 +231,60 @@ function retryablePriceMovementFailure(result: AutopilotBroadcastResult) {
   return !result.success && /Swap price moved beyond slippage tolerance|retry with a fresh plan/i.test(result.error ?? "");
 }
 
-async function replyWithFastRetryReview(ctx: Context, result: AutopilotBroadcastResult, options: AutopilotBroadcastOptions = {}) {
-  if (!retryablePriceMovementFailure(result)) return false;
+const FAST_QUOTE_RETRY_LIMIT = 3;
 
-  await ctx.reply("Price moved during preflight. Rebuilding a fresh plan and quote...");
+async function sendSuccessfulExecution(ctx: Context, txHash: string) {
+  const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${txHash}`;
+  await ctx.reply(
+    [
+      "**Transaction executed successfully on-chain!**",
+      `Tx Hash: \`${txHash}\``,
+      `[View on Blockscout](${explorerUrl})`
+    ].join("\n"),
+    { parse_mode: "Markdown" }
+  );
+}
 
-  const { record } = await getOrCreatePendingAutopilotPlan({
-    telegramChatId: String(ctx.chat?.id ?? "")
-  });
-  const approved = await recordAutopilotPlanDecision(record.id, "approved");
-  const execution = await createAutopilotDryRunExecution(approved.id, options);
+async function broadcastWithFastQuoteRetries(ctx: Context, planId: string, options: AutopilotBroadcastOptions = {}) {
+  const liveOptions = { ...options, allowEquivalentPlanFreshness: true };
+  let currentPlanId = planId;
+  let result = await broadcastAutopilotRebalance(currentPlanId, liveOptions);
 
-  if (execution.status !== "validated") {
-    await ctx.reply(blockedExecutionMessage("Price moved, refreshed plan is still blocked.", execution));
-    return true;
+  for (let attempt = 1; !result.success && retryablePriceMovementFailure(result) && attempt <= FAST_QUOTE_RETRY_LIMIT; attempt += 1) {
+    await ctx.reply(`Price moved during preflight; retrying fresh quote ${attempt}/${FAST_QUOTE_RETRY_LIMIT}...`);
+
+    const { record } = await getOrCreatePendingAutopilotPlan({
+      telegramChatId: String(ctx.chat?.id ?? "")
+    });
+    const approved = await recordAutopilotPlanDecision(record.id, "approved");
+    currentPlanId = approved.id;
+    const execution = await createAutopilotDryRunExecution(currentPlanId, liveOptions);
+
+    if (execution.status !== "validated") {
+      await ctx.reply(blockedExecutionMessage("Fast quote retry stopped: refreshed plan is blocked.", execution));
+      return { result, handled: true };
+    }
+
+    result = await broadcastAutopilotRebalance(currentPlanId, liveOptions);
   }
 
-  await ctx.reply(liveReviewMessage(approved.id, execution, { ...options, refreshed: true }), {
-    reply_markup: autopilotLiveConfirmKeyboard(approved.id, { ...options, refreshed: true })
-  });
-  return true;
+  return { result, handled: false };
+}
+
+async function replyWithLiveExecutionResult(
+  ctx: Context,
+  planId: string,
+  options: AutopilotBroadcastOptions = {}
+) {
+  const { result, handled } = await broadcastWithFastQuoteRetries(ctx, planId, options);
+  if (handled) return;
+
+  if (result.success && result.txHash) {
+    await sendSuccessfulExecution(ctx, result.txHash);
+    return;
+  }
+
+  await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
 }
 
 export function createBot() {
@@ -553,22 +587,7 @@ export function createBot() {
       await ctx.answerCbQuery("Broadcasting transaction...");
       await ctx.reply("Sending atomic rebalance transaction to Base. Please wait...");
 
-      const result = await broadcastAutopilotRebalance(planId);
-
-      if (result.success && result.txHash) {
-        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
-        await ctx.reply(
-          [
-            "**Transaction executed successfully on-chain!**",
-            `Tx Hash: \`${result.txHash}\``,
-            `[View on Blockscout](${explorerUrl})`
-          ].join("\n"),
-          { parse_mode: "Markdown" }
-        );
-      } else {
-        if (await replyWithFastRetryReview(ctx, result)) return;
-        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
-      }
+      await replyWithLiveExecutionResult(ctx, planId);
     } catch (error) {
       await ctx.answerCbQuery("Live execution failed", { show_alert: true });
       await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
@@ -584,22 +603,7 @@ export function createBot() {
       await ctx.answerCbQuery("Broadcasting accepted-debt transaction...");
       await ctx.reply("Sending accepted-debt atomic rebalance transaction to Base. Please wait...");
 
-      const result = await broadcastAutopilotRebalance(planId, { allowUncoveredDebt: true });
-
-      if (result.success && result.txHash) {
-        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
-        await ctx.reply(
-          [
-            "**Transaction executed successfully on-chain!**",
-            `Tx Hash: \`${result.txHash}\``,
-            `[View on Blockscout](${explorerUrl})`
-          ].join("\n"),
-          { parse_mode: "Markdown" }
-        );
-      } else {
-        if (await replyWithFastRetryReview(ctx, result, { allowUncoveredDebt: true })) return;
-        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
-      }
+      await replyWithLiveExecutionResult(ctx, planId, { allowUncoveredDebt: true });
     } catch (error) {
       await ctx.answerCbQuery("Live execution failed", { show_alert: true });
       await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
@@ -615,22 +619,7 @@ export function createBot() {
       await ctx.answerCbQuery("Broadcasting accepted-drift transaction...");
       await ctx.reply("Sending accepted-drift atomic rebalance transaction to Base. Please wait...");
 
-      const result = await broadcastAutopilotRebalance(planId, { allowBoundaryDrift: true });
-
-      if (result.success && result.txHash) {
-        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
-        await ctx.reply(
-          [
-            "**Transaction executed successfully on-chain!**",
-            `Tx Hash: \`${result.txHash}\``,
-            `[View on Blockscout](${explorerUrl})`
-          ].join("\n"),
-          { parse_mode: "Markdown" }
-        );
-      } else {
-        if (await replyWithFastRetryReview(ctx, result, { allowBoundaryDrift: true })) return;
-        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
-      }
+      await replyWithLiveExecutionResult(ctx, planId, { allowBoundaryDrift: true });
     } catch (error) {
       await ctx.answerCbQuery("Live execution failed", { show_alert: true });
       await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
@@ -646,22 +635,7 @@ export function createBot() {
       await ctx.answerCbQuery("Broadcasting accepted-risk transaction...");
       await ctx.reply("Sending accepted-risk atomic rebalance transaction to Base. Please wait...");
 
-      const result = await broadcastAutopilotRebalance(planId, { allowUncoveredDebt: true, allowBoundaryDrift: true });
-
-      if (result.success && result.txHash) {
-        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
-        await ctx.reply(
-          [
-            "**Transaction executed successfully on-chain!**",
-            `Tx Hash: \`${result.txHash}\``,
-            `[View on Blockscout](${explorerUrl})`
-          ].join("\n"),
-          { parse_mode: "Markdown" }
-        );
-      } else {
-        if (await replyWithFastRetryReview(ctx, result, { allowUncoveredDebt: true, allowBoundaryDrift: true })) return;
-        await ctx.reply(telegramSafeMessage(`**On-chain execution failed:**\n${result.error || "Unknown error"}`));
-      }
+      await replyWithLiveExecutionResult(ctx, planId, { allowUncoveredDebt: true, allowBoundaryDrift: true });
     } catch (error) {
       await ctx.answerCbQuery("Live execution failed", { show_alert: true });
       await ctx.reply(telegramSafeMessage(error instanceof Error ? `Live execution failed: ${error.message}` : "Live execution failed."));
