@@ -14,7 +14,8 @@ vi.mock("@/lib/config", () => {
   return {
     getConfig: vi.fn(() => ({
       TELEGRAM_CHAT_ID: "63853863",
-      BLOCKSCOUT_BASE_URL: "https://base.blockscout.com"
+      BLOCKSCOUT_BASE_URL: "https://base.blockscout.com",
+      AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: 5
     }))
   };
 });
@@ -203,6 +204,43 @@ describe("sendAutopilotPlanAlert", () => {
         dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
       }
     });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips auto_guarded micro-breakouts in the regular sync-loop path", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded",
+          pool: { currentTick: -202080 },
+          ladder: [
+            {
+              role: "active",
+              tokenId: "5265592",
+              lowerTick: -202320,
+              upperTick: -202080
+            }
+          ],
+          actions: [{ type: "close", label: "Close current test range", tokenId: "5265592" }]
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({
+      sent: 0,
+      skipped: "micro_breakout",
+      side: "above",
+      depthTicks: 1,
+      tokenId: "5265592",
+      lowerTick: -202320,
+      upperTick: -202080,
+      thresholdTicks: 5
+    });
+    expect(recordAutopilotPlanDecision).not.toHaveBeenCalled();
+    expect(broadcastAutopilotRebalance).not.toHaveBeenCalled();
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 

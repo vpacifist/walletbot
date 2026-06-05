@@ -2,6 +2,7 @@ import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
 import { factoryAbi, poolAbi } from "./abi";
+import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendAutopilotPlanAlert } from "./alerts";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
@@ -69,18 +70,6 @@ export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {
   };
 }
 
-function triggerSide(tick: number, range: ActiveRange) {
-  if (tick < range.lowerTick) return "below";
-  if (tick >= range.upperTick) return "above";
-  return null;
-}
-
-function breakoutDepthTicks(tick: number, range: ActiveRange) {
-  if (tick < range.lowerTick) return range.lowerTick - tick;
-  if (tick >= range.upperTick) return tick - range.upperTick + 1;
-  return 0;
-}
-
 export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const config = getConfig();
   if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
@@ -90,12 +79,12 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const [range, tick] = await Promise.all([getActiveAutopilotRange(), readWethUsdcPoolTick()]);
   if (!range) return { triggered: false, skipped: "active_range_not_found", tick };
 
-  const side = triggerSide(tick, range);
+  const side = autopilotBreakoutSide(tick, range);
   if (!side) {
     state.lastTriggerKey = null;
     return { triggered: false, skipped: "inside_range", tick, tokenId: range.tokenId };
   }
-  const depthTicks = breakoutDepthTicks(tick, range);
+  const depthTicks = autopilotBreakoutDepthTicks(tick, range);
   if (depthTicks < config.AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS) {
     return { triggered: false, skipped: "micro_breakout", tick, tokenId: range.tokenId, side, depthTicks };
   }
