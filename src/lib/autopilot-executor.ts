@@ -986,11 +986,12 @@ function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotE
     .map((intent) => {
       const routeGas = intent.gasEstimate ? BigInt(intent.gasEstimate) : 0n;
       const routeGasLimit = routeGasLimitFor(intent);
-      const routeTooComplex =
+      const gasCostUsd = estimatedGasCostUsd(routeGas, options.gasPriceWei, preview.pool.price);
+      const routeTooComplexWithoutGasPrice =
         preview.strategy.preset === "small_capital_test" &&
         (intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") &&
+        gasCostUsd === null &&
         routeGas > routeGasLimit;
-      const gasCostUsd = estimatedGasCostUsd(routeGas, options.gasPriceWei, preview.pool.price);
       const maxGasCostUsd = getConfig().AUTOPILOT_MAX_GAS_COST_USD;
       const gasCostTooHigh =
         preview.strategy.preset === "small_capital_test" &&
@@ -999,9 +1000,9 @@ function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotE
       const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") && intent.executable;
       return {
         label: "Swap source",
-        ok: executableSource && !routeTooComplex && !gasCostTooHigh,
-        detail: routeTooComplex
-          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${routeGasLimit.toString()}; retry later or use a simpler route.`
+        ok: executableSource && !routeTooComplexWithoutGasPrice && !gasCostTooHigh,
+        detail: routeTooComplexWithoutGasPrice
+          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds fallback small-capital limit ${routeGasLimit.toString()} because gas price is unavailable; retry later or use a simpler route.`
           : gasCostTooHigh
             ? `${intent.target} estimated gas cost ${formatUsd(gasCostUsd)} exceeds small-capital limit ${formatUsd(maxGasCostUsd)}; retry when Base gas is cheaper.`
             : executableSource

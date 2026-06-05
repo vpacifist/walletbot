@@ -539,10 +539,10 @@ describe("buildAutopilotDryRunExecution", () => {
     );
 
     expect(execution.status).toBe("blocked");
-    expect(execution.telegramSummary).toContain("route gas estimate 5758600 exceeds small-capital limit 2000000");
+    expect(execution.telegramSummary).toContain("route gas estimate 5758600 exceeds fallback small-capital limit 2000000 because gas price is unavailable");
   });
 
-  it("allows Odos routes above 5M gas units when estimated gas cost is below the USD cap", () => {
+  it("allows aggregator routes above the fallback gas unit limit when estimated gas cost is below the USD cap", () => {
     const execution = buildAutopilotDryRunExecution(
       smallCapitalPreview({
         quote: {
