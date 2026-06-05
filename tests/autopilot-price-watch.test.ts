@@ -115,6 +115,25 @@ describe("checkAutopilotPriceBoundary", () => {
     expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(1);
   });
 
+  it("offers an explicit retry button when the current incident was already deduped", async () => {
+    mockPoolTick(-201601);
+    vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 0, skipped: "duplicate_plan_key" } as any);
+    const testBot = bot();
+
+    const result = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(result).toMatchObject({ triggered: true, result: { skipped: "duplicate_plan_key" } });
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded retry is waiting for your confirmation"),
+      {
+        reply_markup: {
+          inline_keyboard: [[{ text: "Retry current incident", callback_data: "ap:retry_current" }]]
+        }
+      }
+    );
+  });
+
   it("is disabled outside auto_guarded mode", async () => {
     autopilotMode = "approve_in_telegram";
     mockPoolTick(-201601);

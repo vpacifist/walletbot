@@ -422,6 +422,27 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   return { sent: 1, planId: autopilotPlan.record.id };
 }
 
+export async function retryCurrentAutopilotIncident(bot: Telegraf) {
+  const { TELEGRAM_CHAT_ID } = getConfig();
+  if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
+
+  const autopilotPlan = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
+  if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) {
+    return { sent: 0, skipped: "plan_does_not_need_attention" };
+  }
+
+  const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
+  await prisma.telegramEvent.deleteMany({
+    where: {
+      alertType: "autopilot_plan",
+      dedupeKey
+    }
+  });
+
+  await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, ["Retrying current autopilot incident", `Plan id: ${autopilotPlan.record.id}`].join("\n"));
+  return sendAutopilotPlanAlert(bot);
+}
+
 export async function sendLowNativeEthAlert(bot: Telegraf, now = new Date()) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return { sent: 0 };

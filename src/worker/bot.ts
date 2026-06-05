@@ -1,4 +1,5 @@
 import { Context, Telegraf } from "telegraf";
+import { retryCurrentAutopilotIncident } from "@/lib/alerts";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { pauseAutopilotRuntime, resumeAutopilotRuntime } from "@/lib/autopilot-pause";
@@ -19,6 +20,7 @@ const AUTOPILOT_LIVE_EXECUTE_PATTERN = /^ap:execute_live:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN = /^ap:execute_live_debt:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DRIFT_PATTERN = /^ap:execute_live_drift:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DEBT_DRIFT_PATTERN = /^ap:execute_live_debt_drift:(.+)$/;
+const AUTOPILOT_RETRY_CURRENT_PATTERN = /^ap:retry_current$/;
 
 function telegramSafeMessage(message: string, maxLength = 3_800) {
   if (message.length <= maxLength) return message;
@@ -346,6 +348,23 @@ export function createBot() {
     }
   });
 
+  bot.command("autopilot_retry", async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    try {
+      await ctx.reply("Retrying current autopilot incident...");
+      const result = await retryCurrentAutopilotIncident({ telegram: ctx.telegram } as Telegraf);
+      await ctx.reply(
+        [
+          "Autopilot retry complete.",
+          `Result: ${JSON.stringify(result)}`
+        ].join("\n")
+      );
+    } catch (error) {
+      await ctx.reply(error instanceof Error ? `Autopilot retry failed: ${error.message}` : "Autopilot retry failed.");
+    }
+  });
+
   bot.action(AUTOPILOT_DECISION_PATTERN, async (ctx) => {
     if (!assertAllowedChat(ctx)) return;
 
@@ -384,6 +403,19 @@ export function createBot() {
     } catch (error) {
       await ctx.answerCbQuery("Plan update failed", { show_alert: true });
       await ctx.reply(error instanceof Error ? `Autopilot plan update failed: ${error.message}` : "Autopilot plan update failed.");
+    }
+  });
+
+  bot.action(AUTOPILOT_RETRY_CURRENT_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    try {
+      await ctx.answerCbQuery("Retrying current incident...");
+      const result = await retryCurrentAutopilotIncident({ telegram: ctx.telegram } as Telegraf);
+      await ctx.reply(["Autopilot retry complete.", `Result: ${JSON.stringify(result)}`].join("\n"));
+    } catch (error) {
+      await ctx.answerCbQuery("Retry failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Autopilot retry failed: ${error.message}` : "Autopilot retry failed.");
     }
   });
 

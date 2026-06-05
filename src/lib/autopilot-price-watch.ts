@@ -91,6 +91,22 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
       [`Fast price trigger: ${side} boundary crossed`, `Position #${range.tokenId}`, `Tick ${tick} | Range ${range.lowerTick} - ${range.upperTick}`].join("\n")
     );
     const result = await sendAutopilotPlanAlert(bot);
+    if ("skipped" in result && result.skipped === "duplicate_plan_key") {
+      await bot.telegram.sendMessage(
+        config.TELEGRAM_CHAT_ID,
+        [
+          "Auto-guarded retry is waiting for your confirmation",
+          "This crossing was already seen before the latest fix/deploy, so the old duplicate guard blocked an automatic restart.",
+          "",
+          "Use this only when the previous auto-rebalance attempt failed and you want to restart the current incident."
+        ].join("\n"),
+        {
+          reply_markup: {
+            inline_keyboard: [[{ text: "Retry current incident", callback_data: "ap:retry_current" }]]
+          }
+        }
+      );
+    }
     return { triggered: true, tick, tokenId: range.tokenId, side, result };
   } finally {
     state.running = false;

@@ -24,6 +24,7 @@ async function main() {
     await bot.telegram
       .setMyCommands([
         { command: "autopilot", description: "Show current autopilot plan" },
+        { command: "autopilot_retry", description: "Retry current autopilot incident" },
         { command: "autopilot_pause", description: "Pause auto-guarded execution" },
         { command: "autopilot_resume", description: "Resume auto-guarded execution" },
         { command: "status", description: "Show wallet sync and position status" },

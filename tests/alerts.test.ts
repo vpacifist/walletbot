@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
-import { isOutOfRange, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
+import { isOutOfRange, retryCurrentAutopilotIncident, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { isAutopilotRuntimePaused } from "@/lib/autopilot-pause";
@@ -367,6 +367,29 @@ describe("sendAutopilotPlanAlert", () => {
         }
       })
     );
+  });
+
+  it("retries the current incident by clearing only the current autopilot dedupe key", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded"
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await retryCurrentAutopilotIncident(testBot as any);
+
+    expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
+      where: {
+        alertType: "autopilot_plan",
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      }
+    });
+    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "sent", txHash: "0xabc" });
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith("63853863", "Retrying current autopilot incident\nPlan id: plan-1");
+    expect(broadcastAutopilotRebalance).toHaveBeenCalled();
   });
 });
 
