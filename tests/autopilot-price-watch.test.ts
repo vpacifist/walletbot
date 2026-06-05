@@ -13,6 +13,7 @@ vi.mock("@/lib/config", () => {
     getConfig: vi.fn(() => ({
       AUTOPILOT_MODE: autopilotMode,
       AUTOPILOT_PRICE_WATCH_INTERVAL_MS: 1000,
+      AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: 5,
       BASE_WALLET_ADDRESS: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057",
       TELEGRAM_CHAT_ID: "63853863"
     }))
@@ -53,8 +54,13 @@ function bot() {
 }
 
 function mockPoolTick(tick: number) {
+  const poolAddress = "0x6c561B446416E1A00E8E93E221854d6eA4171372";
   vi.mocked(createBaseClient).mockReturnValue({
-    readContract: vi.fn().mockResolvedValue([0n, tick])
+    readContract: vi.fn().mockImplementation((params) => {
+      if (params.functionName === "getPool") return Promise.resolve(poolAddress);
+      if (params.functionName === "slot0") return Promise.resolve([0n, tick]);
+      return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
+    })
   } as any);
 }
 
@@ -90,22 +96,33 @@ describe("checkAutopilotPriceBoundary", () => {
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("triggers the existing auto alert path immediately when the live tick crosses below range", async () => {
+  it("ignores a one-tick micro-breakout", async () => {
     mockPoolTick(-201601);
     const testBot = bot();
 
     const result = await checkAutopilotPriceBoundary(testBot as any);
 
-    expect(result).toMatchObject({ triggered: true, tick: -201601, tokenId: "5257034", side: "below" });
+    expect(result).toMatchObject({ triggered: false, skipped: "micro_breakout", tick: -201601, tokenId: "5257034", side: "below", depthTicks: 1 });
+    expect(sendAutopilotPlanAlert).not.toHaveBeenCalled();
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("triggers the existing auto alert path immediately when the live tick crosses below range by the configured buffer", async () => {
+    mockPoolTick(-201605);
+    const testBot = bot();
+
+    const result = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(result).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
-      "Fast price trigger: below boundary crossed\nPosition #5257034\nTick -201601 | Range -201600 - -201360"
+      "Fast price trigger: below boundary crossed\nPosition #5257034\nTick -201605 | Range -201600 - -201360"
     );
     expect(sendAutopilotPlanAlert).toHaveBeenCalledWith(testBot);
   });
 
   it("does not repeatedly trigger the same out-of-range incident", async () => {
-    mockPoolTick(-201601);
+    mockPoolTick(-201605);
     const testBot = bot();
 
     await checkAutopilotPriceBoundary(testBot as any);
@@ -116,7 +133,7 @@ describe("checkAutopilotPriceBoundary", () => {
   });
 
   it("offers an explicit retry button when the current incident was already deduped", async () => {
-    mockPoolTick(-201601);
+    mockPoolTick(-201605);
     vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 0, skipped: "duplicate_plan_key" } as any);
     const testBot = bot();
 
@@ -136,7 +153,7 @@ describe("checkAutopilotPriceBoundary", () => {
 
   it("is disabled outside auto_guarded mode", async () => {
     autopilotMode = "approve_in_telegram";
-    mockPoolTick(-201601);
+    mockPoolTick(-201605);
     const testBot = bot();
 
     const result = await checkAutopilotPriceBoundary(testBot as any);

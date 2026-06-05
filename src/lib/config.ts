@@ -38,6 +38,7 @@ const envSchema = z.object({
   APP_PASSWORD: z.string().min(8).default("change-me-now"),
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(180),
   AUTOPILOT_PRICE_WATCH_INTERVAL_MS: z.coerce.number().int().min(0).default(1000),
+  AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: z.coerce.number().int().min(0).default(5),
   NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot"),
   AUTOPILOT_LIVE_EXECUTION_ENABLED: z
     .string()

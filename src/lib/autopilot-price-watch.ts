@@ -1,7 +1,7 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
-import { poolAbi } from "./abi";
+import { factoryAbi, poolAbi } from "./abi";
 import { sendAutopilotPlanAlert } from "./alerts";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
@@ -26,10 +26,20 @@ const state: PriceWatchState = {
   lastTriggerKey: null
 };
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
 export async function readWethUsdcPoolTick() {
   const client = createBaseClient();
+  const poolAddress = await client.readContract({
+    address: CONTRACTS.uniswapV3Factory,
+    abi: factoryAbi,
+    functionName: "getPool",
+    args: [CONTRACTS.weth, CONTRACTS.usdc, WETH_USDC_NARROW_FEE]
+  });
+  if (poolAddress === ZERO_ADDRESS) throw new Error("WETH/USDC 0.3% pool not found");
+
   const slot0 = await client.readContract({
-    address: CONTRACTS.wethUsdcUniswapV3Pool,
+    address: poolAddress,
     abi: poolAbi,
     functionName: "slot0"
   });
@@ -65,6 +75,12 @@ function triggerSide(tick: number, range: ActiveRange) {
   return null;
 }
 
+function breakoutDepthTicks(tick: number, range: ActiveRange) {
+  if (tick < range.lowerTick) return range.lowerTick - tick;
+  if (tick >= range.upperTick) return tick - range.upperTick + 1;
+  return 0;
+}
+
 export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const config = getConfig();
   if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
@@ -79,9 +95,13 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
     state.lastTriggerKey = null;
     return { triggered: false, skipped: "inside_range", tick, tokenId: range.tokenId };
   }
+  const depthTicks = breakoutDepthTicks(tick, range);
+  if (depthTicks < config.AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS) {
+    return { triggered: false, skipped: "micro_breakout", tick, tokenId: range.tokenId, side, depthTicks };
+  }
 
   const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;
-  if (state.lastTriggerKey === triggerKey) return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side };
+  if (state.lastTriggerKey === triggerKey) return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
 
   state.running = true;
   state.lastTriggerKey = triggerKey;
@@ -107,7 +127,7 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
         }
       );
     }
-    return { triggered: true, tick, tokenId: range.tokenId, side, result };
+    return { triggered: true, tick, tokenId: range.tokenId, side, depthTicks, result };
   } finally {
     state.running = false;
   }
