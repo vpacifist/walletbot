@@ -6,7 +6,8 @@ const BASE_ADDRESSES = {
   usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   positionManager: "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
   swapRouter02: "0x2626664c2603336E57B271c5C0b26F421741e481",
-  zeroExAllowanceHolder: "0x0000000000001fF3684f28c67538d4D072C22734"
+  zeroExAllowanceHolder: "0x0000000000001fF3684f28c67538d4D072C22734",
+  odosSmartOrderRouterV3: "0x0D05a7D3448512B78fa8A9e46c4872C88C4a0D05"
 };
 
 async function main() {
@@ -22,6 +23,9 @@ async function main() {
   const owner = ethers.getAddress(deployer.address);
   const executor = ethers.getAddress(process.env.AUTOPILOT_EXECUTOR_ADDRESS || deployer.address);
   const vault = ethers.getAddress(process.env.BASE_WALLET_ADDRESS);
+  const swapProvider = process.env.AUTOPILOT_SWAP_PROVIDER === "zeroex" ? "zeroex" : "odos";
+  const allowlistedSwapTarget =
+    swapProvider === "odos" ? BASE_ADDRESSES.odosSmartOrderRouterV3 : BASE_ADDRESSES.zeroExAllowanceHolder;
   const Rebalancer = await ethers.getContractFactory("AutopilotRebalancer", deployer);
   const rebalancer = await Rebalancer.deploy(
     owner,
@@ -31,7 +35,7 @@ async function main() {
     BASE_ADDRESSES.usdc,
     BASE_ADDRESSES.positionManager,
     BASE_ADDRESSES.swapRouter02,
-    BASE_ADDRESSES.zeroExAllowanceHolder
+    allowlistedSwapTarget
   );
   await rebalancer.waitForDeployment();
 
@@ -40,7 +44,8 @@ async function main() {
   console.log(`Owner: ${owner}`);
   console.log(`Executor: ${executor}`);
   console.log(`Vault: ${vault}`);
-  console.log(`0x AllowanceHolder: ${BASE_ADDRESSES.zeroExAllowanceHolder}`);
+  console.log(`Swap provider: ${swapProvider}`);
+  console.log(`Allowlisted swap target: ${allowlistedSwapTarget}`);
   console.log(`Set AUTOPILOT_REBALANCER_ADDRESS=${address}`);
 }
 

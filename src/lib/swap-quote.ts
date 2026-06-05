@@ -260,7 +260,7 @@ export async function quoteOdosRouter(request: SwapQuoteRequest): Promise<SwapQu
       ],
       userAddr: userAddress,
       slippageLimitPercent,
-      compact: true
+      compact: false
     })
   });
   const quoteBody = (await quoteResponse.json().catch(() => ({}))) as OdosQuoteResponse;

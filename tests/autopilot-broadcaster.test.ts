@@ -37,10 +37,23 @@ vi.mock("@/lib/config", () => {
   return {
     getConfig: vi.fn(() => ({
       AUTOPILOT_LIVE_EXECUTION_ENABLED: liveExecutionEnabled,
+      AUTOPILOT_MAX_GAS_COST_USD: 0.5,
       BLOCKSCOUT_BASE_URL: "https://base.blockscout.com"
     }))
   };
 });
+
+function mockGasGuardReads(overrides: Record<string, unknown> = {}) {
+  return {
+    getGasPrice: vi.fn().mockResolvedValue(6_000_000n),
+    readContract: vi
+      .fn()
+      .mockResolvedValueOnce([0n, -202000])
+      .mockResolvedValueOnce("0x4200000000000000000000000000000000000006")
+      .mockResolvedValueOnce("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+    ...overrides
+  };
+}
 
 describe("broadcastAutopilotRebalance", () => {
   beforeEach(() => {
@@ -106,7 +119,8 @@ describe("broadcastAutopilotRebalance", () => {
     const mockPublicClient = {
       call: mockCall,
       estimateGas: mockEstimateGas,
-      waitForTransactionReceipt: mockWaitForTransactionReceipt
+      waitForTransactionReceipt: mockWaitForTransactionReceipt,
+      ...mockGasGuardReads()
     };
     vi.mocked(chain.createBaseClient).mockReturnValue(mockPublicClient as any);
 
@@ -176,7 +190,8 @@ describe("broadcastAutopilotRebalance", () => {
       waitForTransactionReceipt: vi.fn().mockResolvedValue({
         status: "success",
         gasUsed: 100000n
-      })
+      }),
+      ...mockGasGuardReads()
     } as any);
 
     const result = await broadcastAutopilotRebalance("test-plan-id", { allowUncoveredDebt: true });
@@ -219,7 +234,8 @@ describe("broadcastAutopilotRebalance", () => {
       waitForTransactionReceipt: vi.fn().mockResolvedValue({
         status: "success",
         gasUsed: 100000n
-      })
+      }),
+      ...mockGasGuardReads()
     } as any);
 
     const result = await broadcastAutopilotRebalance("test-plan-id", { allowBoundaryDrift: true });
@@ -265,7 +281,8 @@ describe("broadcastAutopilotRebalance", () => {
       waitForTransactionReceipt: vi.fn().mockResolvedValue({
         status: "success",
         gasUsed: 100000n
-      })
+      }),
+      ...mockGasGuardReads()
     } as any);
 
     const result = await broadcastAutopilotRebalance("test-plan-id", { allowUncoveredDebt: true, allowBoundaryDrift: true });
@@ -310,7 +327,8 @@ describe("broadcastAutopilotRebalance", () => {
         status: "reverted",
         transactionHash: "0xmocktxhash",
         gasUsed: 149000n
-      })
+      }),
+      ...mockGasGuardReads()
     } as any);
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("trace unavailable"));
 
@@ -320,6 +338,43 @@ describe("broadcastAutopilotRebalance", () => {
     expect(result.error).toContain("Out of gas during atomic rebalance");
     expect(result.error).toContain("Gas used 149000 / limit 150000");
     fetchSpy.mockRestore();
+  });
+
+  it("blocks live execution when estimated gas cost exceeds the configured USD cap", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+
+    const sendTransaction = vi.fn().mockResolvedValue("0xmocktxhash");
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction,
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockResolvedValue("0x"),
+      estimateGas: vi.fn().mockResolvedValue(5_000_000n),
+      waitForTransactionReceipt: vi.fn(),
+      ...mockGasGuardReads({ getGasPrice: vi.fn().mockResolvedValue(710_000_000n) })
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Atomic rebalance gas cost is too high");
+    expect(sendTransaction).not.toHaveBeenCalled();
   });
 
   it("fails before broadcasting when dry-run validation fails", async () => {

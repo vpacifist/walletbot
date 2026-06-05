@@ -1,8 +1,11 @@
 import { getAddress } from "viem";
+import { poolAbi } from "./abi";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
 import { createAutopilotExecutorWalletClient, createBaseClient } from "./chain";
 import { getConfig } from "./config";
+import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
+import { priceFromTick } from "./narrow-range-rebalance";
 
 export type AutopilotBroadcastResult = {
   success: boolean;
@@ -29,6 +32,34 @@ function bufferedGasLimit(estimatedGas: bigint) {
     );
   }
   return gas;
+}
+
+async function currentWethUsdPrice() {
+  const client = createBaseClient();
+  const [slot0, token0, token1] = await Promise.all([
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "slot0" }),
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token0" }),
+    client.readContract({ address: CONTRACTS.wethUsdcUniswapV3Pool, abi: poolAbi, functionName: "token1" })
+  ]);
+  const price = priceFromTick({
+    tick: Number(slot0[1]),
+    token0,
+    token1,
+    baseToken: CONTRACTS.weth,
+    quoteToken: CONTRACTS.usdc
+  });
+  if (!price || !Number.isFinite(price) || price <= 0) {
+    throw new Error("Could not estimate WETH/USDC price for gas-cost guard.");
+  }
+  return price;
+}
+
+function gasCostUsd(gas: bigint, gasPriceWei: bigint, ethUsd: number) {
+  return (Number(gas * gasPriceWei) / 1e18) * ethUsd;
+}
+
+function formatUsd(value: number) {
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
 function functionNameFromSelector(input?: string) {
@@ -170,6 +201,14 @@ export async function broadcastAutopilotRebalance(
       data
     });
     const gas = bufferedGasLimit(estimatedGas);
+    const [gasPriceWei, ethUsd] = await Promise.all([publicClient.getGasPrice(), currentWethUsdPrice()]);
+    const estimatedCostUsd = gasCostUsd(gas, gasPriceWei, ethUsd);
+    const maxGasCostUsd = getConfig().AUTOPILOT_MAX_GAS_COST_USD;
+    if (estimatedCostUsd > maxGasCostUsd) {
+      throw new Error(
+        `Atomic rebalance gas cost is too high for live execution: estimated ${formatUsd(estimatedCostUsd)}, cap ${formatUsd(maxGasCostUsd)}.`
+      );
+    }
 
     const hash = await walletClient.sendTransaction({
       to: rebalancerAddress,

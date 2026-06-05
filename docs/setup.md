@@ -17,6 +17,7 @@ corepack prepare pnpm@10.12.1 --activate
 - `AUTOPILOT_PRESET`, either `triple_range` or `small_capital_test`
 - `AUTOPILOT_MODE`, usually `approve_in_telegram`; set `auto_guarded` only when guarded live execution should auto-submit clean out-of-range rebalances
 - `AUTOPILOT_SWAP_PROVIDER`, usually `odos` for guarded/live execution; use `zeroex` or `uniswap_v3` only for explicit fallback testing
+- `AUTOPILOT_MAX_GAS_COST_USD`, defaults to `0.5`; live execution is blocked when the estimated atomic rebalance gas cost is above this USD cap
 - `ODOS_API_KEY`, required when `AUTOPILOT_SWAP_PROVIDER=odos`
 - `AUTOPILOT_BASELINE_AT` optionally, as an ISO timestamp for ignoring old autopilot fee/debt history
 - `AUTOPILOT_REBALANCER_ADDRESS` for atomic rebalance dry-run/live review

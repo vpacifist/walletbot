@@ -70,9 +70,10 @@ export type AutopilotDryRunExecution = {
 // Uniswap v3 mint can consume slightly different token amounts as price moves
 // between planning and execution. A wider mint guard avoids reverting while
 // unused token dust is still refunded to the vault.
-const MINT_SLIPPAGE_BPS = 100;
-const CLOSE_SLIPPAGE_BPS = 100;
-const SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS = 2_000_000n;
+const MINT_SLIPPAGE_BPS = 10_000;
+const CLOSE_SLIPPAGE_BPS = 10_000;
+const SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS = 2_000_000n;
+const SMALL_CAPITAL_MAX_ODOS_ROUTE_GAS = 5_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =
@@ -98,6 +99,7 @@ type BuildExecutionOptions = {
   rebalancerRoles?: RebalancerRoleState;
   rebalancerAddress?: Address | "";
   allowances?: Record<string, bigint>;
+  gasPriceWei?: bigint;
   pool?: {
     currentTick: number;
     price: number;
@@ -968,24 +970,43 @@ function expectedGenericSwapTarget() {
   return getConfig().AUTOPILOT_SWAP_PROVIDER === "odos" ? CONTRACTS.odosSmartOrderRouterV3 : CONTRACTS.zeroExAllowanceHolder;
 }
 
-function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotExecutionPreview) {
+function routeGasLimitFor(intent: Extract<TransactionIntent, { kind: "swap_exact_input" }>) {
+  if (intent.sourceType === "odos_router") return SMALL_CAPITAL_MAX_ODOS_ROUTE_GAS;
+  return SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS;
+}
+
+function estimatedGasCostUsd(gas: bigint, gasPriceWei: bigint | undefined, ethUsd: number) {
+  if (!gasPriceWei || !Number.isFinite(ethUsd) || ethUsd <= 0) return null;
+  return (Number(gas * gasPriceWei) / 1e18) * ethUsd;
+}
+
+function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotExecutionPreview, options: BuildExecutionOptions = {}) {
   return intents
     .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
     .map((intent) => {
       const routeGas = intent.gasEstimate ? BigInt(intent.gasEstimate) : 0n;
+      const routeGasLimit = routeGasLimitFor(intent);
       const routeTooComplex =
         preview.strategy.preset === "small_capital_test" &&
         (intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") &&
-        routeGas > SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS;
+        routeGas > routeGasLimit;
+      const gasCostUsd = estimatedGasCostUsd(routeGas, options.gasPriceWei, preview.pool.price);
+      const maxGasCostUsd = getConfig().AUTOPILOT_MAX_GAS_COST_USD;
+      const gasCostTooHigh =
+        preview.strategy.preset === "small_capital_test" &&
+        gasCostUsd !== null &&
+        gasCostUsd > maxGasCostUsd;
       const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") && intent.executable;
       return {
         label: "Swap source",
-        ok: executableSource && !routeTooComplex,
+        ok: executableSource && !routeTooComplex && !gasCostTooHigh,
         detail: routeTooComplex
-          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS.toString()}; retry later or use a simpler route.`
-          : executableSource
-            ? `${intent.target} is executable by the deployed rebalancer`
-            : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
+          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${routeGasLimit.toString()}; retry later or use a simpler route.`
+          : gasCostTooHigh
+            ? `${intent.target} estimated gas cost ${formatUsd(gasCostUsd)} exceeds small-capital limit ${formatUsd(maxGasCostUsd)}; retry when Base gas is cheaper.`
+            : executableSource
+              ? `${intent.target} is executable by the deployed rebalancer${gasCostUsd === null ? "" : `; estimated route gas cost ${formatUsd(gasCostUsd)} <= ${formatUsd(maxGasCostUsd)}`}`
+              : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
       };
     });
 }
@@ -1045,7 +1066,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
   const intents = buildIntents(preview);
   const approvalChecks = buildApprovalChecks(intents, options);
   const rebalancerRoleChecks = buildRebalancerRoleChecks(intents, options);
-  const swapSourceChecks = buildSwapSourceChecks(intents, preview);
+  const swapSourceChecks = buildSwapSourceChecks(intents, preview, options);
   const calls = buildCalls(intents, {
     ...options,
     pool: options.pool ?? preview.pool
@@ -1296,17 +1317,19 @@ async function simulatePreparedCalls(calls: ExecutionCall[]) {
 export async function createAutopilotDryRunExecution(planId: string, options: AutopilotExecutionPreviewOptions = {}) {
   const preview = await createAutopilotExecutionPreview(planId, options);
   const closeTokenIds = preview.steps.filter((step) => step.type === "close" && step.tokenId).map((step) => step.tokenId as string);
-  const [closeStates, nftApprovals, rebalancerRoles, wethAllowance, usdcAllowance] = await Promise.all([
+  const [closeStates, nftApprovals, rebalancerRoles, wethAllowance, usdcAllowance, gasPriceWei] = await Promise.all([
     Promise.all(closeTokenIds.map((tokenId) => fetchClosePositionState(tokenId))),
     Promise.all(closeTokenIds.map((tokenId) => fetchNftApproval(tokenId))),
     fetchRebalancerRoles(),
     fetchAllowance(CONTRACTS.weth),
-    fetchAllowance(CONTRACTS.usdc)
+    fetchAllowance(CONTRACTS.usdc),
+    createBaseClient().getGasPrice().catch(() => undefined)
   ]);
   const execution = buildAutopilotDryRunExecution(preview, {
     closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
     nftApprovals: Object.fromEntries(nftApprovals.map((state) => [state.tokenId, state])),
     rebalancerRoles,
+    gasPriceWei,
     allowances: {
       [allowanceKey(CONTRACTS.weth)]: wethAllowance,
       [allowanceKey(CONTRACTS.usdc)]: usdcAllowance

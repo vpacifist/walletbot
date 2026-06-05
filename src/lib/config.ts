@@ -17,6 +17,7 @@ const envSchema = z.object({
     .optional()
     .default("odos"),
   AUTOPILOT_SWAP_SLIPPAGE_BPS: z.coerce.number().int().min(0).max(10_000).optional().default(50),
+  AUTOPILOT_MAX_GAS_COST_USD: z.coerce.number().min(0).optional().default(0.5),
   AUTOPILOT_BASELINE_AT: z
     .string()
     .datetime()
