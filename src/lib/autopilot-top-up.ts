@@ -31,6 +31,9 @@ type TopUpPayload = {
   wethDesired: number;
   usdcDesired: number;
   valueUsd: number;
+  walletValueUsd: number;
+  efficiencyBps: number;
+  boundaryDistanceTicks: number;
   leftoverWeth: number;
   leftoverUsdc: number;
 };
@@ -108,7 +111,7 @@ async function hasRecentTopUp(tokenId: string) {
   return Boolean(existing);
 }
 
-export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise<TopUpBuildResult> {
+export async function buildTopUpPlan(options: { force?: boolean; currentTick?: number; minEfficiencyBps?: number; minBoundaryDistanceTicks?: number } = {}): Promise<TopUpBuildResult> {
   const config = getConfig();
   if (!config.AUTOPILOT_TOP_UP_ENABLED && !options.force) return { status: "skipped", reason: "top_up_disabled" };
   if (!config.BASE_WALLET_PRIVATE_KEY) return { status: "skipped", reason: "base_wallet_private_key_missing" };
@@ -130,6 +133,20 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
   if (!position || position.currentTick === null) return { status: "skipped", reason: "no_in_range_position" };
   if (!options.force && (await hasRecentTopUp(position.tokenId))) return { status: "skipped", reason: "top_up_cooldown", detail: `Position #${position.tokenId}` };
 
+  const currentTick = options.currentTick ?? position.currentTick;
+  if (currentTick < position.tickLower || currentTick >= position.tickUpper) {
+    return { status: "skipped", reason: "not_in_range_at_live_tick", detail: `Tick ${currentTick}; range ${position.tickLower} - ${position.tickUpper}` };
+  }
+  const boundaryDistanceTicks = Math.min(currentTick - position.tickLower, position.tickUpper - currentTick - 1);
+  const minBoundaryDistanceTicks = options.minBoundaryDistanceTicks ?? 0;
+  if (boundaryDistanceTicks < minBoundaryDistanceTicks) {
+    return {
+      status: "skipped",
+      reason: "too_close_to_boundary",
+      detail: `${boundaryDistanceTicks} ticks < ${minBoundaryDistanceTicks}`
+    };
+  }
+
   const token0 = getAddress(position.token0);
   const token1 = getAddress(position.token1);
   if (![token0, token1].some((token) => token === getAddress(CONTRACTS.weth)) || ![token0, token1].some((token) => token === getAddress(CONTRACTS.usdc))) {
@@ -149,7 +166,7 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     amount1: amount1Available,
     tickLower: position.tickLower,
     tickUpper: position.tickUpper,
-    currentTick: position.currentTick
+    currentTick
   });
   if (liquidity <= 0n) return { status: "skipped", reason: "insufficient_balanced_leftovers" };
 
@@ -157,13 +174,13 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     liquidity,
     tickLower: position.tickLower,
     tickUpper: position.tickUpper,
-    currentTick: position.currentTick
+    currentTick
   });
   if (desired.amount0 <= 0n && desired.amount1 <= 0n) return { status: "skipped", reason: "zero_top_up_amount" };
 
   const wethDesiredRaw = getAmountByToken(token0, token1, desired, getAddress(CONTRACTS.weth));
   const usdcDesiredRaw = getAmountByToken(token0, token1, desired, getAddress(CONTRACTS.usdc));
-  const priceUsd = currentPriceUsd(position.currentTick, token0, token1);
+  const priceUsd = currentPriceUsd(currentTick, token0, token1);
   const wethDesired = rawToNumber(CONTRACTS.weth, wethDesiredRaw);
   const usdcDesired = rawToNumber(CONTRACTS.usdc, usdcDesiredRaw);
   const valueUsd = wethDesired * priceUsd + usdcDesired;
@@ -173,6 +190,18 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
 
   const leftoverWeth = rawToNumber(CONTRACTS.weth, walletWethRaw - wethDesiredRaw);
   const leftoverUsdc = rawToNumber(CONTRACTS.usdc, walletUsdcRaw - usdcDesiredRaw);
+  const walletWeth = rawToNumber(CONTRACTS.weth, walletWethRaw);
+  const walletUsdc = rawToNumber(CONTRACTS.usdc, walletUsdcRaw);
+  const walletValueUsd = walletWeth * priceUsd + walletUsdc;
+  const efficiencyBps = walletValueUsd > 0 ? Math.floor((valueUsd / walletValueUsd) * 10_000) : 0;
+  const minEfficiencyBps = options.minEfficiencyBps ?? 0;
+  if (efficiencyBps < minEfficiencyBps) {
+    return {
+      status: "skipped",
+      reason: "top_up_efficiency_below_threshold",
+      detail: `${(efficiencyBps / 100).toFixed(2)}% < ${(minEfficiencyBps / 100).toFixed(2)}%`
+    };
+  }
   const amount0Min = (desired.amount0 * (10_000n - TOP_UP_SLIPPAGE_BPS)) / 10_000n;
   const amount1Min = (desired.amount1 * (10_000n - TOP_UP_SLIPPAGE_BPS)) / 10_000n;
   const payload: TopUpPayload = {
@@ -180,7 +209,7 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     tokenId: position.tokenId,
     tickLower: position.tickLower,
     tickUpper: position.tickUpper,
-    currentTick: position.currentTick,
+    currentTick,
     priceUsd,
     token0,
     token1,
@@ -193,6 +222,9 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     wethDesired,
     usdcDesired,
     valueUsd,
+    walletValueUsd,
+    efficiencyBps,
+    boundaryDistanceTicks,
     leftoverWeth,
     leftoverUsdc
   };
@@ -202,6 +234,8 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     `Position #${payload.tokenId}`,
     `Range ${payload.tickLower} - ${payload.tickUpper} | Tick ${payload.currentTick}`,
     `Add ${formatToken(payload.wethDesired, "WETH")} + ${formatToken(payload.usdcDesired, "USDC")} (${formatUsd(payload.valueUsd)})`,
+    `Efficiency: ${(payload.efficiencyBps / 100).toFixed(2)}% of ${formatUsd(payload.walletValueUsd)} wallet leftovers`,
+    `Boundary distance: ${payload.boundaryDistanceTicks} ticks`,
     `Wallet leftover after top-up: ${formatToken(payload.leftoverWeth, "WETH")} + ${formatToken(payload.leftoverUsdc, "USDC")}`,
     "Swap: none; only the already balanced wallet part is added.",
     "Mode: review in Telegram"
@@ -211,6 +245,7 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
     "top-up",
     payload.tokenId,
     payload.currentTick,
+    payload.efficiencyBps,
     payload.amount0DesiredRaw,
     payload.amount1DesiredRaw,
     payload.walletWethRaw,
@@ -220,8 +255,13 @@ export async function buildTopUpPlan(options: { force?: boolean } = {}): Promise
   return { status: "ready", payload, summary, planKey };
 }
 
-export async function createTopUpPlan(options: { telegramChatId?: string; force?: boolean } = {}) {
-  const built = await buildTopUpPlan({ force: options.force });
+export async function createTopUpPlan(options: { telegramChatId?: string; force?: boolean; currentTick?: number; minEfficiencyBps?: number; minBoundaryDistanceTicks?: number } = {}) {
+  const built = await buildTopUpPlan({
+    force: options.force,
+    currentTick: options.currentTick,
+    minEfficiencyBps: options.minEfficiencyBps,
+    minBoundaryDistanceTicks: options.minBoundaryDistanceTicks
+  });
   if (built.status === "skipped") return built;
 
   const existing = await prisma.rebalancePlan.findFirst({
@@ -356,6 +396,8 @@ export async function createTopUpExecutionPreview(planId: string) {
       "",
       `Position #${payload.tokenId}`,
       `Add ${formatToken(payload.wethDesired, "WETH")} + ${formatToken(payload.usdcDesired, "USDC")} (${formatUsd(payload.valueUsd)})`,
+      `Efficiency: ${(payload.efficiencyBps / 100).toFixed(2)}% of ${formatUsd(payload.walletValueUsd)} wallet leftovers`,
+      `Boundary distance: ${payload.boundaryDistanceTicks} ticks`,
       "Swap: none; this only increases liquidity with the balanced wallet part.",
       needsToken0 || needsToken1 ? "Approvals: required before increaseLiquidity." : "Approvals: already sufficient.",
       "",
@@ -560,4 +602,58 @@ export async function sendTopUpAlert(bot: Telegraf) {
     }
   });
   return { sent: 1, planId: plan.record.id };
+}
+
+export async function sendTopUpOpportunityAlert(bot: Telegraf, currentTick: number) {
+  const config = getConfig();
+  const chatId = config.TELEGRAM_CHAT_ID;
+  if (!chatId) return { sent: 0, skipped: "telegram_not_configured" };
+  if (!config.AUTOPILOT_TOP_UP_ENABLED) return { sent: 0, skipped: "top_up_disabled" };
+
+  const plan = await createTopUpPlan({
+    telegramChatId: chatId,
+    currentTick,
+    minEfficiencyBps: config.AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS,
+    minBoundaryDistanceTicks: config.AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS
+  });
+  if (plan.status === "skipped") return { sent: 0, skipped: plan.reason, detail: plan.detail };
+
+  const dedupeKey = `top-up-opportunity:${plan.payload.tokenId}:${plan.payload.walletWethRaw}:${plan.payload.walletUsdcRaw}`;
+  const existingEvent = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
+  if (existingEvent) return { sent: 0, skipped: "duplicate_top_up_opportunity" };
+
+  const message = await bot.telegram.sendMessage(
+    chatId,
+    [
+      "Good top-up moment",
+      plan.summary,
+      "",
+      `Plan id: ${plan.record.id}`
+    ].join("\n"),
+    {
+      reply_markup: topUpReviewKeyboard(plan.record.id)
+    }
+  );
+  await prisma.rebalancePlan.update({
+    where: { id: plan.record.id },
+    data: {
+      telegramChatId: chatId,
+      telegramMessageId: String(message.message_id)
+    }
+  });
+  await prisma.telegramEvent.create({
+    data: {
+      alertType: "top_up_opportunity",
+      dedupeKey,
+      payload: {
+        planId: plan.record.id,
+        tokenId: plan.payload.tokenId,
+        valueUsd: plan.payload.valueUsd,
+        walletValueUsd: plan.payload.walletValueUsd,
+        efficiencyBps: plan.payload.efficiencyBps,
+        currentTick: plan.payload.currentTick
+      }
+    }
+  });
+  return { sent: 1, planId: plan.record.id, efficiencyBps: plan.payload.efficiencyBps };
 }

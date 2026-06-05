@@ -22,6 +22,9 @@ corepack prepare pnpm@10.12.1 --activate
 - `AUTOPILOT_TOP_UP_ENABLED`, defaults to `true`; enables a daily Telegram review for adding unused wallet WETH/USDC to the current in-range NFT
 - `AUTOPILOT_TOP_UP_MIN_USD`, defaults to `10`; top-up review is skipped below this usable balanced wallet value
 - `AUTOPILOT_TOP_UP_COOLDOWN_HOURS`, defaults to `24`; avoids repeated automatic top-up prompts for the same active NFT
+- `AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS`, defaults to `30000`; throttles the opportunistic in-range top-up watcher so wallet balances are not checked every second
+- `AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS`, defaults to `8500`; opportunistic top-up alerts only fire when at least this share of free wallet WETH/USDC can be added
+- `AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS`, defaults to `10`; opportunistic top-up alerts are skipped too close to either range boundary
 - `ODOS_API_KEY`, required when `AUTOPILOT_SWAP_PROVIDER=odos`
 - `AUTOPILOT_BASELINE_AT` optionally, as an ISO timestamp for ignoring old autopilot fee/debt history
 - `AUTOPILOT_REBALANCER_ADDRESS` for atomic rebalance dry-run/live review

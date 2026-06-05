@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
 import { checkAutopilotPriceBoundary, resetAutopilotPriceWatchStateForTest } from "@/lib/autopilot-price-watch";
+import { sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
 import { sendAutopilotPlanAlert } from "@/lib/alerts";
 import { createBaseClient } from "@/lib/chain";
 import { prisma } from "@/lib/db";
@@ -14,6 +15,10 @@ vi.mock("@/lib/config", () => {
       AUTOPILOT_MODE: autopilotMode,
       AUTOPILOT_PRICE_WATCH_INTERVAL_MS: 1000,
       AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: 5,
+      AUTOPILOT_TOP_UP_ENABLED: true,
+      AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS: 30000,
+      AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS: 8500,
+      AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS: 10,
       BASE_WALLET_ADDRESS: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057",
       TELEGRAM_CHAT_ID: "63853863"
     }))
@@ -29,6 +34,12 @@ vi.mock("@/lib/chain", () => {
 vi.mock("@/lib/alerts", () => {
   return {
     sendAutopilotPlanAlert: vi.fn()
+  };
+});
+
+vi.mock("@/lib/autopilot-top-up", () => {
+  return {
+    sendTopUpOpportunityAlert: vi.fn()
   };
 });
 
@@ -83,6 +94,7 @@ describe("checkAutopilotPriceBoundary", () => {
     resetAutopilotPriceWatchStateForTest();
     mockActiveRange();
     vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 1, planId: "plan-1" } as any);
+    vi.mocked(sendTopUpOpportunityAlert).mockResolvedValue({ sent: 0, skipped: "below_minimum_value" } as any);
   });
 
   it("does nothing while the live tick is inside the active range", async () => {
@@ -92,8 +104,19 @@ describe("checkAutopilotPriceBoundary", () => {
     const result = await checkAutopilotPriceBoundary(testBot as any);
 
     expect(result).toMatchObject({ triggered: false, skipped: "inside_range", tick: -201500 });
+    expect(sendTopUpOpportunityAlert).toHaveBeenCalledWith(testBot, -201500);
     expect(sendAutopilotPlanAlert).not.toHaveBeenCalled();
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("throttles top-up opportunity checks while the tick remains inside range", async () => {
+    mockPoolTick(-201500);
+    const testBot = bot();
+
+    await checkAutopilotPriceBoundary(testBot as any);
+    await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(sendTopUpOpportunityAlert).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a one-tick micro-breakout", async () => {

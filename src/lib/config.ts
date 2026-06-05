@@ -46,6 +46,9 @@ const envSchema = z.object({
     .transform((value) => value !== "false" && value !== "0"),
   AUTOPILOT_TOP_UP_MIN_USD: z.coerce.number().min(0).optional().default(10),
   AUTOPILOT_TOP_UP_COOLDOWN_HOURS: z.coerce.number().min(1).optional().default(24),
+  AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS: z.coerce.number().int().min(0).optional().default(30_000),
+  AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS: z.coerce.number().int().min(0).max(10_000).optional().default(8_500),
+  AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS: z.coerce.number().int().min(0).optional().default(10),
   NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot"),
   AUTOPILOT_LIVE_EXECUTION_ENABLED: z
     .string()

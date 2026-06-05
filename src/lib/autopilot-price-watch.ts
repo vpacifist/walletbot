@@ -3,6 +3,7 @@ import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
 import { factoryAbi, poolAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
+import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
 import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
@@ -19,12 +20,16 @@ type ActiveRange = {
 
 type PriceWatchState = {
   running: boolean;
+  topUpRunning: boolean;
   lastTriggerKey: string | null;
+  lastTopUpCheckAt: number;
 };
 
 const state: PriceWatchState = {
   running: false,
-  lastTriggerKey: null
+  topUpRunning: false,
+  lastTriggerKey: null,
+  lastTopUpCheckAt: 0
 };
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
@@ -82,6 +87,7 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const side = autopilotBreakoutSide(tick, range);
   if (!side) {
     state.lastTriggerKey = null;
+    await maybeCheckTopUpOpportunity(bot, tick);
     return { triggered: false, skipped: "inside_range", tick, tokenId: range.tokenId };
   }
   const depthTicks = autopilotBreakoutDepthTicks(tick, range);
@@ -122,6 +128,30 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   }
 }
 
+async function maybeCheckTopUpOpportunity(bot: Telegraf, tick: number) {
+  const config = getConfig();
+  if (!config.AUTOPILOT_TOP_UP_ENABLED) return { sent: 0, skipped: "top_up_disabled" };
+  if (config.AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS <= 0) return { sent: 0, skipped: "top_up_watch_disabled" };
+  if (state.topUpRunning) return { sent: 0, skipped: "top_up_already_running" };
+
+  const now = Date.now();
+  if (now - state.lastTopUpCheckAt < config.AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS) {
+    return { sent: 0, skipped: "top_up_watch_throttled" };
+  }
+
+  state.topUpRunning = true;
+  state.lastTopUpCheckAt = now;
+  try {
+    const result = await sendTopUpOpportunityAlert(bot, tick);
+    if (result.sent) {
+      console.log("top-up opportunity watch", result);
+    }
+    return result;
+  } finally {
+    state.topUpRunning = false;
+  }
+}
+
 export function startAutopilotPriceWatch(bot: Telegraf) {
   const intervalMs = getConfig().AUTOPILOT_PRICE_WATCH_INTERVAL_MS;
   if (intervalMs <= 0) return null;
@@ -141,5 +171,7 @@ export function startAutopilotPriceWatch(bot: Telegraf) {
 
 export function resetAutopilotPriceWatchStateForTest() {
   state.running = false;
+  state.topUpRunning = false;
   state.lastTriggerKey = null;
+  state.lastTopUpCheckAt = 0;
 }
