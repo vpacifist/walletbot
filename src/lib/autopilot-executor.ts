@@ -73,7 +73,7 @@ export type AutopilotDryRunExecution = {
 const MINT_SLIPPAGE_BPS = 10_000;
 const CLOSE_SLIPPAGE_BPS = 10_000;
 const SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS = 2_000_000n;
-const SMALL_CAPITAL_MAX_ODOS_ROUTE_GAS = 5_000_000n;
+const SMALL_CAPITAL_MAX_ODOS_ROUTE_GAS = 12_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =

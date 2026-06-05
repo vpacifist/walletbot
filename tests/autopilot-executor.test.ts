@@ -542,6 +542,59 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("route gas estimate 5758600 exceeds small-capital limit 2000000");
   });
 
+  it("allows Odos routes above 5M gas units when estimated gas cost is below the USD cap", () => {
+    const execution = buildAutopilotDryRunExecution(
+      smallCapitalPreview({
+        quote: {
+          status: "available",
+          data: {
+            tokenIn: CONTRACTS.usdc,
+            tokenOut: CONTRACTS.weth,
+            fee: 3000,
+            amountIn: 400,
+            spendSymbol: "USDC",
+            receiveSymbol: "WETH",
+            amountInRaw: "400000000",
+            amountOut: 0.19,
+            amountOutRaw: "190000000000000000",
+            effectivePrice: 2105,
+            gasEstimate: "6019856",
+            source: "Odos SOR",
+            sourceType: "odos_router",
+            executable: true,
+            executionNote: "Odos router calldata can be executed by the allowlisted atomic rebalancer.",
+            approvalTarget: CONTRACTS.odosSmartOrderRouterV3,
+            transactionTarget: CONTRACTS.odosSmartOrderRouterV3,
+            transactionData: "0x12345678",
+            routeSummary: "complex route"
+          }
+        }
+      }),
+      {
+        closePositions: {
+          "1": {
+            status: "available",
+            tokenId: "1",
+            liquidity: 123n,
+            tokensOwed0: 0n,
+            tokensOwed1: 0n,
+            decreaseAmount0: 300_000_000_000_000_000n,
+            decreaseAmount1: 600_000_000n
+          }
+        },
+        rebalancerRoles: {
+          status: "roles_match",
+          detail: "Rebalancer roles match configured executor and vault"
+        },
+        gasPriceWei: 6_000_000n
+      }
+    );
+
+    expect(execution.status).toBe("validated");
+    expect(execution.telegramSummary).toContain("Odos SOR is executable by the deployed rebalancer");
+    expect(execution.telegramSummary).toContain("estimated route gas cost $0.08 <= $0.5");
+  });
+
   it("blocks execution when preview guardrails are blocked", () => {
     const execution = buildAutopilotDryRunExecution(
       preview({
