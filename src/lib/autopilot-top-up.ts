@@ -1,17 +1,17 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import type { Telegraf } from "telegraf";
 import { encodeFunctionData, formatUnits, getAddress, type Address, type Hex } from "viem";
-import { erc20Abi, positionManagerAbi } from "./abi";
+import { erc20Abi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
 import { createBaseClient, createBaseWalletClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS, TOKEN_META } from "./constants";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
-import { priceFromTick } from "./narrow-range-rebalance";
+import { priceFromTick, WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
 import { getLiquidityForAmounts, getTokenAmountsForLiquidity } from "./uniswap-v3-position";
 
-const TOP_UP_SLIPPAGE_BPS = 100n;
 const GAS_BUFFER_BPS = 13_000n;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 type TopUpPayload = {
   kind: "top_up";
@@ -81,6 +81,24 @@ function currentPriceUsd(currentTick: number, token0: Address, token1: Address) 
   });
   if (!price || !Number.isFinite(price) || price <= 0) throw new Error("Unable to calculate WETH/USDC price.");
   return price;
+}
+
+async function readTopUpPoolTick() {
+  const client = createBaseClient();
+  const poolAddress = await client.readContract({
+    address: CONTRACTS.uniswapV3Factory,
+    abi: factoryAbi,
+    functionName: "getPool",
+    args: [CONTRACTS.weth, CONTRACTS.usdc, WETH_USDC_NARROW_FEE]
+  });
+  if (poolAddress === ZERO_ADDRESS) throw new Error("WETH/USDC 0.3% pool not found");
+
+  const slot0 = await client.readContract({
+    address: poolAddress,
+    abi: poolAbi,
+    functionName: "slot0"
+  });
+  return Number(slot0[1]);
 }
 
 async function hasActiveAutopilotExecution() {
@@ -202,8 +220,9 @@ export async function buildTopUpPlan(options: { force?: boolean; currentTick?: n
       detail: `${(efficiencyBps / 100).toFixed(2)}% < ${(minEfficiencyBps / 100).toFixed(2)}%`
     };
   }
-  const amount0Min = (desired.amount0 * (10_000n - TOP_UP_SLIPPAGE_BPS)) / 10_000n;
-  const amount1Min = (desired.amount1 * (10_000n - TOP_UP_SLIPPAGE_BPS)) / 10_000n;
+  // Top-up does not swap. Zero minimums avoid stale-tick reverts; unused tokens stay in the wallet.
+  const amount0Min = 0n;
+  const amount1Min = 0n;
   const payload: TopUpPayload = {
     kind: "top_up",
     tokenId: position.tokenId,
@@ -305,6 +324,29 @@ function assertTopUpPayload(payload: unknown): TopUpPayload {
     throw new Error("Top-up plan payload is invalid.");
   }
   return payload as TopUpPayload;
+}
+
+async function refreshTopUpPlanForExecution(planId: string) {
+  const record = await prisma.rebalancePlan.findUnique({ where: { id: planId } });
+  if (!record) throw new Error(`Top-up plan #${planId} not found.`);
+  const previousPayload = assertTopUpPayload(record.payload);
+  const currentTick = await readTopUpPoolTick();
+  const fresh = await buildTopUpPlan({ force: true, currentTick });
+  if (fresh.status === "skipped") {
+    throw new Error(`Fresh top-up unavailable: ${fresh.reason}${fresh.detail ? ` (${fresh.detail})` : ""}.`);
+  }
+  if (fresh.payload.tokenId !== previousPayload.tokenId) {
+    throw new Error(`Fresh top-up points to position #${fresh.payload.tokenId}, but approved plan was for #${previousPayload.tokenId}.`);
+  }
+
+  return prisma.rebalancePlan.update({
+    where: { id: planId },
+    data: {
+      summary: fresh.summary,
+      payload: fresh.payload,
+      decisionNote: `Top-up execution refreshed at live tick ${currentTick}.`
+    }
+  });
 }
 
 export function topUpReviewKeyboard(planId: string) {
@@ -479,6 +521,7 @@ export async function broadcastTopUp(planId: string) {
   }
 
   try {
+    await refreshTopUpPlanForExecution(planId);
     const preview = await createTopUpExecutionPreview(planId);
     const payload = preview.payload;
     const amount0 = BigInt(payload.amount0DesiredRaw);
@@ -575,7 +618,12 @@ export async function sendTopUpAlert(bot: Telegraf) {
   const chatId = getConfig().TELEGRAM_CHAT_ID;
   if (!chatId) return { sent: 0, skipped: "telegram_not_configured" };
 
-  const plan = await createTopUpPlan({ telegramChatId: chatId });
+  const config = getConfig();
+  const plan = await createTopUpPlan({
+    telegramChatId: chatId,
+    minEfficiencyBps: config.AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS,
+    minBoundaryDistanceTicks: config.AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS
+  });
   if (plan.status === "skipped") return { sent: 0, skipped: plan.reason, detail: plan.detail };
   const existingEvent = await prisma.telegramEvent.findUnique({ where: { dedupeKey: `top-up-alert:${plan.record.id}` } });
   if (existingEvent) return { sent: 0, skipped: "duplicate_top_up_alert" };
