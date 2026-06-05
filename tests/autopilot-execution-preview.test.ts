@@ -65,6 +65,128 @@ describe("buildAutopilotExecutionPreview", () => {
     expect(preview.reasons).toContain("Live plan freshness");
   });
 
+  it("accepts a stale auto plan when the execution envelope still matches", () => {
+    const savedPlan = plan({
+      mode: "auto_guarded",
+      pool: {
+        currentTick: -200461,
+        baseTick: -200460,
+        price: 1970.27,
+        triggerBufferPercent: 0.1,
+        reverseBufferPercent: 0.15,
+        confirmationMinutes: 0.5,
+        cooldownMinutes: 20
+      },
+      ladder: [
+        {
+          role: "active",
+          range: "-200460 - -200220",
+          lowerTick: -200460,
+          upperTick: -200220,
+          lowerPrice: 1970.47,
+          upperPrice: 2018.35,
+          tokenId: "5221394",
+          status: "below_range",
+          plannedAction: "Close current test range"
+        }
+      ],
+      actions: [
+        { type: "close", label: "Close current test range #5221394", detail: "Close current range.", estimatedCostUsd: 1.15, tokenId: "5221394" },
+        {
+          type: "partial_swap",
+          label: "Rebalance token split",
+          detail: "Swap toward the required split.",
+          estimatedCostUsd: 1.15,
+          quoteRequest: {
+            tokenIn: "0x4200000000000000000000000000000000000006",
+            tokenOut: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            fee: 3000,
+            amountIn: 0.3,
+            spendSymbol: "WETH",
+            receiveSymbol: "USDC"
+          }
+        },
+        { type: "mint", label: "Mint next 240-tick range", detail: "Target ticks -200700 - -200460.", estimatedCostUsd: 1.15, lowerTick: -200700, upperTick: -200460 }
+      ]
+    });
+    const currentPlan = plan({
+      ...savedPlan,
+      pool: {
+        ...savedPlan.pool,
+        currentTick: -200462,
+        price: 1970.08
+      },
+      economics: {
+        ...savedPlan.economics,
+        immediateCostUsd: 1.16,
+        uncoveredReversalDebtUsd: 1.16
+      }
+    });
+
+    const preview = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "old", payload: savedPlan },
+      "new",
+      currentPlan,
+      { status: "not_requested" },
+      { allowEquivalentPlanFreshness: true }
+    );
+
+    expect(preview.status).toBe("ready");
+    expect(preview.reasons).not.toContain("Live plan freshness");
+    expect(preview.telegramSummary).toContain("auto execution envelope still matches");
+  });
+
+  it("blocks a stale auto plan when the target range changed", () => {
+    const savedPlan = plan({
+      mode: "auto_guarded",
+      pool: {
+        currentTick: -200461,
+        baseTick: -200460,
+        price: 1970.27,
+        triggerBufferPercent: 0.1,
+        reverseBufferPercent: 0.15,
+        confirmationMinutes: 0.5,
+        cooldownMinutes: 20
+      },
+      ladder: [
+        {
+          role: "active",
+          range: "-200460 - -200220",
+          lowerTick: -200460,
+          upperTick: -200220,
+          lowerPrice: 1970.47,
+          upperPrice: 2018.35,
+          tokenId: "5221394",
+          status: "below_range",
+          plannedAction: "Close current test range"
+        }
+      ],
+      actions: [
+        { type: "close", label: "Close current test range #5221394", detail: "Close current range.", estimatedCostUsd: 1.15, tokenId: "5221394" },
+        { type: "mint", label: "Mint next 240-tick range", detail: "Target ticks -200700 - -200460.", estimatedCostUsd: 1.15, lowerTick: -200700, upperTick: -200460 }
+      ]
+    });
+    const currentPlan = plan({
+      ...savedPlan,
+      actions: [
+        { type: "close", label: "Close current test range #5221394", detail: "Close current range.", estimatedCostUsd: 1.15, tokenId: "5221394" },
+        { type: "mint", label: "Mint next 240-tick range", detail: "Target ticks -200940 - -200700.", estimatedCostUsd: 1.15, lowerTick: -200940, upperTick: -200700 }
+      ]
+    });
+
+    const preview = buildAutopilotExecutionPreview(
+      { id: "plan", status: "approved", planKey: "old", payload: savedPlan },
+      "new",
+      currentPlan,
+      { status: "not_requested" },
+      { allowEquivalentPlanFreshness: true }
+    );
+
+    expect(preview.status).toBe("blocked");
+    expect(preview.reasons).toContain("Live plan freshness");
+    expect(preview.telegramSummary).toContain("Executable rebalance actions changed since approval");
+  });
+
   it("includes quote-only output when a quote is available", () => {
     const preview = buildAutopilotExecutionPreview({ id: "plan", status: "approved", planKey: "same" }, "same", plan(), {
       status: "available",

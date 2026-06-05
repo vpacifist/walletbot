@@ -27,7 +27,7 @@ type TransactionIntent =
       amountInRaw: string;
       minAmountOutRaw: string | null;
       gasEstimate: string | null;
-      sourceType: "uniswap_v3" | "zeroex_allowance_holder" | "aggregator_required" | null;
+      sourceType: "uniswap_v3" | "zeroex_allowance_holder" | "odos_router" | "aggregator_required" | null;
       executable: boolean;
       approvalTarget?: Address;
       transactionTarget?: Address;
@@ -72,7 +72,7 @@ export type AutopilotDryRunExecution = {
 // unused token dust is still refunded to the vault.
 const MINT_SLIPPAGE_BPS = 100;
 const CLOSE_SLIPPAGE_BPS = 100;
-const SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS = 2_000_000n;
+const SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS = 2_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 
 type ClosePositionState =
@@ -528,7 +528,7 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
         };
       }
 
-      if (intent.sourceType !== "uniswap_v3" && intent.sourceType !== "zeroex_allowance_holder") {
+      if (intent.sourceType !== "uniswap_v3" && intent.sourceType !== "zeroex_allowance_holder" && intent.sourceType !== "odos_router") {
         return {
           intent: `${index + 1}. swap_exact_input`,
           status: "blocked" as const,
@@ -541,7 +541,7 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
         };
       }
 
-      if (intent.sourceType === "zeroex_allowance_holder") {
+      if (intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") {
         if (!intent.executable || !intent.transactionTarget || !intent.transactionData) {
           return {
             intent: `${index + 1}. swap_exact_input`,
@@ -550,19 +550,21 @@ function buildCalls(intents: TransactionIntent[], options: BuildExecutionOptions
             functionName: null,
             data: null,
             dataPreview: null,
-            reason: intent.executionNote ?? "0x swap calldata is missing or not executable.",
+            reason: intent.executionNote ?? "Aggregator swap calldata is missing or not executable.",
             simulation: simulation("skipped", "Call is not prepared.")
           };
         }
+        const providerName = intent.sourceType === "zeroex_allowance_holder" ? "zeroExAllowanceHolder" : "odosRouter";
+        const providerLabel = intent.sourceType === "zeroex_allowance_holder" ? "0x AllowanceHolder" : "Odos router";
 
         return {
           intent: `${index + 1}. swap_exact_input`,
           status: "prepared" as const,
           target: intent.transactionTarget,
-          functionName: "zeroExAllowanceHolder",
+          functionName: providerName,
           data: intent.transactionData,
           dataPreview: dataPreview(intent.transactionData),
-          reason: "0x AllowanceHolder calldata prepared for atomic rebalancer review; direct simulation remains disabled because it depends on prior close funds.",
+          reason: `${providerLabel} calldata prepared for atomic rebalancer review; direct simulation remains disabled because it depends on prior close funds.`,
           simulation: simulation("not_run", "Simulation has not run yet.")
         };
       }
@@ -694,7 +696,7 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
 
-  if ((swapIntent.sourceType !== "uniswap_v3" && swapIntent.sourceType !== "zeroex_allowance_holder") || !swapIntent.executable) {
+  if ((swapIntent.sourceType !== "uniswap_v3" && swapIntent.sourceType !== "zeroex_allowance_holder" && swapIntent.sourceType !== "odos_router") || !swapIntent.executable) {
     return {
       status: "blocked",
       target,
@@ -705,9 +707,10 @@ function buildAtomicRebalanceCall(intents: TransactionIntent[], options: BuildEx
     };
   }
 
-  const swapSpender = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.approvalTarget : CONTRACTS.uniswapV3SwapRouter02;
-  const swapTarget = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.transactionTarget : CONTRACTS.uniswapV3SwapRouter02;
-  const swapData = swapIntent.sourceType === "zeroex_allowance_holder" ? swapIntent.transactionData : "0x";
+  const genericAggregator = swapIntent.sourceType === "zeroex_allowance_holder" || swapIntent.sourceType === "odos_router";
+  const swapSpender = genericAggregator ? swapIntent.approvalTarget : CONTRACTS.uniswapV3SwapRouter02;
+  const swapTarget = genericAggregator ? swapIntent.transactionTarget : CONTRACTS.uniswapV3SwapRouter02;
+  const swapData = genericAggregator ? swapIntent.transactionData : "0x";
   if (!swapSpender || !swapTarget || !swapData) {
     return {
       status: "blocked",
@@ -961,6 +964,10 @@ function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildE
   ];
 }
 
+function expectedGenericSwapTarget() {
+  return getConfig().AUTOPILOT_SWAP_PROVIDER === "odos" ? CONTRACTS.odosSmartOrderRouterV3 : CONTRACTS.zeroExAllowanceHolder;
+}
+
 function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotExecutionPreview) {
   return intents
     .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
@@ -968,14 +975,14 @@ function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotE
       const routeGas = intent.gasEstimate ? BigInt(intent.gasEstimate) : 0n;
       const routeTooComplex =
         preview.strategy.preset === "small_capital_test" &&
-        intent.sourceType === "zeroex_allowance_holder" &&
-        routeGas > SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS;
-      const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder") && intent.executable;
+        (intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") &&
+        routeGas > SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS;
+      const executableSource = (intent.sourceType === "uniswap_v3" || intent.sourceType === "zeroex_allowance_holder" || intent.sourceType === "odos_router") && intent.executable;
       return {
         label: "Swap source",
         ok: executableSource && !routeTooComplex,
         detail: routeTooComplex
-          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${SMALL_CAPITAL_MAX_ZEROEX_ROUTE_GAS.toString()}; retry later or use a simpler route.`
+          ? `${intent.target} route gas estimate ${routeGas.toString()} exceeds small-capital limit ${SMALL_CAPITAL_MAX_AGGREGATOR_ROUTE_GAS.toString()}; retry later or use a simpler route.`
           : executableSource
             ? `${intent.target} is executable by the deployed rebalancer`
             : (intent.executionNote ?? `${intent.target} is not executable by the deployed rebalancer`)
@@ -1224,13 +1231,15 @@ async function fetchRebalancerRoles(): Promise<RebalancerRoleState> {
     ]);
     const executorMatches = executor.toLowerCase() === expectedExecutor.toLowerCase();
     const vaultMatches = vault.toLowerCase() === expectedVault.toLowerCase();
-    const allowanceHolderMatches = allowanceHolder.toLowerCase() === CONTRACTS.zeroExAllowanceHolder.toLowerCase();
+    const expectedSwapTarget = expectedGenericSwapTarget();
+    const expectedSwapTargetLabel = getConfig().AUTOPILOT_SWAP_PROVIDER === "odos" ? "Odos router" : "0x AllowanceHolder";
+    const allowanceHolderMatches = allowanceHolder.toLowerCase() === expectedSwapTarget.toLowerCase();
     return {
       status: executorMatches && vaultMatches && allowanceHolderMatches ? "roles_match" : "roles_mismatch",
       detail:
         executorMatches && vaultMatches && allowanceHolderMatches
-          ? `Rebalancer owner ${owner}; executor ${executor} matches AUTOPILOT_EXECUTOR_ADDRESS; vault ${vault} matches BASE_WALLET_ADDRESS; 0x AllowanceHolder ${allowanceHolder} is allowlisted`
-          : `Rebalancer owner ${owner}; executor ${executor} ${executorMatches ? "matches" : `does not match`} AUTOPILOT_EXECUTOR_ADDRESS ${expectedExecutor}; vault ${vault} ${vaultMatches ? "matches" : `does not match`} BASE_WALLET_ADDRESS ${expectedVault}; 0x AllowanceHolder ${allowanceHolder} ${allowanceHolderMatches ? "matches" : "does not match"} ${CONTRACTS.zeroExAllowanceHolder}`
+          ? `Rebalancer owner ${owner}; executor ${executor} matches AUTOPILOT_EXECUTOR_ADDRESS; vault ${vault} matches BASE_WALLET_ADDRESS; ${expectedSwapTargetLabel} ${allowanceHolder} is allowlisted`
+          : `Rebalancer owner ${owner}; executor ${executor} ${executorMatches ? "matches" : `does not match`} AUTOPILOT_EXECUTOR_ADDRESS ${expectedExecutor}; vault ${vault} ${vaultMatches ? "matches" : `does not match`} BASE_WALLET_ADDRESS ${expectedVault}; ${expectedSwapTargetLabel} ${allowanceHolder} ${allowanceHolderMatches ? "matches" : "does not match"} ${expectedSwapTarget}`
     };
   } catch (error) {
     return {

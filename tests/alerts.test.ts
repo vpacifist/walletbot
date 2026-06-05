@@ -281,8 +281,8 @@ describe("sendAutopilotPlanAlert", () => {
 
     expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "sent", txHash: "0xabc" });
     expect(recordAutopilotPlanDecision).toHaveBeenCalledWith("plan-1", "approved");
-    expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true });
-    expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true });
+    expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true });
+    expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true });
     expect(syncWalletOnce).toHaveBeenCalled();
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",

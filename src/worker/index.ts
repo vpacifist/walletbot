@@ -1,4 +1,5 @@
 import { sendAutopilotPlanAlert, sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
+import { startAutopilotPriceWatch } from "@/lib/autopilot-price-watch";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { syncWalletOnce } from "@/lib/sync";
@@ -17,6 +18,7 @@ async function main() {
   const config = getConfig();
   const bot = createBot();
   let lowEthCheckTimeout: ReturnType<typeof setTimeout> | undefined;
+  let priceWatchInterval: ReturnType<typeof setInterval> | null = null;
 
   if (bot) {
     await bot.telegram
@@ -69,11 +71,16 @@ async function main() {
   await run();
   const interval = setInterval(run, config.SYNC_INTERVAL_SECONDS * 1000);
   if (bot) {
+    priceWatchInterval = startAutopilotPriceWatch(bot);
+    if (priceWatchInterval) {
+      console.log(`autopilot fast price watch enabled: ${config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS}ms`);
+    }
     lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
   }
 
   const shutdown = async () => {
     clearInterval(interval);
+    if (priceWatchInterval) clearInterval(priceWatchInterval);
     if (lowEthCheckTimeout) clearTimeout(lowEthCheckTimeout);
     bot?.stop("SIGTERM");
     await prisma.$disconnect();

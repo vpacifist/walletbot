@@ -13,6 +13,7 @@ export type AutopilotBroadcastResult = {
 export type AutopilotBroadcastOptions = {
   allowUncoveredDebt?: boolean;
   allowBoundaryDrift?: boolean;
+  allowEquivalentPlanFreshness?: boolean;
 };
 
 const MAX_DECISION_NOTE_LENGTH = 1_500;
@@ -106,7 +107,8 @@ function decisionNote(message: string) {
 function executionDecisionNote(options: AutopilotBroadcastOptions) {
   const accepted = [
     options.allowUncoveredDebt ? "user-accepted uncovered debt" : null,
-    options.allowBoundaryDrift ? "user-accepted boundary drift" : null
+    options.allowBoundaryDrift ? "user-accepted boundary drift" : null,
+    options.allowEquivalentPlanFreshness ? "auto freshness envelope" : null
   ].filter(Boolean);
   return accepted.length > 0
     ? `Initiating on-chain transaction execution with ${accepted.join(" and ")}...`

@@ -184,7 +184,8 @@ async function executeAutoGuardedPlan(
   if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
 
   const approved = await recordAutopilotPlanDecision(autopilotPlan.record.id, "approved");
-  const execution = await createAutopilotDryRunExecution(approved.id, { allowUncoveredDebt: true });
+  const autoExecutionOptions = { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true };
+  const execution = await createAutopilotDryRunExecution(approved.id, autoExecutionOptions);
 
   if (execution.status !== "validated") {
     await sendAutoGuardedBlocked(bot, approved.id, execution.telegramSummary, execution.checks.filter((check) => !check.ok).map((check) => check.label), execution);
@@ -209,7 +210,7 @@ async function executeAutoGuardedPlan(
     ].join("\n")
   );
 
-  const result = await broadcastAutopilotRebalance(approved.id, { allowUncoveredDebt: true });
+  const result = await broadcastAutopilotRebalance(approved.id, autoExecutionOptions);
   if (result.success && result.txHash) {
     const explorerUrl = `${BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
     await bot.telegram.sendMessage(

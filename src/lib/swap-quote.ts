@@ -13,7 +13,7 @@ export type SwapQuoteRequest = {
   receiveSymbol: "WETH" | "USDC";
 };
 
-export type SwapQuoteSource = "uniswap_v3" | "zeroex_allowance_holder" | "aggregator_required";
+export type SwapQuoteSource = "uniswap_v3" | "zeroex_allowance_holder" | "odos_router" | "aggregator_required";
 
 export type SwapQuote = SwapQuoteRequest & {
   amountInRaw: string;
@@ -67,13 +67,15 @@ function quoteFromRaw(request: SwapQuoteRequest, amountInRaw: bigint, amountOutR
     gasEstimate: gasEstimate.toString(),
     source,
     sourceType,
-    executable: sourceType === "uniswap_v3" || sourceType === "zeroex_allowance_holder",
+    executable: sourceType === "uniswap_v3" || sourceType === "zeroex_allowance_holder" || sourceType === "odos_router",
     executionNote:
       sourceType === "uniswap_v3"
         ? "Executable by the current Uniswap-only rebalancer contract."
         : sourceType === "zeroex_allowance_holder"
           ? "Executable by the allowlisted 0x AllowanceHolder rebalancer contract."
-        : "Aggregator quote requires a rebalancer contract that supports generic aggregator calldata."
+          : sourceType === "odos_router"
+            ? "Odos router calldata can be executed by an Odos-allowlisted atomic rebalancer contract."
+            : "Aggregator quote requires a rebalancer contract that supports generic aggregator calldata."
   };
 }
 
@@ -126,6 +128,34 @@ type ZeroExQuoteResponse = {
   message?: string;
   reason?: string;
   validationErrors?: unknown;
+};
+
+type OdosQuoteResponse = {
+  pathId?: string;
+  outAmounts?: string[];
+  gasEstimate?: number | string;
+  priceImpact?: number;
+  percentDiff?: number;
+  message?: string;
+  detail?: string;
+};
+
+type OdosAssembleResponse = {
+  transaction?: {
+    to?: string;
+    data?: string;
+    gas?: number | string;
+    value?: string;
+  };
+  simulation?: {
+    isSuccess?: boolean;
+    simulationError?: unknown;
+    amountsOut?: string[];
+    gasEstimate?: number | string;
+  };
+  gasEstimate?: number | string;
+  message?: string;
+  detail?: string;
 };
 
 function routeSummary(fills: NonNullable<ZeroExQuoteResponse["route"]>["fills"]) {
@@ -194,10 +224,94 @@ export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Pro
   };
 }
 
+function odosHeaders() {
+  const apiKey = getConfig().ODOS_API_KEY;
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey ? { "x-api-key": apiKey } : {})
+  };
+}
+
+function odosBaseUrl() {
+  return getConfig().ODOS_API_BASE_URL.replace(/\/+$/, "");
+}
+
+export async function quoteOdosRouter(request: SwapQuoteRequest): Promise<SwapQuote> {
+  const amountInRaw = quoteAmountInRaw(request);
+  const rebalancerAddress = getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  const userAddress = rebalancerAddress || getConfig().BASE_WALLET_ADDRESS;
+  const slippageLimitPercent = getConfig().AUTOPILOT_SWAP_SLIPPAGE_BPS / 100;
+  const quoteResponse = await fetch(`${odosBaseUrl()}/sor/quote/v3`, {
+    method: "POST",
+    headers: odosHeaders(),
+    body: JSON.stringify({
+      chainId: BASE_CHAIN_ID,
+      inputTokens: [
+        {
+          tokenAddress: request.tokenIn,
+          amount: amountInRaw.toString()
+        }
+      ],
+      outputTokens: [
+        {
+          tokenAddress: request.tokenOut,
+          proportion: 1
+        }
+      ],
+      userAddr: userAddress,
+      slippageLimitPercent,
+      compact: true
+    })
+  });
+  const quoteBody = (await quoteResponse.json().catch(() => ({}))) as OdosQuoteResponse;
+  const pathId = quoteBody.pathId;
+  const quotedOutRaw = quoteBody.outAmounts?.[0];
+  if (!quoteResponse.ok || !pathId || !quotedOutRaw) {
+    throw new Error(quoteBody.message || quoteBody.detail || `Odos quote failed with status ${quoteResponse.status}`);
+  }
+
+  const assembleResponse = await fetch(`${odosBaseUrl()}/sor/assemble`, {
+    method: "POST",
+    headers: odosHeaders(),
+    body: JSON.stringify({
+      userAddr: userAddress,
+      pathId,
+      simulate: false,
+      receiver: userAddress
+    })
+  });
+  const assembleBody = (await assembleResponse.json().catch(() => ({}))) as OdosAssembleResponse;
+  const transactionTarget = assembleBody.transaction?.to;
+  const transactionData = assembleBody.transaction?.data;
+  const simulationFailed = assembleBody.simulation && assembleBody.simulation.isSuccess === false;
+  if (!assembleResponse.ok || simulationFailed || !transactionTarget || !transactionData?.startsWith("0x")) {
+    const simulationError = assembleBody.simulation?.simulationError ? `; simulation: ${JSON.stringify(assembleBody.simulation.simulationError).slice(0, 240)}` : "";
+    throw new Error(assembleBody.message || assembleBody.detail || `Odos assemble failed with status ${assembleResponse.status}${simulationError}`);
+  }
+
+  const amountOutRaw = assembleBody.simulation?.amountsOut?.[0] ?? quotedOutRaw;
+  const gasEstimate = assembleBody.transaction?.gas ?? assembleBody.gasEstimate ?? quoteBody.gasEstimate ?? "0";
+  const quote = quoteFromRaw(request, amountInRaw, BigInt(amountOutRaw), String(gasEstimate), "Odos SOR", "odos_router");
+  return {
+    ...quote,
+    executable: sameAddress(transactionTarget, CONTRACTS.odosSmartOrderRouterV3),
+    executionNote: sameAddress(transactionTarget, CONTRACTS.odosSmartOrderRouterV3)
+      ? "Odos router calldata can be executed by an Odos-allowlisted atomic rebalancer contract."
+      : "Odos returned a router target that is not the configured Odos SOR v3 router.",
+    approvalTarget: getAddress(transactionTarget),
+    transactionTarget: getAddress(transactionTarget),
+    transactionData: transactionData as Hex,
+    routeSummary: `path ${pathId}${quoteBody.percentDiff === undefined ? "" : `, percentDiff ${quoteBody.percentDiff}%`}${quoteBody.priceImpact === undefined ? "" : `, priceImpact ${quoteBody.priceImpact}%`}`
+  };
+}
+
 export async function quoteBestExecutableSwap(request: SwapQuoteRequest): Promise<SwapQuote> {
   const provider = getConfig().AUTOPILOT_SWAP_PROVIDER;
   if (provider === "zeroex") {
     return quoteZeroExAllowanceHolder(request);
+  }
+  if (provider === "odos") {
+    return quoteOdosRouter(request);
   }
 
   const fallback = await quoteUniswapV3ExactInputSingle(request);

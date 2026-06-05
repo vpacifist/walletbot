@@ -434,6 +434,63 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(execution.telegramSummary).toContain("Swap source: 0x AllowanceHolder is executable");
   });
 
+  it("prepares Odos router calldata for an Odos-allowlisted atomic rebalancer", () => {
+    const execution = buildAutopilotDryRunExecution(
+      preview({
+        quote: {
+          status: "available",
+          data: {
+            tokenIn: CONTRACTS.weth,
+            tokenOut: CONTRACTS.usdc,
+            fee: 3000,
+            amountIn: 1,
+            spendSymbol: "WETH",
+            receiveSymbol: "USDC",
+            amountInRaw: "1000000000000000000",
+            amountOut: 2100,
+            amountOutRaw: "2100000000",
+            effectivePrice: 2100,
+            gasEstimate: "220000",
+            source: "Odos SOR",
+            sourceType: "odos_router",
+            executable: true,
+            executionNote: "Odos router calldata can be executed by an Odos-allowlisted atomic rebalancer contract.",
+            approvalTarget: CONTRACTS.odosSmartOrderRouterV3,
+            transactionTarget: CONTRACTS.odosSmartOrderRouterV3,
+            transactionData: "0xabcdef12",
+            routeSummary: "path test"
+          }
+        }
+      }),
+      {
+        closePositions: {
+          "5187240": {
+            status: "available",
+            tokenId: "5187240",
+            liquidity: 123n,
+            tokensOwed0: 4n,
+            tokensOwed1: 5n,
+            decreaseAmount0: 2_000_000_000_000_000_000n,
+            decreaseAmount1: 0n
+          }
+        },
+        rebalancerRoles: {
+          status: "roles_match",
+          detail: "Rebalancer roles match configured executor, vault, and Odos router"
+        }
+      }
+    );
+
+    const swapCall = execution.calls.find((call) => call.intent.includes("swap_exact_input"));
+    expect(execution.status).toBe("validated");
+    expect(swapCall?.target).toBe(CONTRACTS.odosSmartOrderRouterV3);
+    expect(swapCall?.functionName).toBe("odosRouter");
+    expect(swapCall?.data).toBe("0xabcdef12");
+    expect(execution.atomicCall.status).toBe("prepared");
+    expect(execution.telegramSummary).toContain("Odos SOR");
+    expect(execution.telegramSummary).toContain("Swap source: Odos SOR is executable");
+  });
+
   it("blocks high-gas 0x routes in the small-capital preset", () => {
     const execution = buildAutopilotDryRunExecution(
       smallCapitalPreview({

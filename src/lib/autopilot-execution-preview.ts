@@ -1,4 +1,5 @@
 import { type RebalancePlan } from "@/generated/prisma/client";
+import { type AutopilotPlan } from "./autopilot-plan";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { prisma } from "./db";
 import { quoteBestExecutableSwap, type SwapQuote, type SwapQuoteRequest } from "./swap-quote";
@@ -42,6 +43,7 @@ export type SwapQuoteResult =
 export type AutopilotExecutionPreviewOptions = {
   allowUncoveredDebt?: boolean;
   allowBoundaryDrift?: boolean;
+  allowEquivalentPlanFreshness?: boolean;
 };
 
 function formatUsd(value: number) {
@@ -102,6 +104,87 @@ function boundaryDrift(plan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>
   return { ok: true, driftBps: 0, detail: `Inside active range; limit ${plan.strategy.maxDriftBps} bps` };
 }
 
+function executableActions(plan: AutopilotPlan) {
+  return plan.actions.filter((action) => action.type !== "hold" && action.type !== "wait");
+}
+
+function actionSignature(action: AutopilotPlan["actions"][number]) {
+  return {
+    type: action.type,
+    tokenId: action.tokenId ?? null,
+    lowerTick: action.lowerTick ?? null,
+    upperTick: action.upperTick ?? null,
+    quoteRequest: action.quoteRequest
+      ? {
+          tokenIn: action.quoteRequest.tokenIn.toLowerCase(),
+          tokenOut: action.quoteRequest.tokenOut.toLowerCase(),
+          fee: action.quoteRequest.fee,
+          spendSymbol: action.quoteRequest.spendSymbol,
+          receiveSymbol: action.quoteRequest.receiveSymbol
+        }
+      : null
+  };
+}
+
+function activeRange(plan: AutopilotPlan) {
+  return plan.ladder.find((segment) => segment.role === "active") ?? null;
+}
+
+function breakoutSide(plan: AutopilotPlan) {
+  const active = activeRange(plan);
+  if (!active) return null;
+  if (plan.pool.currentTick < active.lowerTick) return "below";
+  if (plan.pool.currentTick >= active.upperTick) return "above";
+  return "inside";
+}
+
+function sameJson(a: unknown, b: unknown) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function isAutopilotPlan(value: unknown): value is AutopilotPlan {
+  if (!value || typeof value !== "object") return false;
+  const plan = value as Partial<AutopilotPlan>;
+  return Boolean(plan.pool && plan.strategy && Array.isArray(plan.ladder) && Array.isArray(plan.actions));
+}
+
+function equivalentExecutionEnvelope(savedPlan: unknown, currentPlan: AutopilotPlan) {
+  if (!isAutopilotPlan(savedPlan)) {
+    return { ok: false, detail: "Saved plan snapshot is unavailable for auto freshness envelope" };
+  }
+
+  const savedActive = activeRange(savedPlan);
+  const currentActive = activeRange(currentPlan);
+  if (!savedActive || !currentActive) {
+    return { ok: false, detail: "Active range is missing from saved or current plan" };
+  }
+
+  const sameActiveRange =
+    savedActive.tokenId === currentActive.tokenId &&
+    savedActive.lowerTick === currentActive.lowerTick &&
+    savedActive.upperTick === currentActive.upperTick;
+  if (!sameActiveRange) {
+    return { ok: false, detail: "Active NFT or active range changed since approval" };
+  }
+
+  const savedSide = breakoutSide(savedPlan);
+  const currentSide = breakoutSide(currentPlan);
+  if (savedSide === "inside" || currentSide === "inside" || savedSide !== currentSide) {
+    return { ok: false, detail: "Breakout direction changed or price returned inside the active range" };
+  }
+
+  const savedActions = executableActions(savedPlan).map(actionSignature);
+  const currentActions = executableActions(currentPlan).map(actionSignature);
+  if (!sameJson(savedActions, currentActions)) {
+    return { ok: false, detail: "Executable rebalance actions changed since approval" };
+  }
+
+  return {
+    ok: true,
+    detail: `Live plan changed, but auto execution envelope still matches: ${currentSide} breakout, NFT #${currentActive.tokenId}, target actions unchanged`
+  };
+}
+
 function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegramSummary">) {
   const quoteText =
     preview.quote.status === "available"
@@ -141,14 +224,15 @@ function buildTelegramSummary(preview: Omit<AutopilotExecutionPreview, "telegram
 }
 
 export function buildAutopilotExecutionPreview(
-  record: Pick<RebalancePlan, "id" | "status" | "planKey">,
+  record: Pick<RebalancePlan, "id" | "status" | "planKey"> & { payload?: unknown },
   currentPlanKey: string,
   currentPlan: Awaited<ReturnType<typeof getCurrentAutopilotPlan>>,
   quote: SwapQuoteResult = { status: "not_requested" },
   options: AutopilotExecutionPreviewOptions = {}
 ) {
   const isApproved = record.status === "approved" || record.status === "executing";
-  const isFresh = currentPlanKey === record.planKey;
+  const freshnessEnvelope = currentPlanKey === record.planKey ? null : equivalentExecutionEnvelope(record.payload, currentPlan);
+  const isFresh = currentPlanKey === record.planKey || (Boolean(options.allowEquivalentPlanFreshness) && freshnessEnvelope?.ok === true);
   const hasAction = currentPlan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
   const costOk = currentPlan.economics.immediateCostUsd <= currentPlan.strategy.maxImmediateCostUsd;
   const uncoveredDebtWithinLimit = currentPlan.economics.uncoveredReversalDebtUsd <= currentPlan.strategy.maxUncoveredDebtUsd;
@@ -172,7 +256,12 @@ export function buildAutopilotExecutionPreview(
     {
       label: "Live plan freshness",
       ok: isFresh,
-      detail: isFresh ? "Live plan still matches approved snapshot" : "Live plan changed; request a new approval"
+      detail:
+        currentPlanKey === record.planKey
+          ? "Live plan still matches approved snapshot"
+          : isFresh
+            ? (freshnessEnvelope?.detail ?? "Live plan changed, but auto execution envelope still matches")
+            : (freshnessEnvelope?.detail ?? "Live plan changed; request a new approval")
     },
     {
       label: "Action required",
