@@ -130,17 +130,14 @@ describe("checkAutopilotPriceBoundary", () => {
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("triggers the existing auto alert path immediately when the live tick crosses below range by the configured buffer", async () => {
+  it("triggers the existing auto alert path without sending a standalone fast-trigger message", async () => {
     mockPoolTick(-201605);
     const testBot = bot();
 
     const result = await checkAutopilotPriceBoundary(testBot as any);
 
     expect(result).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
-    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
-      "63853863",
-      "Fast price trigger: below boundary crossed\nPosition #5257034\nTick -201605 | Range -201600 - -201360"
-    );
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
     expect(sendAutopilotPlanAlert).toHaveBeenCalledWith(testBot);
   });
 

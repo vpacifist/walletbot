@@ -101,10 +101,6 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   state.running = true;
   state.lastTriggerKey = triggerKey;
   try {
-    await bot.telegram.sendMessage(
-      config.TELEGRAM_CHAT_ID,
-      [`Fast price trigger: ${side} boundary crossed`, `Position #${range.tokenId}`, `Tick ${tick} | Range ${range.lowerTick} - ${range.upperTick}`].join("\n")
-    );
     const result = await sendAutopilotPlanAlert(bot);
     if ("skipped" in result && result.skipped === "duplicate_plan_key") {
       await bot.telegram.sendMessage(
