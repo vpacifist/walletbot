@@ -45,17 +45,80 @@ function divRoundingUp(numerator: bigint, denominator: bigint) {
   return numerator / denominator + (numerator % denominator === 0n ? 0n : 1n);
 }
 
-function getAmount0Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint) {
+export function getAmount0Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint) {
   const [sqrtA, sqrtB] =
     sqrtRatioAX96 > sqrtRatioBX96 ? [sqrtRatioBX96, sqrtRatioAX96] : [sqrtRatioAX96, sqrtRatioBX96];
   const numerator = liquidity * Q96 * (sqrtB - sqrtA);
   return divRoundingUp(divRoundingUp(numerator, sqrtB), sqrtA);
 }
 
-function getAmount1Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint) {
+export function getAmount1Delta(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, liquidity: bigint) {
   const [sqrtA, sqrtB] =
     sqrtRatioAX96 > sqrtRatioBX96 ? [sqrtRatioBX96, sqrtRatioAX96] : [sqrtRatioAX96, sqrtRatioBX96];
   return (liquidity * (sqrtB - sqrtA)) / Q96;
+}
+
+function getLiquidityForAmount0(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, amount0: bigint) {
+  const [sqrtA, sqrtB] =
+    sqrtRatioAX96 > sqrtRatioBX96 ? [sqrtRatioBX96, sqrtRatioAX96] : [sqrtRatioAX96, sqrtRatioBX96];
+  const intermediate = (sqrtA * sqrtB) / Q96;
+  return (amount0 * intermediate) / (sqrtB - sqrtA);
+}
+
+function getLiquidityForAmount1(sqrtRatioAX96: bigint, sqrtRatioBX96: bigint, amount1: bigint) {
+  const [sqrtA, sqrtB] =
+    sqrtRatioAX96 > sqrtRatioBX96 ? [sqrtRatioBX96, sqrtRatioAX96] : [sqrtRatioAX96, sqrtRatioBX96];
+  return (amount1 * Q96) / (sqrtB - sqrtA);
+}
+
+export function getLiquidityForAmounts(input: {
+  amount0: bigint;
+  amount1: bigint;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number;
+}) {
+  const sqrtCurrent = getSqrtRatioAtTick(input.currentTick);
+  const sqrtLower = getSqrtRatioAtTick(input.tickLower);
+  const sqrtUpper = getSqrtRatioAtTick(input.tickUpper);
+
+  if (input.currentTick < input.tickLower) {
+    return getLiquidityForAmount0(sqrtLower, sqrtUpper, input.amount0);
+  }
+  if (input.currentTick < input.tickUpper) {
+    const liquidity0 = getLiquidityForAmount0(sqrtCurrent, sqrtUpper, input.amount0);
+    const liquidity1 = getLiquidityForAmount1(sqrtLower, sqrtCurrent, input.amount1);
+    return liquidity0 < liquidity1 ? liquidity0 : liquidity1;
+  }
+  return getLiquidityForAmount1(sqrtLower, sqrtUpper, input.amount1);
+}
+
+export function getTokenAmountsForLiquidity(input: {
+  liquidity: bigint;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number;
+}) {
+  const sqrtCurrent = getSqrtRatioAtTick(input.currentTick);
+  const sqrtLower = getSqrtRatioAtTick(input.tickLower);
+  const sqrtUpper = getSqrtRatioAtTick(input.tickUpper);
+
+  if (input.currentTick < input.tickLower) {
+    return {
+      amount0: getAmount0Delta(sqrtLower, sqrtUpper, input.liquidity),
+      amount1: 0n
+    };
+  }
+  if (input.currentTick < input.tickUpper) {
+    return {
+      amount0: getAmount0Delta(sqrtCurrent, sqrtUpper, input.liquidity),
+      amount1: getAmount1Delta(sqrtLower, sqrtCurrent, input.liquidity)
+    };
+  }
+  return {
+    amount0: 0n,
+    amount1: getAmount1Delta(sqrtLower, sqrtUpper, input.liquidity)
+  };
 }
 
 export function getPositionTokenAmounts(input: {

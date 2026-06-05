@@ -1,5 +1,6 @@
 import { sendAutopilotPlanAlert, sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { startAutopilotPriceWatch } from "@/lib/autopilot-price-watch";
+import { sendTopUpAlert } from "@/lib/autopilot-top-up";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
 import { syncWalletOnce } from "@/lib/sync";
@@ -18,6 +19,7 @@ async function main() {
   const config = getConfig();
   const bot = createBot();
   let lowEthCheckTimeout: ReturnType<typeof setTimeout> | undefined;
+  let topUpCheckTimeout: ReturnType<typeof setTimeout> | undefined;
   let priceWatchInterval: ReturnType<typeof setInterval> | null = null;
 
   if (bot) {
@@ -27,6 +29,7 @@ async function main() {
         { command: "autopilot_retry", description: "Retry current autopilot incident" },
         { command: "autopilot_pause", description: "Pause auto-guarded execution" },
         { command: "autopilot_resume", description: "Resume auto-guarded execution" },
+        { command: "topup", description: "Review unused WETH/USDC top-up" },
         { command: "status", description: "Show wallet sync and position status" },
         { command: "positions", description: "Show latest WETH/USDC positions" },
         { command: "web", description: "Open WalletBot web dashboard" }
@@ -55,6 +58,19 @@ async function main() {
     }
   };
 
+  const runTopUpCheck = async () => {
+    try {
+      if (bot) {
+        const result = await sendTopUpAlert(bot);
+        console.log("top-up check complete", result);
+      }
+    } catch (error) {
+      console.error("top-up check failed", error);
+    } finally {
+      topUpCheckTimeout = setTimeout(runTopUpCheck, msUntilNextMoscowTen());
+    }
+  };
+
   const run = async () => {
     try {
       const result = await syncWalletOnce();
@@ -77,12 +93,14 @@ async function main() {
       console.log(`autopilot fast price watch enabled: ${config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS}ms`);
     }
     lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
+    topUpCheckTimeout = setTimeout(runTopUpCheck, msUntilNextMoscowTen());
   }
 
   const shutdown = async () => {
     clearInterval(interval);
     if (priceWatchInterval) clearInterval(priceWatchInterval);
     if (lowEthCheckTimeout) clearTimeout(lowEthCheckTimeout);
+    if (topUpCheckTimeout) clearTimeout(topUpCheckTimeout);
     bot?.stop("SIGTERM");
     await prisma.$disconnect();
     process.exit(0);

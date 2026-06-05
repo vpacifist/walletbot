@@ -3,6 +3,7 @@ import { retryCurrentAutopilotIncident } from "@/lib/alerts";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { pauseAutopilotRuntime, resumeAutopilotRuntime } from "@/lib/autopilot-pause";
+import { approveTopUpPlan, broadcastTopUp, createTopUpExecutionPreview, createTopUpPlan, skipTopUpPlan, topUpExecuteKeyboard, topUpReviewKeyboard } from "@/lib/autopilot-top-up";
 import { createAutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { getConfig } from "@/lib/config";
@@ -21,6 +22,8 @@ const AUTOPILOT_LIVE_EXECUTE_DEBT_PATTERN = /^ap:execute_live_debt:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DRIFT_PATTERN = /^ap:execute_live_drift:(.+)$/;
 const AUTOPILOT_LIVE_EXECUTE_DEBT_DRIFT_PATTERN = /^ap:execute_live_debt_drift:(.+)$/;
 const AUTOPILOT_RETRY_CURRENT_PATTERN = /^ap:retry_current$/;
+const TOP_UP_DECISION_PATTERN = /^tu:(approve|skip):(.+)$/;
+const TOP_UP_EXECUTE_PATTERN = /^tu:execute:(.+)$/;
 
 function telegramSafeMessage(message: string, maxLength = 3_800) {
   if (message.length <= maxLength) return message;
@@ -295,7 +298,7 @@ export function createBot() {
 
   bot.start((ctx) => {
     if (!assertAllowedChat(ctx)) return;
-    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, /autopilot_pause, /autopilot_resume, or /web.");
+    return ctx.reply("WalletBot is running. Use /status, /positions, /autopilot, /topup, /autopilot_pause, /autopilot_resume, or /web.");
   });
 
   bot.command("autopilot_pause", async (ctx) => {
@@ -396,6 +399,85 @@ export function createBot() {
       );
     } catch (error) {
       await ctx.reply(error instanceof Error ? `Autopilot retry failed: ${error.message}` : "Autopilot retry failed.");
+    }
+  });
+
+  bot.command("topup", async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    try {
+      const plan = await createTopUpPlan({ telegramChatId: String(ctx.chat?.id ?? ""), force: true });
+      if (plan.status === "skipped") {
+        await ctx.reply(`Top-up unavailable: ${plan.reason}${plan.detail ? ` (${plan.detail})` : ""}`);
+        return;
+      }
+      const message = await ctx.reply([plan.summary, "", `Plan id: ${plan.record.id}`].join("\n"), {
+        reply_markup: topUpReviewKeyboard(plan.record.id)
+      });
+      await prisma.rebalancePlan.update({
+        where: { id: plan.record.id },
+        data: {
+          telegramChatId: String(message.chat.id),
+          telegramMessageId: String(message.message_id)
+        }
+      });
+    } catch (error) {
+      await ctx.reply(error instanceof Error ? `Top-up plan unavailable: ${error.message}` : "Top-up plan unavailable.");
+    }
+  });
+
+  bot.action(TOP_UP_DECISION_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const action = ctx.match[1] as "approve" | "skip";
+    const planId = ctx.match[2];
+
+    try {
+      if (action === "skip") {
+        const record = await skipTopUpPlan(planId);
+        await ctx.answerCbQuery("Top-up skipped");
+        await ctx.reply(`Top-up skipped.\nPlan id: ${record.id}`);
+        return;
+      }
+
+      const record = await approveTopUpPlan(planId);
+      const preview = await createTopUpExecutionPreview(record.id);
+      await ctx.answerCbQuery("Top-up approved");
+      await ctx.reply(preview.summary, {
+        reply_markup: topUpExecuteKeyboard(record.id)
+      });
+    } catch (error) {
+      await ctx.answerCbQuery("Top-up update failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Top-up update failed: ${error.message}` : "Top-up update failed.");
+    }
+  });
+
+  bot.action(TOP_UP_EXECUTE_PATTERN, async (ctx) => {
+    if (!assertAllowedChat(ctx)) return;
+
+    const planId = ctx.match[1];
+    try {
+      await ctx.answerCbQuery("Sending top-up transaction...");
+      await ctx.reply("Sending top-up transaction to Base. Please wait...");
+      const result = await broadcastTopUp(planId);
+      if (result.success) {
+        const explorerUrl = `${getConfig().BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+        await ctx.reply(
+          [
+            "Top-up executed successfully.",
+            result.approvalHashes.length ? `Approvals: ${result.approvalHashes.map(shortAddress).join(", ")}` : undefined,
+            `Tx Hash: ${result.txHash}`,
+            `Blockscout: ${explorerUrl}`
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+        return;
+      }
+      await ctx.reply(`Top-up execution failed: ${result.error}`);
+    } catch (error) {
+      await ctx.answerCbQuery("Top-up execution failed", { show_alert: true });
+      await ctx.reply(error instanceof Error ? `Top-up execution failed: ${error.message}` : "Top-up execution failed.");
     }
   });
 

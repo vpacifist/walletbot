@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACTS } from "@/lib/constants";
-import { getPositionTokenAmounts, tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
+import { getLiquidityForAmounts, getPositionTokenAmounts, getTokenAmountsForLiquidity, tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 
 describe("Uniswap v3 position helpers", () => {
   it("formats WETH/USDC tick prices as USDC per WETH", () => {
@@ -22,5 +22,28 @@ describe("Uniswap v3 position helpers", () => {
 
     expect(Number(amounts.weth)).toBeGreaterThan(0);
     expect(Number(amounts.usdc)).toBeGreaterThan(0);
+  });
+
+  it("round-trips top-up token amounts without exceeding available balances", () => {
+    const available0 = 100_000_000_000_000_000n;
+    const available1 = 120_000_000n;
+    const liquidity = getLiquidityForAmounts({
+      amount0: available0,
+      amount1: available1,
+      tickLower: -202320,
+      tickUpper: -202080,
+      currentTick: -202180
+    });
+
+    const desired = getTokenAmountsForLiquidity({
+      liquidity,
+      tickLower: -202320,
+      tickUpper: -202080,
+      currentTick: -202180
+    });
+
+    expect(liquidity).toBeGreaterThan(0n);
+    expect(desired.amount0).toBeLessThanOrEqual(available0);
+    expect(desired.amount1).toBeLessThanOrEqual(available1);
   });
 });

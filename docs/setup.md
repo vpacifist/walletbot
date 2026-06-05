@@ -19,6 +19,9 @@ corepack prepare pnpm@10.12.1 --activate
 - `AUTOPILOT_SWAP_PROVIDER`, usually `odos` for guarded/live execution; use `zeroex` or `uniswap_v3` only for explicit fallback testing
 - `AUTOPILOT_MAX_GAS_COST_USD`, defaults to `0.5`; live execution is blocked when the estimated atomic rebalance gas cost is above this USD cap
 - `AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS`, defaults to `5`; fast auto mode ignores smaller boundary micro-breakouts
+- `AUTOPILOT_TOP_UP_ENABLED`, defaults to `true`; enables a daily Telegram review for adding unused wallet WETH/USDC to the current in-range NFT
+- `AUTOPILOT_TOP_UP_MIN_USD`, defaults to `10`; top-up review is skipped below this usable balanced wallet value
+- `AUTOPILOT_TOP_UP_COOLDOWN_HOURS`, defaults to `24`; avoids repeated automatic top-up prompts for the same active NFT
 - `ODOS_API_KEY`, required when `AUTOPILOT_SWAP_PROVIDER=odos`
 - `AUTOPILOT_BASELINE_AT` optionally, as an ISO timestamp for ignoring old autopilot fee/debt history
 - `AUTOPILOT_REBALANCER_ADDRESS` for atomic rebalance dry-run/live review
@@ -34,6 +37,8 @@ Live execution is off by default. To enable it, set both:
 - `BASE_WALLET_PRIVATE_KEY`, for the hot wallet only; it must match `BASE_WALLET_ADDRESS`
 
 The bot still requires a validated dry-run and a second Telegram confirmation before broadcasting a live transaction. Do not use a cold-wallet private key here.
+
+Top-up execution uses `BASE_WALLET_PRIVATE_KEY` directly because unused WETH/USDC sits in the hot wallet and `increaseLiquidity` pulls tokens from the caller. The daily top-up check only sends a Telegram review; it does not auto-submit transactions. The initial top-up path does not swap; it only adds the already balanced part of free WETH/USDC to the current in-range NFT.
 
 The Compose Postgres service is exposed on host port `5433` to avoid conflicts with a locally installed Postgres on `5432`.
 

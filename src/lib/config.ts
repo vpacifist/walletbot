@@ -39,6 +39,13 @@ const envSchema = z.object({
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(180),
   AUTOPILOT_PRICE_WATCH_INTERVAL_MS: z.coerce.number().int().min(0).default(1000),
   AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: z.coerce.number().int().min(0).default(5),
+  AUTOPILOT_TOP_UP_ENABLED: z
+    .string()
+    .optional()
+    .default("true")
+    .transform((value) => value !== "false" && value !== "0"),
+  AUTOPILOT_TOP_UP_MIN_USD: z.coerce.number().min(0).optional().default(10),
+  AUTOPILOT_TOP_UP_COOLDOWN_HOURS: z.coerce.number().min(1).optional().default(24),
   NEXT_PUBLIC_APP_NAME: z.string().default("WalletBot"),
   AUTOPILOT_LIVE_EXECUTION_ENABLED: z
     .string()

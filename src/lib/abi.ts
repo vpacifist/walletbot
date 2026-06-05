@@ -24,6 +24,16 @@ export const erc20Abi = [
     stateMutability: "view",
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
   }
 ] as const;
 
@@ -160,6 +170,30 @@ export const positionManagerAbi = [
       }
     ],
     outputs: [
+      { name: "amount0", type: "uint256" },
+      { name: "amount1", type: "uint256" }
+    ]
+  },
+  {
+    type: "function",
+    name: "increaseLiquidity",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenId", type: "uint256" },
+          { name: "amount0Desired", type: "uint256" },
+          { name: "amount1Desired", type: "uint256" },
+          { name: "amount0Min", type: "uint256" },
+          { name: "amount1Min", type: "uint256" },
+          { name: "deadline", type: "uint256" }
+        ]
+      }
+    ],
+    outputs: [
+      { name: "liquidity", type: "uint128" },
       { name: "amount0", type: "uint256" },
       { name: "amount1", type: "uint256" }
     ]
