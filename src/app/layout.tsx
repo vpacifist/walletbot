@@ -1,16 +1,22 @@
 import type { Metadata } from "next";
-import { getWalletBotAssets } from "@/lib/branding";
+import { getWalletBotAssets, WALLETBOT_APP_DESCRIPTION, WALLETBOT_APP_NAME } from "@/lib/branding";
 import "./globals.css";
 
 const assets = getWalletBotAssets();
 
 export const metadata: Metadata = {
-  title: "WalletBot",
-  description: "Base WETH/USDC Uniswap v3 wallet monitor",
+  applicationName: WALLETBOT_APP_NAME,
+  title: WALLETBOT_APP_NAME,
+  description: WALLETBOT_APP_DESCRIPTION,
+  manifest: "/manifest.webmanifest",
   icons: {
-    icon: [{ url: assets.icon, type: "image/svg+xml" }],
-    shortcut: [{ url: assets.icon, type: "image/svg+xml" }],
-    apple: [{ url: assets.icon, type: "image/svg+xml" }]
+    icon: [
+      { url: assets.icon, type: "image/svg+xml" },
+      { url: assets.pwaIcon192, sizes: "192x192", type: "image/png" },
+      { url: assets.pwaIcon512, sizes: "512x512", type: "image/png" }
+    ],
+    shortcut: [{ url: assets.pwaIcon192, sizes: "192x192", type: "image/png" }],
+    apple: [{ url: assets.appleTouchIcon, sizes: "180x180", type: "image/png" }]
   }
 };
 
