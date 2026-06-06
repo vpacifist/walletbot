@@ -5,6 +5,7 @@ import { EXPLORER_TX_URL } from "@/lib/constants";
 import { formatNumber, shortAddress } from "@/lib/format";
 import type { HistoricalPricesByBlock } from "@/lib/historical-prices";
 import { impliedAeroPriceUsd, portfolioTotalUsd } from "@/lib/performance";
+import type { RebalanceSwapSummary } from "@/lib/rebalance-metrics";
 
 export type TransactionTableRow = {
   id: string;
@@ -22,13 +23,8 @@ export type TransactionTableRow = {
     closed: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
     minted: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
     earned: Array<{ tokenId: string; weth: number | null; usdc: number | null }>;
-    boundaryDrift?: {
-      side: "sell_weth" | "buy_weth";
-      boundaryPrice: number;
-      executionPrice: number;
-      wethAmount: number;
-      costUsd: number;
-    } | null;
+    swap?: RebalanceSwapSummary | null;
+    impermanentLossUsd?: number | null;
   } | null;
   assets: {
     weth: number | null;
@@ -124,27 +120,6 @@ function tokenAmountRows(value: unknown, prices?: { ethPriceUsd?: number | null;
   return <div className="amounts-cell">{rows}</div>;
 }
 
-function compactLpAmounts(amounts: { weth: number | null; usdc: number | null }) {
-  const parts = [];
-  if (amounts.weth !== null && Math.abs(amounts.weth) > 0) parts.push(`${formatNumber(amounts.weth, 6)} WETH`);
-  if (amounts.usdc !== null && Math.abs(amounts.usdc) > 0) parts.push(`${formatNumber(amounts.usdc, 2)} USDC`);
-  return parts.length > 0 ? parts.join(" + ") : "0";
-}
-
-function compactTokenAmounts(value: unknown) {
-  if (!Array.isArray(value) || value.length === 0) return "0";
-  const parts = value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const amount = item as { amount?: string; symbol?: string };
-      if (!amount.symbol) return null;
-      return `${formatNumber(amount.amount, amount.symbol === "USDC" ? 2 : 6)} ${amount.symbol}`;
-    })
-    .filter(Boolean);
-
-  return parts.length > 0 ? parts.join(" + ") : "0";
-}
-
 function lpValueUsd(amounts: { weth: number | null; usdc: number | null }, prices?: { ethPriceUsd?: number | null }) {
   if (prices?.ethPriceUsd === undefined) return undefined;
   if (prices.ethPriceUsd === null) return null;
@@ -196,9 +171,13 @@ function rebalanceCostUsd(
   return closedValue + earnedValue - mintedValue - leftoverValue;
 }
 
-function boundaryDriftLabel(drift: NonNullable<NonNullable<TransactionTableRow["rebalanceDetails"]>["boundaryDrift"]>) {
-  const verb = drift.side === "sell_weth" ? "sold" : "bought";
-  return `${verb} ${formatNumber(drift.wethAmount, 6)} WETH @ ${formatUsd(drift.executionPrice)} vs ${formatUsd(drift.boundaryPrice)} boundary`;
+function rebalanceFeesUsd(
+  rebalanceDetails: NonNullable<TransactionTableRow["rebalanceDetails"]>,
+  prices?: { ethPriceUsd?: number | null }
+) {
+  if (rebalanceDetails.earned.length === 0) return null;
+  const ethPriceUsd = rebalanceDetails.swap?.effectivePrice ?? prices?.ethPriceUsd;
+  return sumLpValueUsd(rebalanceDetails.earned, { ethPriceUsd });
 }
 
 function rebalanceAmountRows(
@@ -209,6 +188,7 @@ function rebalanceAmountRows(
   const fromTokenId = rebalanceDetails.closed[0]?.tokenId;
   const toTokenId = rebalanceDetails.minted[0]?.tokenId;
   const costUsd = rebalanceCostUsd(rebalanceDetails, leftovers, prices);
+  const feesUsd = rebalanceFeesUsd(rebalanceDetails, prices);
 
   return (
     <div className="rebalance-summary">
@@ -216,14 +196,8 @@ function rebalanceAmountRows(
         #{fromTokenId ?? "?"} -&gt; #{toTokenId ?? "?"}
       </strong>
       <span className="rebalance-cost">Cost {formatUsd(costUsd)}</span>
-      {rebalanceDetails.boundaryDrift ? (
-        <span className="historical-note">Boundary drift {formatUsd(rebalanceDetails.boundaryDrift.costUsd)}</span>
-      ) : null}
-      {rebalanceDetails.boundaryDrift ? <span className="historical-note">{boundaryDriftLabel(rebalanceDetails.boundaryDrift)}</span> : null}
-      {rebalanceDetails.closed[0] ? <span>Closed {compactLpAmounts(rebalanceDetails.closed[0])}</span> : null}
-      {rebalanceDetails.minted[0] ? <span>Minted {compactLpAmounts(rebalanceDetails.minted[0])}</span> : null}
-      {rebalanceDetails.earned[0] ? <span>Fees {compactLpAmounts(rebalanceDetails.earned[0])}</span> : null}
-      <span className="historical-note">Leftover {compactTokenAmounts(leftovers)}</span>
+      <span>Fees {formatUsd(feesUsd)}</span>
+      <span>IL {formatUsd(rebalanceDetails.impermanentLossUsd ?? null)}</span>
     </div>
   );
 }

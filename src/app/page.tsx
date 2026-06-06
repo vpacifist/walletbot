@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { formatNumber, shortAddress } from "@/lib/format";
 import { readHistoricalPrices } from "@/lib/historical-prices";
 import { sortPositionsForDisplay } from "@/lib/position-order";
+import { rebalanceImpermanentLossUsd, rebalanceSwapSummary } from "@/lib/rebalance-metrics";
 import { getUncollectedPositionFees } from "@/lib/uniswap-v3-fees";
 import { tickToWethUsdcPrice } from "@/lib/uniswap-v3-position";
 import {
@@ -199,29 +200,9 @@ function buildRebalanceDetails(
     })
     .filter((item): item is { tokenId: string; weth: number | null; usdc: number | null } => item !== null);
   const swap = getTransactionDirectionalSwaps(transaction)[0];
-  const closedPosition = closed[0] ? positionsByTokenId.get(closed[0].tokenId) : null;
-  const boundaryPrice =
-    swap && closedPosition
-      ? tickToWethUsdcPrice(swap.side === "sell_weth" ? closedPosition.tickLower : closedPosition.tickUpper, closedPosition.token0, closedPosition.token1)
-      : null;
-  const driftCostUsd =
-    swap && boundaryPrice !== null
-      ? swap.side === "sell_weth"
-        ? Math.max(0, (boundaryPrice - swap.effectivePrice) * swap.wethAmount)
-        : Math.max(0, (swap.effectivePrice - boundaryPrice) * swap.wethAmount)
-      : null;
-  const boundaryDrift =
-    swap && boundaryPrice !== null && driftCostUsd !== null
-      ? {
-          side: swap.side,
-          boundaryPrice,
-          executionPrice: swap.effectivePrice,
-          wethAmount: swap.wethAmount,
-          costUsd: driftCostUsd
-        }
-      : null;
+  const swapSummary = swap ? rebalanceSwapSummary(swap) : null;
 
-  return closed.length > 0 && minted.length > 0 ? { closed, minted, earned, boundaryDrift } : null;
+  return closed.length > 0 && minted.length > 0 ? { closed, minted, earned, swap: swapSummary, impermanentLossUsd: null } : null;
 }
 
 function lpAmountValueUsd(amounts: LpAssetAmounts, wethPriceUsd: number | null) {
@@ -572,7 +553,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     runningAssets = subtractDelta(runningAssets, getTransactionAssetDelta(transaction, walletAddress));
   }
 
-  const transactionRows: TransactionTableRow[] = visibleTransactions.map((transaction) => ({
+  const baseTransactionRows: TransactionTableRow[] = visibleTransactions.map((transaction) => ({
     id: transaction.id,
     hash: transaction.hash,
     blockNumber: transaction.blockNumber.toString(),
@@ -587,6 +568,28 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
     rebalanceDetails: isAtomicRebalanceTransaction(transaction) ? buildRebalanceDetails(transaction, positionsByTokenId) : null,
     assets: transactionAssetStates.get(transaction.id) ?? { weth: null, usdc: null, aero: null, eth: null, lpWeth: null, lpUsdc: null }
   }));
+  let previousRebalanceSwap: NonNullable<NonNullable<TransactionTableRow["rebalanceDetails"]>["swap"]> | null = null;
+  const impermanentLossByTransactionId = new Map<string, number | null>();
+
+  for (const row of [...baseTransactionRows].reverse()) {
+    const swap = row.rebalanceDetails?.swap ?? null;
+    if (!swap) continue;
+
+    impermanentLossByTransactionId.set(row.id, rebalanceImpermanentLossUsd(swap, previousRebalanceSwap));
+    previousRebalanceSwap = swap;
+  }
+
+  const transactionRows: TransactionTableRow[] = baseTransactionRows.map((row) =>
+    row.rebalanceDetails
+      ? {
+          ...row,
+          rebalanceDetails: {
+            ...row.rebalanceDetails,
+            impermanentLossUsd: impermanentLossByTransactionId.get(row.id) ?? null
+          }
+        }
+      : row
+  );
 
   const firstPositionActivityByTokenId = new Map<string, Date>();
 
