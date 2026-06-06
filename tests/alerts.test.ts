@@ -371,6 +371,7 @@ describe("sendAutopilotPlanAlert", () => {
         dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
       })
     });
+    expect(vi.mocked(prisma.telegramEvent.create).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(syncWalletOnce).mock.invocationCallOrder[0]);
   });
 
   it("falls back to manual review when auto_guarded is runtime-paused", async () => {
@@ -567,6 +568,77 @@ describe("sendOutOfRangeAlerts", () => {
       where: { id: "position-row-1" },
       data: { lastAlertStatus: PositionStatus.above_range }
     });
+  });
+
+  it("suppresses stale out-of-range messages while auto_guarded execution is still running", async () => {
+    vi.mocked(prisma.position.findMany).mockResolvedValue([
+      {
+        id: "position-row-1",
+        tokenId: "5277838",
+        status: PositionStatus.below_range,
+        lastAlertStatus: PositionStatus.in_range,
+        currentTick: -202755,
+        tickLower: -202740,
+        tickUpper: -202500,
+        poolAddress: "0x6c56d16237190256f56b6b148e0d8a6017c1372",
+        wallet: { address: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057" }
+      }
+    ] as any);
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded",
+          pool: { currentTick: -202755 },
+          ladder: [
+            {
+              role: "active",
+              tokenId: "5277838",
+              lowerTick: -202740,
+              upperTick: -202500
+            }
+          ],
+          actions: [{ type: "close", label: "Close current test range", tokenId: "5277838" }]
+        }
+      }) as any
+    );
+
+    let finishBroadcast!: (result: { success: false; error: string }) => void;
+    const broadcastStarted = new Promise<void>((resolve) => {
+      vi.mocked(broadcastAutopilotRebalance).mockImplementationOnce(
+        () =>
+          new Promise((resolveBroadcast) => {
+            finishBroadcast = resolveBroadcast;
+            resolve();
+          })
+      );
+    });
+    const executionBot = bot();
+    const executionPromise = sendAutopilotPlanAlert(executionBot as any);
+    await broadcastStarted;
+
+    const rangeBot = bot();
+    const result = await sendOutOfRangeAlerts(rangeBot as any);
+
+    expect(result).toEqual({ sent: 0, skippedAutopilotPlanMessage: 1 });
+    expect(rangeBot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        positionId: "position-row-1",
+        alertType: "out_of_range",
+        dedupeKey: "out-of-range:position-row-1:below_range:-202755",
+        payload: expect.objectContaining({
+          skippedBecause: "auto_guarded_execution_running",
+          planId: "plan-1"
+        })
+      })
+    });
+    expect(prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-row-1" },
+      data: { lastAlertStatus: PositionStatus.below_range }
+    });
+
+    finishBroadcast({ success: false, error: "stop test after in-flight suppression" });
+    await expect(executionPromise).resolves.toEqual({ sent: 1, planId: "plan-1", autoGuarded: "failed" });
   });
 });
 

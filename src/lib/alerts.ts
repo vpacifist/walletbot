@@ -264,13 +264,13 @@ async function executeAutoGuardedPlanInner(
       TELEGRAM_CHAT_ID,
       ["Auto-guarded rebalance sent", `Plan id: ${approved.id}`, `Tx Hash: ${result.txHash}`, `Blockscout: ${explorerUrl}`].join("\n")
     );
-    await sendAutoGuardedPostCheck(bot, result.txHash);
     await recordAutopilotPlanEvent({
       dedupeKey,
       plan: autopilotPlan.plan,
       planId: approved.id,
       planKey: approved.planKey
     });
+    await sendAutoGuardedPostCheck(bot, result.txHash);
     return { sent: 1, planId: approved.id, autoGuarded: "sent", txHash: result.txHash };
   }
 
@@ -337,7 +337,12 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
       ? await prisma.telegramEvent.findUnique({ where: { dedupeKey: autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey) } })
       : null;
     const microBreakout = autopilotPlan ? autopilotMicroBreakoutSkip(autopilotPlan.plan) : null;
-    if (autopilotPlan && autopilotPlanNeedsAttention(autopilotPlan.plan) && (autopilotPlan.record.telegramMessageId || autopilotIncidentAlreadyHandled || microBreakout)) {
+    const autoGuardedExecutionInFlight = autoGuardedExecutionRunning && autopilotPlan?.plan.mode === "auto_guarded";
+    if (
+      autopilotPlan &&
+      autopilotPlanNeedsAttention(autopilotPlan.plan) &&
+      (autopilotPlan.record.telegramMessageId || autopilotIncidentAlreadyHandled || microBreakout || autoGuardedExecutionInFlight)
+    ) {
       await prisma.telegramEvent.create({
         data: {
           positionId: position.id,
@@ -349,6 +354,8 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
             currentTick: position.currentTick,
             skippedBecause: autopilotPlan.record.telegramMessageId
               ? "autopilot_plan_message_exists"
+              : autoGuardedExecutionInFlight
+                ? "auto_guarded_execution_running"
               : microBreakout
                 ? "autopilot_micro_breakout"
                 : "autopilot_incident_already_handled",
