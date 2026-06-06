@@ -2,6 +2,7 @@ import { PositionStatus } from "@/generated/prisma/client";
 import type { Telegraf } from "telegraf";
 import { encodeFunctionData, formatUnits, getAddress, type Address, type Hex } from "viem";
 import { erc20Abi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
+import { autopilotPlanKey, getCurrentAutopilotPlan } from "./autopilot-service";
 import { createBaseClient, createBaseWalletClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS, TOKEN_META } from "./constants";
@@ -12,6 +13,7 @@ import { getLiquidityForAmounts, getTokenAmountsForLiquidity } from "./uniswap-v
 
 const GAS_BUFFER_BPS = 13_000n;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+const AUTOPILOT_EXECUTION_MODES = ["auto_guarded", "approve_in_telegram", "auto_full"];
 
 type TopUpPayload = {
   kind: "top_up";
@@ -102,14 +104,36 @@ async function readTopUpPoolTick() {
 }
 
 async function hasActiveAutopilotExecution() {
-  const active = await prisma.rebalancePlan.findFirst({
+  const executing = await prisma.rebalancePlan.findFirst({
     where: {
-      status: { in: ["approved", "executing"] },
-      mode: { in: ["auto_guarded", "approve_in_telegram", "auto_full"] }
+      status: "executing",
+      mode: { in: AUTOPILOT_EXECUTION_MODES }
     },
     orderBy: { updatedAt: "desc" }
   });
-  return Boolean(active);
+  if (executing) return true;
+
+  const approved = await prisma.rebalancePlan.findMany({
+    where: {
+      status: "approved",
+      mode: { in: AUTOPILOT_EXECUTION_MODES }
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 10,
+    select: { planKey: true }
+  });
+  if (approved.length === 0) return false;
+
+  try {
+    const current = await getCurrentAutopilotPlan();
+    if (current.state === "idle" || current.state === "paused" || current.state === "cooldown") return false;
+    if (!current.actions.some((action) => action.type !== "hold" && action.type !== "wait")) return false;
+
+    const currentPlanKey = autopilotPlanKey(current);
+    return approved.some((plan) => plan.planKey === currentPlanKey);
+  } catch {
+    return true;
+  }
 }
 
 async function hasRecentTopUp(tokenId: string) {
