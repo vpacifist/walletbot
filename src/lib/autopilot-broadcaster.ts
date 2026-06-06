@@ -11,6 +11,7 @@ export type AutopilotBroadcastResult = {
   success: boolean;
   txHash?: string;
   error?: string;
+  broadcasted?: boolean;
 };
 
 export type AutopilotBroadcastOptions = {
@@ -170,6 +171,50 @@ function conciseError(error: unknown) {
   return firstUsefulLine.length > 700 ? `${firstUsefulLine.slice(0, 697)}...` : firstUsefulLine;
 }
 
+function diagnosticLines(error: unknown, seen = new Set<unknown>()): string[] {
+  if (!error || seen.has(error)) return [];
+  seen.add(error);
+
+  if (typeof error === "string") return [error];
+  if (typeof error !== "object") return [String(error)];
+
+  const record = error as Record<string, unknown>;
+  const message = typeof record.message === "string" ? record.message.split("\n").map((line) => line.trim()).find(Boolean) : null;
+  const lines = [
+    typeof record.name === "string" && message ? `${record.name}: ${message}` : null,
+    typeof record.shortMessage === "string" ? record.shortMessage : null,
+    typeof record.details === "string" ? record.details : null,
+    typeof record.metaMessages === "object" && Array.isArray(record.metaMessages) ? record.metaMessages.filter((line): line is string => typeof line === "string").join(" ") : null
+  ].filter((line): line is string => Boolean(line && line.trim()));
+
+  return [
+    ...lines,
+    ...diagnosticLines(record.cause, seen),
+    ...diagnosticLines(record.error, seen)
+  ];
+}
+
+function diagnosticError(error: unknown) {
+  const uniqueLines = [...new Set(diagnosticLines(error).map((line) => line.trim()).filter(Boolean))].filter(
+    (line) =>
+      !line.startsWith("Raw Call Arguments:") &&
+      !line.startsWith("Contract Call:") &&
+      !line.startsWith("from:") &&
+      !line.startsWith("to:") &&
+      !line.startsWith("data:") &&
+      !/execution reverted for an unknown reason/i.test(line)
+  );
+  return uniqueLines.join(" | ");
+}
+
+function executionFailureNote(errorMessage: string, error: unknown) {
+  const diagnostics = diagnosticError(error);
+  const normalize = (value: string) => value.replace(/^Error:\s*/i, "").trim();
+  if (!diagnostics || normalize(diagnostics) === normalize(errorMessage)) return `On-chain execution failed: ${errorMessage}`;
+  const suffix = diagnostics.length > 900 ? `${diagnostics.slice(0, 897)}...` : diagnostics;
+  return `On-chain execution failed: ${errorMessage}\nDiagnostics: ${suffix}`;
+}
+
 function decisionNote(message: string) {
   return message.length > MAX_DECISION_NOTE_LENGTH ? `${message.slice(0, MAX_DECISION_NOTE_LENGTH - 3)}...` : message;
 }
@@ -208,6 +253,7 @@ export async function broadcastAutopilotRebalance(
     return { success: false, error: `Plan status is ${plan.status}; live execution requires an approved plan.` };
   }
 
+  let submittedHash: `0x${string}` | undefined;
   try {
     const execution = await createAutopilotDryRunExecution(planId, options);
     if (execution.status === "blocked") {
@@ -256,6 +302,7 @@ export async function broadcastAutopilotRebalance(
       chain: walletClient.chain,
       account: walletClient.account
     });
+    submittedHash = hash;
 
     const receipt = await publicClient.waitForTransactionReceipt({
       hash,
@@ -282,19 +329,27 @@ export async function broadcastAutopilotRebalance(
     };
   } catch (error) {
     const errorMessage = conciseError(error);
+    console.error("autopilot live execution failed", {
+      planId,
+      broadcasted: Boolean(submittedHash),
+      txHash: submittedHash,
+      error
+    });
 
     await prisma.rebalancePlan.update({
       where: { id: planId },
       data: {
         status: "failed",
         decidedAt: new Date(),
-        decisionNote: decisionNote(`On-chain execution failed: ${errorMessage}`)
+        decisionNote: decisionNote(executionFailureNote(errorMessage, error))
       }
     });
 
     return {
       success: false,
-      error: errorMessage
+      error: errorMessage,
+      txHash: submittedHash,
+      broadcasted: Boolean(submittedHash)
     };
   }
 }

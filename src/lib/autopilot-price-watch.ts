@@ -102,6 +102,9 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   state.lastTriggerKey = triggerKey;
   try {
     const result = await sendAutopilotPlanAlert(bot);
+    if ("autoGuarded" in result && result.autoGuarded === "failed") {
+      state.lastTriggerKey = null;
+    }
     if ("skipped" in result && result.skipped === "duplicate_plan_key") {
       await bot.telegram.sendMessage(
         config.TELEGRAM_CHAT_ID,

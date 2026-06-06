@@ -171,6 +171,26 @@ describe("checkAutopilotPriceBoundary", () => {
     );
   });
 
+  it("allows retry flow after auto_guarded fails before the incident leaves range", async () => {
+    mockPoolTick(-201605);
+    vi.mocked(sendAutopilotPlanAlert)
+      .mockResolvedValueOnce({ sent: 1, planId: "plan-1", autoGuarded: "failed" } as any)
+      .mockResolvedValueOnce({ sent: 0, skipped: "duplicate_plan_key" } as any);
+    const testBot = bot();
+
+    const first = await checkAutopilotPriceBoundary(testBot as any);
+    const second = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(first).toMatchObject({ triggered: true, result: { autoGuarded: "failed" } });
+    expect(second).toMatchObject({ triggered: true, result: { skipped: "duplicate_plan_key" } });
+    expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(2);
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded retry is waiting for your confirmation"),
+      expect.any(Object)
+    );
+  });
+
   it("is disabled outside auto_guarded mode", async () => {
     autopilotMode = "approve_in_telegram";
     mockPoolTick(-201605);

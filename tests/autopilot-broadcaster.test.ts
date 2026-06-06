@@ -377,6 +377,65 @@ describe("broadcastAutopilotRebalance", () => {
     expect(sendTransaction).not.toHaveBeenCalled();
   });
 
+  it("stores diagnostic details and marks failures before broadcast", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+
+    const sendTransaction = vi.fn();
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction,
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockRejectedValue(
+        Object.assign(new Error("Transaction creation failed."), {
+          details: "RPC provider rejected eth_call",
+          cause: new Error("insufficient allowance for preflight")
+        })
+      ),
+      estimateGas: vi.fn(),
+      waitForTransactionReceipt: vi.fn(),
+      ...mockGasGuardReads()
+    } as any);
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result).toEqual({
+      success: false,
+      error: "Transaction creation failed.",
+      txHash: undefined,
+      broadcasted: false
+    });
+    expect(sendTransaction).not.toHaveBeenCalled();
+    expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
+      where: { id: "test-plan-id" },
+      data: expect.objectContaining({
+        status: "failed",
+        decisionNote: expect.stringContaining("Diagnostics: Error: Transaction creation failed. | RPC provider rejected eth_call | Error: insufficient allowance for preflight")
+      })
+    });
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "autopilot live execution failed",
+      expect.objectContaining({ planId: "test-plan-id", broadcasted: false, txHash: undefined })
+    );
+    consoleSpy.mockRestore();
+  });
+
   it("allows high gas-unit routes when the estimated USD gas cost is within the cap", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",

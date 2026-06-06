@@ -72,7 +72,8 @@ When switching from dev/local work to production:
 1. Confirm the exact commit or branch to deploy.
 2. Confirm required production env changes for each Railway service.
 3. Deploy only after tests/build or the relevant verification has passed.
-4. After deploy, run read-only production checks before considering the promotion complete.
+4. For production deploys, commit and push the deployed code to GitHub as part of the deploy workflow before considering the deploy complete. `railway up` alone is not enough because it can deploy local unpushed changes. Only skip commit/push if the user explicitly asks for a deploy without pushing to GitHub.
+5. After deploy, run read-only production checks before considering the promotion complete.
 
 ## UI verification tools
 
