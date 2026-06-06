@@ -110,6 +110,24 @@ export function PositionsTable({ rows }: PositionsTableProps) {
   );
 }
 
+function PositionDate({ value }: { value: string }) {
+  const separator = "\u2013";
+  const separatorIndex = value.indexOf(separator);
+  if (separatorIndex === -1) return <span className="position-date-single">{value}</span>;
+
+  const start = value.slice(0, separatorIndex);
+  const end = value.slice(separatorIndex + separator.length);
+  return (
+    <span className="position-date-range">
+      <span className="position-date-range-part">{start}</span>
+      <span className="position-date-range-separator">
+        {separator}
+      </span>
+      <span className="position-date-range-part">{end}</span>
+    </span>
+  );
+}
+
 function PositionTableRowView({ position }: { position: PositionTableRow }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const rowClassName = [
@@ -149,7 +167,9 @@ function PositionTableRowView({ position }: { position: PositionTableRow }) {
       <td>
         <span className={`status ${position.statusClassName}`}>{position.statusLabel}</span>
       </td>
-      <td className="position-date-cell">{position.date}</td>
+      <td className="position-date-cell">
+        <PositionDate value={position.date} />
+      </td>
       <td className="position-time-range-cell">{position.timeInRange}</td>
       <td className="position-full-cell">
         <div className="price-range-cell">

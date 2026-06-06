@@ -685,7 +685,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
         livePriceEndpoint: position.fee === 3000 ? "/api/rebalance?widthMultiplier=1" : undefined
       },
       positionAmounts: {
-        weth: formatNumber(displayAmounts.weth, 6),
+        weth: formatNumber(displayAmounts.weth, 4),
         usdc: formatNumber(displayAmounts.usdc, 2),
         note: missingClosedSnapshot ? "close snapshot unavailable" : isClosed ? "at close" : null
       },

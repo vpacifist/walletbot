@@ -47,7 +47,7 @@
   --status-historical-bg: #e1e5df;
   --status-historical-text: #526050;
   --shell-width: 1180px;
-  --positions-width: 1440px;
+  --positions-width: 1280px;
   --transactions-width: 1560px;
 }
 
@@ -1586,7 +1586,7 @@ table {
 
 .positions-table {
   width: 100%;
-  min-width: 1300px;
+  min-width: 1204px;
   table-layout: fixed;
 }
 
@@ -1595,47 +1595,47 @@ table {
 }
 
 .position-col-status {
-  width: 116px;
+  width: 108px;
 }
 
 .position-col-date {
-  width: 118px;
+  width: 106px;
 }
 
 .position-col-time-range {
-  width: 100px;
+  width: 90px;
 }
 
 .position-col-range {
-  width: 146px;
+  width: 130px;
 }
 
 .position-col-amounts {
-  width: 138px;
+  width: 112px;
 }
 
 .position-col-deposit {
-  width: 104px;
+  width: 94px;
 }
 
 .position-col-earned {
-  width: 118px;
+  width: 112px;
 }
 
 .position-col-total {
-  width: 86px;
+  width: 88px;
 }
 
 .position-col-dpr {
-  width: 86px;
+  width: 104px;
 }
 
 .position-col-pnl {
-  width: 86px;
+  width: 76px;
 }
 
 .position-col-pool {
-  width: 82px;
+  width: 92px;
 }
 
 .transactions-table {
@@ -1719,8 +1719,28 @@ td {
   transform: rotate(90deg);
 }
 
-.position-date-cell,
 .position-time-range-cell {
+  white-space: nowrap;
+}
+
+.position-date-single {
+  white-space: nowrap;
+}
+
+.position-date-range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 3px;
+  row-gap: 1px;
+  line-height: 1.2;
+}
+
+.position-date-range-part {
+  white-space: nowrap;
+}
+
+.position-date-range-separator {
   white-space: nowrap;
 }
 
@@ -1737,15 +1757,15 @@ td {
 
 .range-visual-layout {
   display: grid;
-  grid-template-columns: minmax(92px, max-content) 28px;
+  grid-template-columns: minmax(82px, max-content) 24px;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .range-labels {
   position: relative;
   width: max-content;
-  min-width: 92px;
+  min-width: 82px;
   height: 72px;
 }
 
@@ -1770,7 +1790,7 @@ td {
 
 .range-visual-wrap {
   position: relative;
-  width: 28px;
+  width: 24px;
   height: 72px;
   cursor: default;
 }
@@ -1949,6 +1969,16 @@ td {
 .transactions-table td {
   padding-left: 8px;
   padding-right: 8px;
+}
+
+.positions-table th,
+.positions-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.positions-table .asset-cell {
+  min-width: 0;
 }
 
 .transactions-table .asset-cell {
