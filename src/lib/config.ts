@@ -27,6 +27,7 @@ const envSchema = z.object({
     .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{40}$/)])
     .optional()
     .default(""),
+  AUTOPILOT_REBALANCER_ADDRESSES: z.string().optional().default(""),
   AUTOPILOT_EXECUTOR_ADDRESS: z
     .union([z.literal(""), z.string().regex(/^0x[a-fA-F0-9]{40}$/)])
     .optional()

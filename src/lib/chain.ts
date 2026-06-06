@@ -3,7 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getConfig } from "./config";
 
-function baseRpcUrls() {
+export function baseRpcUrls() {
   const config = getConfig();
   const extraUrls = config.BASE_RPC_ADD_URLS.split(/[\s,;]+/).filter(Boolean);
   return [...new Set([config.BASE_RPC_URL, ...extraUrls])];

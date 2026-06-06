@@ -28,6 +28,8 @@ corepack prepare pnpm@10.12.1 --activate
 - `ODOS_API_KEY`, required when `AUTOPILOT_SWAP_PROVIDER=odos`
 - `AUTOPILOT_BASELINE_AT` optionally, as an ISO timestamp for ignoring old autopilot fee/debt history
 - `AUTOPILOT_REBALANCER_ADDRESS` for atomic rebalance dry-run/live review
+- `AUTOPILOT_REBALANCER_ADDRESSES` optionally, as comma/space/newline separated current and historical rebalancer addresses to include in executor transaction sync
+- `AUTOPILOT_EXECUTOR_ADDRESS` when live execution uses a separate executor wallet from `BASE_WALLET_ADDRESS`
 - `APP_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
