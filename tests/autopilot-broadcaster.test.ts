@@ -377,6 +377,45 @@ describe("broadcastAutopilotRebalance", () => {
     expect(sendTransaction).not.toHaveBeenCalled();
   });
 
+  it("allows high gas-unit routes when the estimated USD gas cost is within the cap", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+
+    const sendTransaction = vi.fn().mockResolvedValue("0xmocktxhash");
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction,
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockResolvedValue("0x"),
+      estimateGas: vi.fn().mockResolvedValue(13_252_447n),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "success",
+        gasUsed: 13_252_447n
+      }),
+      ...mockGasGuardReads({ getGasPrice: vi.fn().mockResolvedValue(6_000_000n) })
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(true);
+    expect(sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ gas: 19_878_670n }));
+  });
+
   it("fails before broadcasting when dry-run validation fails", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",
@@ -440,7 +479,7 @@ describe("broadcastAutopilotRebalance", () => {
     expect(prisma.rebalancePlan.update).not.toHaveBeenCalled();
   });
 
-  it("returns a concise preflight simulation error instead of a raw viem dump", async () => {
+  it("returns a concise preflight simulation error instead of unknown reason or a raw viem dump", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",
       status: "approved"
@@ -479,15 +518,47 @@ describe("broadcastAutopilotRebalance", () => {
     const result = await broadcastAutopilotRebalance("test-plan-id");
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("Execution reverted: for an unknown reason");
+    expect(result.error).toBe("Execution reverted during preflight simulation without a decoded reason from RPC. No transaction was sent.");
     expect(result.error?.length).toBeLessThan(200);
     expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
       where: { id: "test-plan-id" },
       data: {
         status: "failed",
         decidedAt: expect.any(Date),
-        decisionNote: "On-chain execution failed: Execution reverted: for an unknown reason"
+        decisionNote: "On-chain execution failed: Execution reverted during preflight simulation without a decoded reason from RPC. No transaction was sent."
       }
     });
+  });
+
+  it("includes decoded revert data when RPC exposes it", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    const error = new Error("Execution reverted for an unknown reason.") as Error & { cause: { data: `0x${string}` } };
+    error.cause = { data: "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000014507269636520736c69707061676520636865636b000000000000000000000000" };
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockRejectedValue(error)
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Swap price moved beyond slippage tolerance during preflight simulation. No transaction was sent; retry with a fresh plan or wider AUTOPILOT_SWAP_SLIPPAGE_BPS.");
   });
 });

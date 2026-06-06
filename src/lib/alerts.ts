@@ -87,6 +87,11 @@ function autopilotMicroBreakoutSkip(plan: Awaited<ReturnType<typeof getOrCreateP
   };
 }
 
+function autoGuardedDedupeExpired(sentAt: Date) {
+  const retryMs = getConfig().AUTOPILOT_AUTO_RETRY_DEDUPE_MS;
+  return retryMs > 0 && Date.now() - sentAt.getTime() >= retryMs;
+}
+
 async function recordAutopilotPlanEvent(input: {
   dedupeKey: string;
   plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"];
@@ -430,7 +435,18 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   }
   const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
-  if (existing) return { sent: 0, skipped: "duplicate_plan_key" };
+  if (existing) {
+    if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused && autoGuardedDedupeExpired(existing.sentAt)) {
+      await prisma.telegramEvent.deleteMany({
+        where: {
+          alertType: "autopilot_plan",
+          dedupeKey
+        }
+      });
+    } else {
+      return { sent: 0, skipped: "duplicate_plan_key" };
+    }
+  }
   if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused) {
     return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey);
   }

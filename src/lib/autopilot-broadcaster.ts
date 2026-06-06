@@ -1,4 +1,4 @@
-import { getAddress } from "viem";
+import { decodeAbiParameters, getAddress } from "viem";
 import { poolAbi } from "./abi";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
 import { createAutopilotExecutorWalletClient, createBaseClient } from "./chain";
@@ -21,17 +21,10 @@ export type AutopilotBroadcastOptions = {
 
 const MAX_DECISION_NOTE_LENGTH = 1_500;
 const ATOMIC_GAS_BUFFER_BPS = 15_000;
-const ATOMIC_GAS_HARD_CAP = 12_000_000n;
 const OUT_OF_GAS_THRESHOLD_BPS = 9_800n;
 
 function bufferedGasLimit(estimatedGas: bigint) {
-  const gas = (estimatedGas * BigInt(ATOMIC_GAS_BUFFER_BPS)) / 10_000n;
-  if (gas > ATOMIC_GAS_HARD_CAP) {
-    throw new Error(
-      `Atomic rebalance gas estimate is too high for live execution: estimated ${estimatedGas.toString()}, buffered ${gas.toString()}, cap ${ATOMIC_GAS_HARD_CAP.toString()}.`
-    );
-  }
-  return gas;
+  return (estimatedGas * BigInt(ATOMIC_GAS_BUFFER_BPS)) / 10_000n;
 }
 
 async function currentWethUsdPrice() {
@@ -88,6 +81,42 @@ function findOutOfGasCall(call: Record<string, unknown>): string | null {
   return null;
 }
 
+function findRevertData(value: unknown, seen = new Set<unknown>()): `0x${string}` | null {
+  if (!value || seen.has(value)) return null;
+  seen.add(value);
+
+  if (typeof value === "string") {
+    return /^0x[0-9a-fA-F]{8,}$/.test(value) ? (value as `0x${string}`) : null;
+  }
+
+  if (typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ["data", "error", "cause"]) {
+    const result = findRevertData(record[key], seen);
+    if (result) return result;
+  }
+
+  return null;
+}
+
+function decodeRevertData(data: `0x${string}`) {
+  const selector = data.slice(0, 10).toLowerCase();
+  try {
+    if (selector === "0x08c379a0") {
+      const [reason] = decodeAbiParameters([{ type: "string" }], `0x${data.slice(10)}`);
+      return `reason: ${reason}`;
+    }
+    if (selector === "0x4e487b71") {
+      const [code] = decodeAbiParameters([{ type: "uint256" }], `0x${data.slice(10)}`);
+      return `panic code ${code.toString()}`;
+    }
+  } catch {
+    // Fall through to selector output.
+  }
+
+  return `custom error selector ${selector}${data.length > 10 ? `, data ${data.slice(0, 42)}...` : ""}`;
+}
+
 async function explainRevertedReceipt(hash: `0x${string}`, gasUsed: bigint, gasLimit: bigint) {
   if ((gasUsed * 10_000n) / gasLimit < OUT_OF_GAS_THRESHOLD_BPS) return `On-chain transaction reverted. Hash: ${hash}`;
 
@@ -119,7 +148,17 @@ function conciseError(error: unknown) {
     if (/price slippage check/i.test(reason ?? message)) {
       return "Swap price moved beyond slippage tolerance during preflight simulation. No transaction was sent; retry with a fresh plan or wider AUTOPILOT_SWAP_SLIPPAGE_BPS.";
     }
-    return reason ? `Execution reverted: ${reason}` : "Execution reverted during preflight simulation. No transaction was sent.";
+    const meaningfulReason = reason && !/^(for an unknown reason|unknown reason|unknown)$/i.test(reason) ? reason : null;
+    if (meaningfulReason) return `Execution reverted: ${meaningfulReason}`;
+    const revertData = findRevertData(error);
+    if (revertData) {
+      const decoded = decodeRevertData(revertData);
+      if (/price slippage check/i.test(decoded)) {
+        return "Swap price moved beyond slippage tolerance during preflight simulation. No transaction was sent; retry with a fresh plan or wider AUTOPILOT_SWAP_SLIPPAGE_BPS.";
+      }
+      return `Execution reverted during preflight simulation with ${decoded}. No transaction was sent.`;
+    }
+    return "Execution reverted during preflight simulation without a decoded reason from RPC. No transaction was sent.";
   }
 
   if (/insufficient funds/i.test(message)) return "Insufficient executor wallet funds for gas.";

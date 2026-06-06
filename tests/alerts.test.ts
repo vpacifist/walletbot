@@ -15,7 +15,8 @@ vi.mock("@/lib/config", () => {
     getConfig: vi.fn(() => ({
       TELEGRAM_CHAT_ID: "63853863",
       BLOCKSCOUT_BASE_URL: "https://base.blockscout.com",
-      AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: 5
+      AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS: 5,
+      AUTOPILOT_AUTO_RETRY_DEDUPE_MS: 300000
     }))
   };
 });
@@ -205,6 +206,32 @@ describe("sendAutopilotPlanAlert", () => {
       }
     });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("retries a stale auto_guarded incident instead of keeping the old dedupe forever", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded"
+        }
+      }) as any
+    );
+    vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue({
+      id: "event-1",
+      sentAt: new Date(Date.now() - 301_000)
+    } as any);
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
+      where: {
+        alertType: "autopilot_plan",
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      }
+    });
+    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "sent", txHash: "0xabc" });
+    expect(broadcastAutopilotRebalance).toHaveBeenCalled();
   });
 
   it("skips auto_guarded micro-breakouts in the regular sync-loop path", async () => {
