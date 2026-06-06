@@ -336,7 +336,8 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
     const autopilotIncidentAlreadyHandled = autopilotPlan
       ? await prisma.telegramEvent.findUnique({ where: { dedupeKey: autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey) } })
       : null;
-    if (autopilotPlan && autopilotPlanNeedsAttention(autopilotPlan.plan) && (autopilotPlan.record.telegramMessageId || autopilotIncidentAlreadyHandled)) {
+    const microBreakout = autopilotPlan ? autopilotMicroBreakoutSkip(autopilotPlan.plan) : null;
+    if (autopilotPlan && autopilotPlanNeedsAttention(autopilotPlan.plan) && (autopilotPlan.record.telegramMessageId || autopilotIncidentAlreadyHandled || microBreakout)) {
       await prisma.telegramEvent.create({
         data: {
           positionId: position.id,
@@ -346,7 +347,12 @@ export async function sendOutOfRangeAlerts(bot: Telegraf) {
             tokenId: position.tokenId,
             status: position.status,
             currentTick: position.currentTick,
-            skippedBecause: autopilotPlan.record.telegramMessageId ? "autopilot_plan_message_exists" : "autopilot_incident_already_handled",
+            skippedBecause: autopilotPlan.record.telegramMessageId
+              ? "autopilot_plan_message_exists"
+              : microBreakout
+                ? "autopilot_micro_breakout"
+                : "autopilot_incident_already_handled",
+            microBreakout,
             planId: autopilotPlan.record.id
           }
         }

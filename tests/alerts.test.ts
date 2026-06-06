@@ -509,6 +509,65 @@ describe("sendOutOfRangeAlerts", () => {
       data: { lastAlertStatus: PositionStatus.below_range }
     });
   });
+
+  it("suppresses the manual out-of-range message when auto_guarded is only a micro-breakout", async () => {
+    vi.mocked(prisma.position.findMany).mockResolvedValue([
+      {
+        id: "position-row-1",
+        tokenId: "5276554",
+        status: PositionStatus.above_range,
+        lastAlertStatus: PositionStatus.in_range,
+        currentTick: -202739,
+        tickLower: -202980,
+        tickUpper: -202740,
+        poolAddress: "0x6c56d16237190256f56b6b148e0d8a6017c1372",
+        wallet: { address: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057" }
+      }
+    ] as any);
+    vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
+      planRecord({
+        plan: {
+          mode: "auto_guarded",
+          pool: { currentTick: -202739 },
+          ladder: [
+            {
+              role: "active",
+              tokenId: "5276554",
+              lowerTick: -202980,
+              upperTick: -202740
+            }
+          ],
+          actions: [{ type: "close", label: "Close current test range", tokenId: "5276554" }]
+        }
+      }) as any
+    );
+    const testBot = bot();
+
+    const result = await sendOutOfRangeAlerts(testBot as any);
+
+    expect(result).toEqual({ sent: 0, skippedAutopilotPlanMessage: 1 });
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        positionId: "position-row-1",
+        alertType: "out_of_range",
+        dedupeKey: "out-of-range:position-row-1:above_range:-202739",
+        payload: expect.objectContaining({
+          skippedBecause: "autopilot_micro_breakout",
+          planId: "plan-1",
+          microBreakout: expect.objectContaining({
+            side: "above",
+            depthTicks: 2,
+            thresholdTicks: 5
+          })
+        })
+      })
+    });
+    expect(prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-row-1" },
+      data: { lastAlertStatus: PositionStatus.above_range }
+    });
+  });
 });
 
 describe("isOutOfRange", () => {
