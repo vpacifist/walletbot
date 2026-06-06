@@ -8,7 +8,7 @@ export function isRailwayDeployment() {
 }
 
 export function getWalletBotAssets() {
-  const suffix = isRailwayDeployment() ? "" : "-dev";
+  const suffix = process.env.NODE_ENV === "development" && !isRailwayDeployment() ? "-dev" : "";
 
   return {
     logo: `/walletbot-logo${suffix}.svg`,
