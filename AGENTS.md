@@ -63,6 +63,17 @@ Data access during incident investigations:
 
 Before coding product or UI behavior changes, describe the intended change in user-facing/UI terms without deep implementation detail and wait for explicit user approval. Do not start coding until the user confirms what exactly should be changed.
 
+## Dev before production
+
+For production-bound changes, first do the implementation and verification on the dev/local path before switching to production. Treat production as the final promotion step after code, env expectations, tests, and user-facing behavior are already clear.
+
+When switching from dev/local work to production:
+
+1. Confirm the exact commit or branch to deploy.
+2. Confirm required production env changes for each Railway service.
+3. Deploy only after tests/build or the relevant verification has passed.
+4. After deploy, run read-only production checks before considering the promotion complete.
+
 ## UI verification tools
 
 For browser/UI verification, first try to use the Codex Browser plugin / in-app browser when it is callable. If the Browser MCP tools are not exposed in the current session, do not stop to ask the user to reconfigure plugins. Use Playwright from the local project as the fallback and state that fallback briefly in the work log or final answer.
