@@ -1,11 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
-import { buildTopUpPlan } from "@/lib/autopilot-top-up";
+import { buildTopUpPlan, sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
 import { autopilotPlanKey, getCurrentAutopilotPlan } from "@/lib/autopilot-service";
-import { createBaseClient } from "@/lib/chain";
+import { createBaseClient, createBaseWalletClient } from "@/lib/chain";
 import { CONTRACTS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
+
+let topUpAutoEnabled = false;
 
 vi.mock("@/lib/config", () => {
   return {
@@ -13,6 +15,16 @@ vi.mock("@/lib/config", () => {
       AUTOPILOT_TOP_UP_ENABLED: true,
       AUTOPILOT_TOP_UP_MIN_USD: 10,
       AUTOPILOT_TOP_UP_COOLDOWN_HOURS: 24,
+      AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS: 8500,
+      AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS: 10,
+      AUTOPILOT_TOP_UP_AUTO_ENABLED: topUpAutoEnabled,
+      AUTOPILOT_TOP_UP_AUTO_MIN_USD: 25,
+      AUTOPILOT_TOP_UP_AUTO_MIN_EFFICIENCY_BPS: 8500,
+      AUTOPILOT_TOP_UP_AUTO_MIN_BOUNDARY_DISTANCE_TICKS: 30,
+      AUTOPILOT_TOP_UP_AUTO_MAX_GAS_COST_USD: 0.2,
+      AUTOPILOT_LIVE_EXECUTION_ENABLED: true,
+      BLOCKSCOUT_BASE_URL: "https://base.blockscout.com",
+      TELEGRAM_CHAT_ID: "63853863",
       BASE_WALLET_ADDRESS: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057",
       BASE_WALLET_PRIVATE_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
     }))
@@ -28,7 +40,8 @@ vi.mock("@/lib/autopilot-service", () => {
 
 vi.mock("@/lib/chain", () => {
   return {
-    createBaseClient: vi.fn()
+    createBaseClient: vi.fn(),
+    createBaseWalletClient: vi.fn()
   };
 });
 
@@ -43,7 +56,15 @@ vi.mock("@/lib/db", () => {
       },
       rebalancePlan: {
         findFirst: vi.fn(),
-        findMany: vi.fn()
+        findMany: vi.fn(),
+        findUnique: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn()
+      },
+      telegramEvent: {
+        findUnique: vi.fn(),
+        create: vi.fn()
       }
     }
   };
@@ -100,6 +121,7 @@ function mockReadyTopUpInputs() {
 
 describe("buildTopUpPlan autopilot execution guard", () => {
   beforeEach(() => {
+    topUpAutoEnabled = false;
     vi.clearAllMocks();
     mockReadyTopUpInputs();
   });
@@ -140,5 +162,125 @@ describe("buildTopUpPlan autopilot execution guard", () => {
       expect(result.payload.efficiencyBps).toBeGreaterThanOrEqual(8500);
       expect(result.payload.boundaryDistanceTicks).toBe(119);
     }
+  });
+});
+
+function bot() {
+  return {
+    telegram: {
+      sendMessage: vi.fn().mockResolvedValue({ chat: { id: 63853863 }, message_id: 42 })
+    }
+  };
+}
+
+function mockTopUpExecutionInputs() {
+  const readContract = vi.fn().mockImplementation((params) => {
+    if (params.functionName === "balanceOf" && params.address === CONTRACTS.weth) return Promise.resolve(walletWethRaw);
+    if (params.functionName === "balanceOf" && params.address === CONTRACTS.usdc) return Promise.resolve(walletUsdcRaw);
+    if (params.functionName === "getPool") return Promise.resolve("0x6c561B446416E1A00E8E93E221854d6eA4171372");
+    if (params.functionName === "slot0") return Promise.resolve([0n, -202621]);
+    if (params.functionName === "allowance") return Promise.resolve(2n ** 255n);
+    return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
+  });
+  const waitForTransactionReceipt = vi.fn().mockResolvedValue({ status: "success" });
+  vi.mocked(createBaseClient).mockReturnValue({
+    readContract,
+    call: vi.fn().mockResolvedValue("0x"),
+    estimateGas: vi.fn().mockResolvedValue(220_000n),
+    getGasPrice: vi.fn().mockResolvedValue(6_000_000n),
+    waitForTransactionReceipt
+  } as any);
+  const sendTransaction = vi.fn().mockResolvedValue("0xtopuphash");
+  vi.mocked(createBaseWalletClient).mockReturnValue({
+    account: { address: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057" },
+    chain: { id: 8453 },
+    sendTransaction
+  } as any);
+  return { sendTransaction };
+}
+
+describe("sendTopUpOpportunityAlert auto guarded mode", () => {
+  beforeEach(() => {
+    topUpAutoEnabled = true;
+    vi.clearAllMocks();
+    mockReadyTopUpInputs();
+    vi.mocked(prisma.telegramEvent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.telegramEvent.create).mockResolvedValue({ id: "event-1" } as any);
+    vi.mocked(prisma.rebalancePlan.create).mockResolvedValue({
+      id: "top-up-plan-1",
+      planKey: "top-up-key",
+      status: "pending",
+      mode: "top_up",
+      state: "ready",
+      title: "Top up current range",
+      summary: "summary",
+      payload: {},
+      telegramChatId: "63853863",
+      telegramMessageId: null,
+      decidedAt: null,
+      decisionNote: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as any);
+    vi.mocked(prisma.rebalancePlan.update).mockImplementation(async (args: any) => ({
+      id: args.where.id,
+      status: args.data.status ?? "approved",
+      payload: args.data.payload ?? {},
+      ...args.data
+    }) as any);
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "top-up-plan-1",
+      status: "approved",
+      mode: "top_up",
+      payload: {
+        kind: "top_up",
+        tokenId: "5277838",
+        tickLower: -202740,
+        tickUpper: -202500,
+        currentTick: -202621,
+        priceUsd: 1600,
+        token0: CONTRACTS.weth,
+        token1: CONTRACTS.usdc,
+        walletWethRaw: walletWethRaw.toString(),
+        walletUsdcRaw: walletUsdcRaw.toString(),
+        amount0DesiredRaw: "10568118206125668",
+        amount1DesiredRaw: "108753432",
+        amount0MinRaw: "0",
+        amount1MinRaw: "0",
+        wethDesired: 0.010568,
+        usdcDesired: 108.75,
+        valueUsd: 125.66,
+        walletValueUsd: 734.23,
+        efficiencyBps: 9000,
+        boundaryDistanceTicks: 119,
+        leftoverWeth: 0.23,
+        leftoverUsdc: 237.67
+      }
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    mockTopUpExecutionInputs();
+  });
+
+  it("auto-approves and broadcasts a guarded top-up when strict guardrails pass", async () => {
+    const testBot = bot();
+
+    const result = await sendTopUpOpportunityAlert(testBot as any, -202621);
+
+    expect(result).toMatchObject({ sent: 1, planId: "top-up-plan-1", autoTopUp: "sent", txHash: "0xtopuphash" });
+    expect(prisma.rebalancePlan.update).toHaveBeenCalledWith({
+      where: { id: "top-up-plan-1" },
+      data: expect.objectContaining({
+        status: "approved",
+        decisionNote: "Top-up approved in Telegram."
+      })
+    });
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith("63853863", expect.stringContaining("Auto top-up is being sent"));
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith("63853863", expect.stringContaining("Auto top-up sent"));
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        alertType: "top_up_opportunity",
+        payload: expect.objectContaining({ auto: true, success: true })
+      })
+    });
   });
 });

@@ -390,6 +390,16 @@ export function topUpExecuteKeyboard(planId: string) {
   };
 }
 
+function topUpAutoGuardrailSummary(payload: TopUpPayload, maxGasCostUsd: number) {
+  return [
+    `Value: ${formatUsd(payload.valueUsd)}`,
+    `Efficiency: ${(payload.efficiencyBps / 100).toFixed(2)}%`,
+    `Boundary distance: ${payload.boundaryDistanceTicks} ticks`,
+    `Gas cap: ${formatUsd(maxGasCostUsd)}`,
+    "Swap: none"
+  ].join("\n");
+}
+
 export async function approveTopUpPlan(planId: string) {
   return prisma.rebalancePlan.update({
     where: { id: planId },
@@ -527,7 +537,7 @@ function conciseError(error: unknown) {
   return firstLine.length > 700 ? `${firstLine.slice(0, 697)}...` : firstLine;
 }
 
-export async function broadcastTopUp(planId: string) {
+export async function broadcastTopUp(planId: string, options: { maxGasCostUsd?: number; auto?: boolean } = {}) {
   if (!getConfig().AUTOPILOT_LIVE_EXECUTION_ENABLED) {
     return { success: false as const, error: "Live execution is disabled. Set AUTOPILOT_LIVE_EXECUTION_ENABLED=true to enable it." };
   }
@@ -536,7 +546,7 @@ export async function broadcastTopUp(planId: string) {
     where: { id: planId, status: "approved", mode: "top_up" },
     data: {
       status: "executing",
-      decisionNote: "Initiating top-up transaction execution..."
+      decisionNote: options.auto ? "Initiating auto-guarded top-up transaction execution..." : "Initiating top-up transaction execution..."
     }
   });
   if (locked.count !== 1) {
@@ -601,8 +611,9 @@ export async function broadcastTopUp(planId: string) {
     const gas = bufferedGas(estimatedGas);
     const [gasPriceWei] = await Promise.all([client.getGasPrice()]);
     const estimatedCostUsd = gasCostUsd(gas, gasPriceWei, payload.priceUsd);
-    if (estimatedCostUsd > getConfig().AUTOPILOT_MAX_GAS_COST_USD) {
-      throw new Error(`Top-up gas cost is too high: estimated ${formatUsd(estimatedCostUsd)}, cap ${formatUsd(getConfig().AUTOPILOT_MAX_GAS_COST_USD)}.`);
+    const maxGasCostUsd = options.maxGasCostUsd ?? getConfig().AUTOPILOT_MAX_GAS_COST_USD;
+    if (estimatedCostUsd > maxGasCostUsd) {
+      throw new Error(`Top-up gas cost is too high: estimated ${formatUsd(estimatedCostUsd)}, cap ${formatUsd(maxGasCostUsd)}.`);
     }
 
     const hash = await wallet.sendTransaction({
@@ -620,7 +631,7 @@ export async function broadcastTopUp(planId: string) {
       data: {
         status: "completed",
         decidedAt: new Date(),
-        decisionNote: `Successfully executed top-up. Tx Hash: ${hash}${approvalHashes.length ? `; approvals: ${approvalHashes.map(shortAddress).join(", ")}` : ""}`
+        decisionNote: `${options.auto ? "Successfully executed auto-guarded top-up" : "Successfully executed top-up"}. Tx Hash: ${hash}${approvalHashes.length ? `; approvals: ${approvalHashes.map(shortAddress).join(", ")}` : ""}`
       }
     });
     return { success: true as const, txHash: hash, approvalHashes };
@@ -682,17 +693,83 @@ export async function sendTopUpOpportunityAlert(bot: Telegraf, currentTick: numb
   if (!chatId) return { sent: 0, skipped: "telegram_not_configured" };
   if (!config.AUTOPILOT_TOP_UP_ENABLED) return { sent: 0, skipped: "top_up_disabled" };
 
+  const autoEnabled = config.AUTOPILOT_TOP_UP_AUTO_ENABLED && config.AUTOPILOT_LIVE_EXECUTION_ENABLED && Boolean(config.BASE_WALLET_PRIVATE_KEY);
   const plan = await createTopUpPlan({
     telegramChatId: chatId,
     currentTick,
-    minEfficiencyBps: config.AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS,
-    minBoundaryDistanceTicks: config.AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS
+    minEfficiencyBps: autoEnabled ? config.AUTOPILOT_TOP_UP_AUTO_MIN_EFFICIENCY_BPS : config.AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS,
+    minBoundaryDistanceTicks: autoEnabled ? config.AUTOPILOT_TOP_UP_AUTO_MIN_BOUNDARY_DISTANCE_TICKS : config.AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS
   });
   if (plan.status === "skipped") return { sent: 0, skipped: plan.reason, detail: plan.detail };
+  if (autoEnabled && plan.payload.valueUsd < config.AUTOPILOT_TOP_UP_AUTO_MIN_USD) {
+    return {
+      sent: 0,
+      skipped: "auto_top_up_below_minimum_value",
+      detail: `${formatUsd(plan.payload.valueUsd)} < ${formatUsd(config.AUTOPILOT_TOP_UP_AUTO_MIN_USD)}`
+    };
+  }
 
   const dedupeKey = `top-up-opportunity:${plan.payload.tokenId}:${plan.payload.walletWethRaw}:${plan.payload.walletUsdcRaw}`;
   const existingEvent = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existingEvent) return { sent: 0, skipped: "duplicate_top_up_opportunity" };
+
+  if (autoEnabled) {
+    const approved = await approveTopUpPlan(plan.record.id);
+    await bot.telegram.sendMessage(
+      chatId,
+      [
+        "Auto top-up is being sent",
+        `Plan id: ${approved.id}`,
+        "",
+        plan.summary,
+        "",
+        "Guardrails",
+        topUpAutoGuardrailSummary(plan.payload, config.AUTOPILOT_TOP_UP_AUTO_MAX_GAS_COST_USD)
+      ].join("\n")
+    );
+
+    const result = await broadcastTopUp(approved.id, { auto: true, maxGasCostUsd: config.AUTOPILOT_TOP_UP_AUTO_MAX_GAS_COST_USD });
+    await prisma.telegramEvent.create({
+      data: {
+        alertType: "top_up_opportunity",
+        dedupeKey,
+        payload: {
+          planId: approved.id,
+          tokenId: plan.payload.tokenId,
+          valueUsd: plan.payload.valueUsd,
+          walletValueUsd: plan.payload.walletValueUsd,
+          efficiencyBps: plan.payload.efficiencyBps,
+          currentTick: plan.payload.currentTick,
+          auto: true,
+          success: result.success
+        }
+      }
+    });
+
+    if (result.success) {
+      const explorerUrl = `${config.BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
+      await bot.telegram.sendMessage(
+        chatId,
+        [
+          "Auto top-up sent",
+          `Plan id: ${approved.id}`,
+          `Tx Hash: ${result.txHash}`,
+          `Blockscout: ${explorerUrl}`,
+          result.approvalHashes.length ? `Approvals: ${result.approvalHashes.map(shortAddress).join(", ")}` : undefined
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+      return { sent: 1, planId: approved.id, autoTopUp: "sent", txHash: result.txHash, efficiencyBps: plan.payload.efficiencyBps };
+    }
+
+    await bot.telegram.sendMessage(
+      chatId,
+      ["Auto top-up failed", `Plan id: ${approved.id}`, result.error ?? "Unknown error", "", "Manual review is required."].join("\n"),
+      { reply_markup: topUpReviewKeyboard(approved.id) }
+    );
+    return { sent: 1, planId: approved.id, autoTopUp: "failed", efficiencyBps: plan.payload.efficiencyBps };
+  }
 
   const message = await bot.telegram.sendMessage(
     chatId,
