@@ -174,8 +174,16 @@ describe("sendAutopilotPlanAlert", () => {
     expect(result).toEqual({ sent: 0, skipped: "plan_does_not_need_attention" });
     expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
       where: {
-        alertType: "autopilot_plan",
-        dedupeKey: { startsWith: "autopilot-incident:" }
+        OR: [
+          {
+            alertType: "autopilot_plan",
+            dedupeKey: { startsWith: "autopilot-incident:" }
+          },
+          {
+            alertType: "autopilot_sustained_wait",
+            dedupeKey: { startsWith: "autopilot-sustained-wait:autopilot-incident:" }
+          }
+        ]
       }
     });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
@@ -402,37 +410,153 @@ describe("sendAutopilotPlanAlert", () => {
     );
   });
 
-  it("blocks auto_guarded execution when boundary drift fails", async () => {
+  it("starts a sustained breakout wait instead of blocking immediately at 30+ ticks", async () => {
     vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(
       planRecord({
         plan: {
-          mode: "auto_guarded"
+          mode: "auto_guarded",
+          pool: { currentTick: -200140 }
         }
       }) as any
     );
-    vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
-      status: "blocked",
-      checks: [{ label: "Boundary drift", ok: false, detail: "35 bps above upper boundary; limit 30 bps" }],
-      telegramSummary: "Executor dry run\nStatus: blocked\nBLOCKED Boundary drift"
-    } as any);
     const testBot = bot();
 
     const result = await sendAutopilotPlanAlert(testBot as any);
 
-    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "blocked" });
+    expect(result).toMatchObject({ sent: 1, planId: "plan-1", autoGuarded: "sustained_wait", depthTicks: 40 });
+    expect(recordAutopilotPlanDecision).not.toHaveBeenCalled();
+    expect(createAutopilotDryRunExecution).not.toHaveBeenCalled();
     expect(broadcastAutopilotRebalance).not.toHaveBeenCalled();
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        alertType: "autopilot_sustained_wait",
+        dedupeKey: "autopilot-sustained-wait:autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range",
+        payload: expect.objectContaining({
+          depthTicks: 40,
+          waitMs: 900000
+        })
+      })
+    });
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
-      expect.stringContaining("Auto-guarded blocked"),
-      expect.objectContaining({
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "Accept drift & review live transaction", callback_data: "ap:accept_drift:plan-1" }],
-            [{ text: "Wait", callback_data: "ap:pause:plan-1" }]
-          ]
-        }
-      })
+      expect.stringContaining("Auto-guarded sustained breakout watch")
     );
+  });
+
+  it("auto-executes after the sustained breakout wait expires", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan)
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            mode: "auto_guarded",
+            pool: { currentTick: -200140 }
+          }
+        }) as any
+      )
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            state: "idle",
+            mode: "auto_guarded",
+            title: "Small test range active",
+            pool: { currentTick: -200140 },
+            ladder: [
+              {
+                role: "active",
+                tokenId: "5199548",
+                range: "-200100 - -199860",
+                lowerTick: -200100,
+                upperTick: -199860,
+                lowerPrice: 1800,
+                upperPrice: 1840,
+                status: "ok",
+                plannedAction: "Keep current 240-tick test range until breakout"
+              }
+            ],
+            actions: [{ type: "hold", label: "Hold single test range" }]
+          }
+        }) as any
+      );
+    vi.mocked(prisma.telegramEvent.findUnique).mockImplementation((async ({ where }: any) => {
+      if (where.dedupeKey.startsWith("autopilot-sustained-wait:")) {
+        return { id: "wait-1", sentAt: new Date(Date.now() - 901_000) } as any;
+      }
+      return null;
+    }) as any);
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "sent", txHash: "0xabc" });
+    expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", {
+      allowUncoveredDebt: true,
+      allowEquivalentPlanFreshness: true,
+      allowBoundaryDrift: true
+    });
+    expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", {
+      allowUncoveredDebt: true,
+      allowEquivalentPlanFreshness: true,
+      allowBoundaryDrift: true
+    });
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Boundary drift is accepted after the 15-minute sustained breakout wait.")
+    );
+  });
+
+  it("auto-executes immediately when drift falls back below 30 ticks", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan)
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            mode: "auto_guarded",
+            pool: { currentTick: -200124 }
+          }
+        }) as any
+      )
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            state: "idle",
+            mode: "auto_guarded",
+            title: "Small test range active",
+            pool: { currentTick: -200124 },
+            ladder: [
+              {
+                role: "active",
+                tokenId: "5199548",
+                range: "-200100 - -199860",
+                lowerTick: -200100,
+                upperTick: -199860,
+                lowerPrice: 1800,
+                upperPrice: 1840,
+                status: "ok",
+                plannedAction: "Keep current 240-tick test range until breakout"
+              }
+            ],
+            actions: [{ type: "hold", label: "Hold single test range" }]
+          }
+        }) as any
+      );
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 1, planId: "plan-1", autoGuarded: "sent", txHash: "0xabc" });
+    expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
+      where: {
+        alertType: "autopilot_sustained_wait",
+        dedupeKey: "autopilot-sustained-wait:autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      }
+    });
+    expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", {
+      allowUncoveredDebt: true,
+      allowEquivalentPlanFreshness: true
+    });
+    expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", {
+      allowUncoveredDebt: true,
+      allowEquivalentPlanFreshness: true
+    });
   });
 
   it("retries the current incident by clearing only the current autopilot dedupe key", async () => {

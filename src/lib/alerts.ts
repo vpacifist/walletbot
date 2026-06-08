@@ -2,7 +2,7 @@ import { PositionStatus } from "@/generated/prisma/client";
 import { Telegraf } from "telegraf";
 import { getAddress } from "viem";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
-import { broadcastAutopilotRebalance, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
+import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
 import { isAutopilotRuntimePaused } from "./autopilot-pause";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./autopilot-service";
@@ -13,6 +13,8 @@ import { syncWalletOnce } from "./sync";
 import { getWalletAssetSnapshot } from "./wallet-assets";
 
 const LOW_NATIVE_ETH_THRESHOLD_USD = 10;
+const SUSTAINED_BREAKOUT_DRIFT_TICKS = 30;
+const SUSTAINED_BREAKOUT_WAIT_MS = 15 * 60 * 1000;
 
 let autoGuardedExecutionRunning = false;
 
@@ -90,6 +92,110 @@ function autopilotMicroBreakoutSkip(plan: Awaited<ReturnType<typeof getOrCreateP
 function autoGuardedDedupeExpired(sentAt: Date) {
   const retryMs = getConfig().AUTOPILOT_AUTO_RETRY_DEDUPE_MS;
   return retryMs > 0 && Date.now() - sentAt.getTime() >= retryMs;
+}
+
+function sustainedWaitDedupeKey(incidentDedupeKey: string) {
+  return `autopilot-sustained-wait:${incidentDedupeKey}`;
+}
+
+function activeAutopilotRange(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"]) {
+  return plan.ladder.find((segment) => segment.role === "active" && segment.tokenId) ?? null;
+}
+
+function currentBreakoutDepth(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"]) {
+  const active = activeAutopilotRange(plan);
+  if (!active) return null;
+
+  const side = autopilotBreakoutSide(plan.pool.currentTick, active);
+  if (!side) return null;
+
+  return {
+    side,
+    depthTicks: autopilotBreakoutDepthTicks(plan.pool.currentTick, active),
+    tokenId: active.tokenId,
+    lowerTick: active.lowerTick,
+    upperTick: active.upperTick
+  };
+}
+
+function sustainedBreakoutMessage(input: {
+  planId: string;
+  depthTicks: number;
+  side: "above" | "below";
+  tokenId: string | null;
+  lowerTick: number;
+  upperTick: number;
+  summary: string;
+}) {
+  return [
+    "Auto-guarded sustained breakout watch",
+    `Plan id: ${input.planId}`,
+    `Position: ${input.tokenId ? `#${input.tokenId}` : "active range"}`,
+    `Range: ${input.lowerTick} - ${input.upperTick}`,
+    `Breakout: ${input.depthTicks} ticks ${input.side} boundary`,
+    `Action: waiting 15 minutes. If drift falls below ${SUSTAINED_BREAKOUT_DRIFT_TICKS} ticks, auto-rebalance will run immediately. If it stays ${SUSTAINED_BREAKOUT_DRIFT_TICKS}+ ticks, auto-rebalance will run after the wait.`,
+    "",
+    input.summary
+  ].join("\n");
+}
+
+async function maybeWaitForSustainedBreakout(
+  bot: Telegraf,
+  autopilotPlan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>,
+  dedupeKey: string
+) {
+  const breakout = currentBreakoutDepth(autopilotPlan.plan);
+  const waitKey = sustainedWaitDedupeKey(dedupeKey);
+
+  if (!breakout || breakout.depthTicks < SUSTAINED_BREAKOUT_DRIFT_TICKS) {
+    await prisma.telegramEvent.deleteMany({
+      where: {
+        alertType: "autopilot_sustained_wait",
+        dedupeKey: waitKey
+      }
+    });
+    return { status: "execute" as const, allowBoundaryDrift: false };
+  }
+
+  const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey: waitKey } });
+  if (!existing) {
+    await prisma.telegramEvent.create({
+      data: {
+        alertType: "autopilot_sustained_wait",
+        dedupeKey: waitKey,
+        payload: {
+          planId: autopilotPlan.record.id,
+          planKey: autopilotPlan.record.planKey,
+          tokenId: breakout.tokenId,
+          side: breakout.side,
+          depthTicks: breakout.depthTicks,
+          lowerTick: breakout.lowerTick,
+          upperTick: breakout.upperTick,
+          waitMs: SUSTAINED_BREAKOUT_WAIT_MS
+        }
+      }
+    });
+    await bot.telegram.sendMessage(
+      getConfig().TELEGRAM_CHAT_ID!,
+      sustainedBreakoutMessage({
+        planId: autopilotPlan.record.id,
+        depthTicks: breakout.depthTicks,
+        side: breakout.side,
+        tokenId: breakout.tokenId,
+        lowerTick: breakout.lowerTick,
+        upperTick: breakout.upperTick,
+        summary: autopilotPlan.plan.telegramSummary
+      })
+    );
+    return { status: "waiting" as const, sent: 1, depthTicks: breakout.depthTicks, waitRemainingMs: SUSTAINED_BREAKOUT_WAIT_MS };
+  }
+
+  const waitRemainingMs = SUSTAINED_BREAKOUT_WAIT_MS - (Date.now() - existing.sentAt.getTime());
+  if (waitRemainingMs > 0) {
+    return { status: "waiting" as const, sent: 0, depthTicks: breakout.depthTicks, waitRemainingMs };
+  }
+
+  return { status: "execute" as const, allowBoundaryDrift: true, depthTicks: breakout.depthTicks };
 }
 
 async function recordAutopilotPlanEvent(input: {
@@ -210,12 +316,13 @@ async function executeAutoGuardedPlan(
   bot: Telegraf,
   autopilotPlan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>,
   dedupeKey: string,
-  retried = false
+  retried = false,
+  options: AutopilotBroadcastOptions = {}
 ) {
   if (autoGuardedExecutionRunning) return { sent: 0, skipped: "auto_guarded_already_running" };
   autoGuardedExecutionRunning = true;
   try {
-    return await executeAutoGuardedPlanInner(bot, autopilotPlan, dedupeKey, retried);
+    return await executeAutoGuardedPlanInner(bot, autopilotPlan, dedupeKey, retried, options);
   } finally {
     autoGuardedExecutionRunning = false;
   }
@@ -225,13 +332,14 @@ async function executeAutoGuardedPlanInner(
   bot: Telegraf,
   autopilotPlan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>,
   dedupeKey: string,
-  retried = false
+  retried = false,
+  options: AutopilotBroadcastOptions = {}
 ) {
   const { TELEGRAM_CHAT_ID, BLOCKSCOUT_BASE_URL } = getConfig();
   if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
 
   const approved = await recordAutopilotPlanDecision(autopilotPlan.record.id, "approved");
-  const autoExecutionOptions = { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true };
+  const autoExecutionOptions = { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true, ...options };
   const execution = await createAutopilotDryRunExecution(approved.id, autoExecutionOptions);
 
   if (execution.status !== "validated") {
@@ -251,10 +359,11 @@ async function executeAutoGuardedPlanInner(
       retried ? "Auto-guarded refreshed rebalance is being sent" : "Auto-guarded rebalance is being sent",
       `Plan id: ${approved.id}`,
       "Uncovered debt is accepted automatically in auto_guarded mode.",
+      autoExecutionOptions.allowBoundaryDrift ? "Boundary drift is accepted after the 15-minute sustained breakout wait." : undefined,
       "",
       "Prepared operations",
       ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`)
-    ].join("\n")
+    ].filter((line) => line !== undefined).join("\n")
   );
 
   const result = await broadcastAutopilotRebalance(approved.id, autoExecutionOptions);
@@ -277,7 +386,7 @@ async function executeAutoGuardedPlanInner(
   if (!retried && retryablePriceMovementFailure(result)) {
     await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, "Auto-guarded price moved during preflight. Rebuilding a fresh plan and quote...");
     const refreshed = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
-    return executeAutoGuardedPlanInner(bot, refreshed, dedupeKey, true);
+    return executeAutoGuardedPlanInner(bot, refreshed, dedupeKey, true, options);
   }
 
   await bot.telegram.sendMessage(
@@ -436,8 +545,16 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) {
     await prisma.telegramEvent.deleteMany({
       where: {
-        alertType: "autopilot_plan",
-        dedupeKey: { startsWith: "autopilot-incident:" }
+        OR: [
+          {
+            alertType: "autopilot_plan",
+            dedupeKey: { startsWith: "autopilot-incident:" }
+          },
+          {
+            alertType: "autopilot_sustained_wait",
+            dedupeKey: { startsWith: "autopilot-sustained-wait:autopilot-incident:" }
+          }
+        ]
       }
     });
     return { sent: 0, skipped: "plan_does_not_need_attention" };
@@ -461,7 +578,17 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
     }
   }
   if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused) {
-    return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey);
+    const sustained = await maybeWaitForSustainedBreakout(bot, autopilotPlan, dedupeKey);
+    if (sustained.status === "waiting") {
+      return {
+        sent: sustained.sent,
+        planId: autopilotPlan.record.id,
+        autoGuarded: "sustained_wait",
+        depthTicks: sustained.depthTicks,
+        waitRemainingMs: sustained.waitRemainingMs
+      };
+    }
+    return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey, false, sustained.allowBoundaryDrift ? { allowBoundaryDrift: true } : {});
   }
   if (autopilotPlan.record.telegramMessageId) {
     await recordAutopilotPlanEvent({
