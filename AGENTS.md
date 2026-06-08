@@ -65,6 +65,8 @@ Before coding product or UI behavior changes, describe the intended change in us
 
 ## Dev before production
 
+In this project, "dev" means the local machine/workspace (`C:\projects\walletbot`) and local `.env`; "prod" means Railway production (`walletbot-web`, `walletbot-worker`, and production Postgres). There is no separate remote staging/dev Railway environment unless the user explicitly creates or names one.
+
 For production-bound changes, first do the implementation and verification on the dev/local path before switching to production. Treat production as the final promotion step after code, env expectations, tests, and user-facing behavior are already clear.
 
 When switching from dev/local work to production:
