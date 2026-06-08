@@ -391,7 +391,7 @@ input {
 
 .growth-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -452,6 +452,11 @@ input {
   stroke-dasharray: 7 6;
 }
 
+.comparison-line {
+  stroke: var(--warning);
+  stroke-dasharray: 3 5;
+}
+
 .chart-end-label {
   font-size: 13px;
   font-weight: 700;
@@ -469,6 +474,10 @@ input {
   fill: var(--accent-2);
 }
 
+.comparison-label {
+  fill: var(--warning);
+}
+
 .cash-flow-marker {
   fill: var(--surface);
   stroke: var(--warning);
@@ -480,9 +489,55 @@ input {
   outline: none;
 }
 
+.chart-hit-zone {
+  fill: transparent;
+  pointer-events: all;
+}
+
 .chart-hit-point:focus-visible circle {
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+.chart-hover-line {
+  stroke: var(--chart-zero);
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+}
+
+.chart-active-point circle {
+  fill: var(--surface-3);
+  stroke-width: 2.5;
+}
+
+.portfolio-marker {
+  stroke: var(--accent);
+}
+
+.weth-marker {
+  stroke: var(--accent-2);
+}
+
+.comparison-marker {
+  stroke: var(--warning);
+}
+
+.chart-tooltip-box {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1;
+  filter: drop-shadow(0 6px 12px rgba(24, 32, 27, 0.14));
+}
+
+.chart-tooltip-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chart-tooltip-row {
+  fill: var(--muted);
+  font-size: 12px;
 }
 
 .chart-axis-label,
@@ -528,6 +583,10 @@ input {
 
 .legend-swatch.weth {
   background: var(--accent-2);
+}
+
+.legend-swatch.comparison {
+  background: var(--warning);
 }
 
 .legend-dot {

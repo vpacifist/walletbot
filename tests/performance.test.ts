@@ -61,5 +61,6 @@ describe("portfolio performance", () => {
     expect(points[2].portfolioGrowthPercent).toBeCloseTo(10);
     expect(points[3].portfolioGrowthPercent).toBeCloseTo(21);
     expect(points.at(-1)?.wethGrowthPercent).toBeCloseTo(50);
+    expect((points.at(-1)?.portfolioGrowthPercent ?? 0) - (points.at(-1)?.wethGrowthPercent ?? 0)).toBeCloseTo(-29);
   });
 });
