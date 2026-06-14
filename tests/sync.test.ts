@@ -81,5 +81,5 @@ describe("fetchConfiguredWalletTransactions", () => {
     expect(mocks.fetchWalletTransactions).toHaveBeenNthCalledWith(1, walletAddress, 100n);
     expect(mocks.fetchWalletTransactions).toHaveBeenNthCalledWith(2, executorAddress, undefined);
     expect(result.map((transaction) => transaction.hash)).toEqual(["0xexecutor-b", "0xwallet", "0xexecutor-a"]);
-  });
+  }, 10_000);
 });

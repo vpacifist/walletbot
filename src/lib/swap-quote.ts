@@ -170,6 +170,11 @@ function sameAddress(left?: string, right?: string) {
   return !!left && !!right && left.toLowerCase() === right.toLowerCase();
 }
 
+function quoteErrorMessage(provider: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${provider} quote failed: ${message}`;
+}
+
 export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Promise<SwapQuote> {
   const apiKey = getConfig().ZEROX_API_KEY;
   if (!apiKey) throw new Error("ZEROX_API_KEY is not configured");
@@ -192,7 +197,7 @@ export async function quoteZeroExAllowanceHolder(request: SwapQuoteRequest): Pro
   });
   const body = (await response.json().catch(() => ({}))) as ZeroExQuoteResponse;
   if (!response.ok || body.liquidityAvailable === false || !body.buyAmount) {
-    throw new Error(body.message || body.reason || `0x quote failed with status ${response.status}`);
+    throw new Error(body.message || body.reason || `status ${response.status}`);
   }
 
   const approvalTarget = body.issues?.allowance?.spender;
@@ -267,7 +272,7 @@ export async function quoteOdosRouter(request: SwapQuoteRequest): Promise<SwapQu
   const pathId = quoteBody.pathId;
   const quotedOutRaw = quoteBody.outAmounts?.[0];
   if (!quoteResponse.ok || !pathId || !quotedOutRaw) {
-    throw new Error(quoteBody.message || quoteBody.detail || `Odos quote failed with status ${quoteResponse.status}`);
+    throw new Error(quoteBody.message || quoteBody.detail || `status ${quoteResponse.status}`);
   }
 
   const assembleResponse = await fetch(`${odosBaseUrl()}/sor/assemble`, {
@@ -286,7 +291,7 @@ export async function quoteOdosRouter(request: SwapQuoteRequest): Promise<SwapQu
   const simulationFailed = assembleBody.simulation && assembleBody.simulation.isSuccess === false;
   if (!assembleResponse.ok || simulationFailed || !transactionTarget || !transactionData?.startsWith("0x")) {
     const simulationError = assembleBody.simulation?.simulationError ? `; simulation: ${JSON.stringify(assembleBody.simulation.simulationError).slice(0, 240)}` : "";
-    throw new Error(assembleBody.message || assembleBody.detail || `Odos assemble failed with status ${assembleResponse.status}${simulationError}`);
+    throw new Error(assembleBody.message || assembleBody.detail || `assemble status ${assembleResponse.status}${simulationError}`);
   }
 
   const amountOutRaw = assembleBody.simulation?.amountsOut?.[0] ?? quotedOutRaw;
@@ -308,10 +313,27 @@ export async function quoteOdosRouter(request: SwapQuoteRequest): Promise<SwapQu
 export async function quoteBestExecutableSwap(request: SwapQuoteRequest): Promise<SwapQuote> {
   const provider = getConfig().AUTOPILOT_SWAP_PROVIDER;
   if (provider === "zeroex") {
-    return quoteZeroExAllowanceHolder(request);
+    try {
+      return await quoteZeroExAllowanceHolder(request);
+    } catch (error) {
+      throw new Error(quoteErrorMessage("0x AllowanceHolder", error));
+    }
   }
   if (provider === "odos") {
-    return quoteOdosRouter(request);
+    try {
+      return await quoteOdosRouter(request);
+    } catch (odosError) {
+      try {
+        const fallback = await quoteUniswapV3ExactInputSingle(request);
+        return {
+          ...fallback,
+          source: `${fallback.source} fallback after Odos failure`,
+          executionNote: `${fallback.executionNote} Odos was temporarily unavailable: ${odosError instanceof Error ? odosError.message : String(odosError)}`
+        };
+      } catch (fallbackError) {
+        throw new Error(`${quoteErrorMessage("Odos", odosError)}; Uniswap v3 fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+      }
+    }
   }
 
   const fallback = await quoteUniswapV3ExactInputSingle(request);

@@ -353,25 +353,19 @@ async function executeAutoGuardedPlanInner(
     return { sent: 1, planId: approved.id, autoGuarded: "blocked" };
   }
 
-  await bot.telegram.sendMessage(
-    TELEGRAM_CHAT_ID,
-    [
-      retried ? "Auto-guarded refreshed rebalance is being sent" : "Auto-guarded rebalance is being sent",
-      `Plan id: ${approved.id}`,
-      "Uncovered debt is accepted automatically in auto_guarded mode.",
-      autoExecutionOptions.allowBoundaryDrift ? "Boundary drift is accepted after the 15-minute sustained breakout wait." : undefined,
-      "",
-      "Prepared operations",
-      ...execution.operations.map((operation, index) => `${index + 1}. ${operation.label}: ${operation.detail}`)
-    ].filter((line) => line !== undefined).join("\n")
-  );
-
   const result = await broadcastAutopilotRebalance(approved.id, autoExecutionOptions);
   if (result.success && result.txHash) {
     const explorerUrl = `${BLOCKSCOUT_BASE_URL}/tx/${result.txHash}`;
     await bot.telegram.sendMessage(
       TELEGRAM_CHAT_ID,
-      ["Auto-guarded rebalance sent", `Plan id: ${approved.id}`, `Tx Hash: ${result.txHash}`, `Blockscout: ${explorerUrl}`].join("\n")
+      [
+        "Auto-guarded rebalance sent",
+        `Plan id: ${approved.id}`,
+        `Tx Hash: ${result.txHash}`,
+        `Blockscout: ${explorerUrl}`,
+        "Uncovered debt is accepted automatically in auto_guarded mode.",
+        autoExecutionOptions.allowBoundaryDrift ? "Boundary drift is accepted after the 15-minute sustained breakout wait." : undefined
+      ].filter((line) => line !== undefined).join("\n")
     );
     await recordAutopilotPlanEvent({
       dedupeKey,

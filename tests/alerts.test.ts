@@ -357,7 +357,7 @@ describe("sendAutopilotPlanAlert", () => {
     expect(createAutopilotDryRunExecution).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true });
     expect(broadcastAutopilotRebalance).toHaveBeenCalledWith("plan-1", { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true });
     expect(syncWalletOnce).toHaveBeenCalled();
-    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalledWith(
       "63853863",
       expect.stringContaining("Auto-guarded rebalance is being sent")
     );

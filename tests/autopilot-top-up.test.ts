@@ -222,7 +222,7 @@ describe("sendTopUpOpportunityAlert auto guarded mode", () => {
       createdAt: new Date(),
       updatedAt: new Date()
     } as any);
-    vi.mocked(prisma.rebalancePlan.update).mockImplementation(async (args: any) => ({
+    (prisma.rebalancePlan.update as any).mockImplementation(async (args: any) => ({
       id: args.where.id,
       status: args.data.status ?? "approved",
       payload: args.data.payload ?? {},

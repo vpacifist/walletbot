@@ -984,6 +984,14 @@ function buildSwapSourceChecks(intents: TransactionIntent[], preview: AutopilotE
   return intents
     .filter((intent): intent is Extract<TransactionIntent, { kind: "swap_exact_input" }> => intent.kind === "swap_exact_input")
     .map((intent) => {
+      if (preview.quote.status === "unavailable") {
+        return {
+          label: "Swap source",
+          ok: false,
+          detail: `Quote unavailable before swap source selection: ${preview.quote.reason}`
+        };
+      }
+
       const routeGas = intent.gasEstimate ? BigInt(intent.gasEstimate) : 0n;
       const routeGasLimit = routeGasLimitFor(intent);
       const gasCostUsd = estimatedGasCostUsd(routeGas, options.gasPriceWei, preview.pool.price);
@@ -1043,6 +1051,11 @@ function buildTelegramSummary(execution: Omit<AutopilotDryRunExecution, "telegra
 export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview, options: BuildExecutionOptions = {}): AutopilotDryRunExecution {
   const swapRequired = needsSwap(preview);
   const quoteAvailable = !swapRequired || preview.quote.status === "available";
+  const quoteReadinessDetail = quoteAvailable
+    ? "Required quote is available"
+    : preview.quote.status === "unavailable"
+      ? `Required swap quote is unavailable: ${preview.quote.reason}`
+      : "Required swap quote is unavailable; retry before execution";
   const checks = [
     {
       label: "Preview readiness",
@@ -1052,7 +1065,7 @@ export function buildAutopilotDryRunExecution(preview: AutopilotExecutionPreview
     {
       label: "Quote readiness",
       ok: quoteAvailable,
-      detail: quoteAvailable ? "Required quote is available" : "Required swap quote is unavailable; retry before execution"
+      detail: quoteReadinessDetail
     },
     {
       label: "Transaction submission",

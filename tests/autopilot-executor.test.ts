@@ -325,7 +325,8 @@ describe("buildAutopilotDryRunExecution", () => {
     );
 
     expect(execution.status).toBe("blocked");
-    expect(execution.telegramSummary).toContain("BLOCKED Quote readiness");
+    expect(execution.telegramSummary).toContain("BLOCKED Quote readiness: Required swap quote is unavailable: RPC rate limit");
+    expect(execution.telegramSummary).toContain("BLOCKED Swap source: Quote unavailable before swap source selection: RPC rate limit");
   });
 
   it("blocks aggregator routes until the rebalancer supports aggregator calldata", () => {
