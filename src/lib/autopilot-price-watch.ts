@@ -5,7 +5,7 @@ import { factoryAbi, poolAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
-import { createBaseClient } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
@@ -34,8 +34,19 @@ const state: PriceWatchState = {
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
-export async function readWethUsdcPoolTick() {
-  const client = createBaseClient();
+function redactSensitiveRpcText(message: string) {
+  return message
+    .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
+    .replace(/https:\/\/[^/\s]+\/v2\/[A-Za-z0-9_-]+/g, "https://[rpc-redacted]/v2/[redacted]");
+}
+
+function shortError(error: unknown) {
+  const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
+  if (message.length <= 240) return message;
+  return `${message.slice(0, 237)}...`;
+}
+
+async function readPoolTickWithClient(client: ReturnType<typeof createBaseClient>) {
   const poolAddress = await client.readContract({
     address: CONTRACTS.uniswapV3Factory,
     abi: factoryAbi,
@@ -50,6 +61,23 @@ export async function readWethUsdcPoolTick() {
     functionName: "slot0"
   });
   return Number(slot0[1]);
+}
+
+export async function readWethUsdcPoolTick() {
+  const client = createBaseClient();
+  try {
+    return await readPoolTickWithClient(client);
+  } catch (primaryError) {
+    let lastError = primaryError;
+    for (const url of baseRpcUrlsWithPublicFallback()) {
+      try {
+        return await readPoolTickWithClient(createBaseClientForUrl(url));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
 }
 
 export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {
@@ -162,7 +190,7 @@ export function startAutopilotPriceWatch(bot: Telegraf) {
           console.log("autopilot price watch", result);
         }
       })
-      .catch((error) => console.error("autopilot price watch failed", error));
+      .catch((error) => console.error("autopilot price watch failed", shortError(error)));
   }, intervalMs);
 
   return interval;

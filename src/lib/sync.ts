@@ -1,9 +1,8 @@
 import { Prisma, SyncRunStatus } from "@/generated/prisma/client";
-import { createPublicClient, getAddress, http, type Address } from "viem";
-import { base } from "viem/chains";
+import { getAddress, type Address } from "viem";
 import { poolAbi } from "./abi";
 import { fetchWalletTransactions } from "./blockscout";
-import { baseRpcUrls, createBaseClient } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { classifyTransaction } from "./classifier";
 import { getConfig } from "./config";
 import { prisma } from "./db";
@@ -14,8 +13,6 @@ import { getWethUsdcUniswapV3PoolAddresses } from "./uniswap-v3";
 import { getPositionTokenAmounts } from "./uniswap-v3-position";
 
 const REBALANCER_TX_LOOKBACK_BLOCKS = 50_000n;
-const PUBLIC_BASE_RPC_URL = "https://mainnet.base.org";
-
 export type SyncWalletOptions = {
   fromBlock?: bigint | null;
 };
@@ -75,6 +72,12 @@ function isMissingReceiptError(error: unknown) {
   return message.includes("Transaction receipt") && message.includes("could not be found");
 }
 
+function redactSensitiveRpcText(message: string) {
+  return message
+    .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
+    .replace(/https:\/\/[^/\s]+\/v2\/[A-Za-z0-9_-]+/g, "https://[rpc-redacted]/v2/[redacted]");
+}
+
 async function getTransactionReceiptWithFallback(client: ReturnType<typeof createBaseClient>, hash: `0x${string}`) {
   try {
     return await client.getTransactionReceipt({ hash });
@@ -82,15 +85,9 @@ async function getTransactionReceiptWithFallback(client: ReturnType<typeof creat
     if (!isMissingReceiptError(error)) throw error;
   }
 
-  for (const url of [...new Set([...baseRpcUrls(), PUBLIC_BASE_RPC_URL])]) {
+  for (const url of baseRpcUrlsWithPublicFallback()) {
     try {
-      const fallbackClient = createPublicClient({
-        chain: base,
-        transport: http(url, {
-          retryCount: 2,
-          timeout: 15_000
-        })
-      });
+      const fallbackClient = createBaseClientForUrl(url);
       return await fallbackClient.getTransactionReceipt({ hash });
     } catch (error) {
       if (!isMissingReceiptError(error)) continue;
@@ -98,6 +95,30 @@ async function getTransactionReceiptWithFallback(client: ReturnType<typeof creat
   }
 
   return null;
+}
+
+async function readPoolSlot0WithFallback(client: ReturnType<typeof createBaseClient>, poolAddress: Address) {
+  try {
+    return await client.readContract({
+      address: poolAddress,
+      abi: poolAbi,
+      functionName: "slot0"
+    });
+  } catch (primaryError) {
+    let lastError = primaryError;
+    for (const url of baseRpcUrlsWithPublicFallback()) {
+      try {
+        return await createBaseClientForUrl(url).readContract({
+          address: poolAddress,
+          abi: poolAbi,
+          functionName: "slot0"
+        });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
 }
 
 async function refreshStoredPositionStates(client: ReturnType<typeof createBaseClient>, walletId: string) {
@@ -126,11 +147,7 @@ async function refreshStoredPositionStates(client: ReturnType<typeof createBaseC
     const poolKey = poolAddress.toLowerCase();
     let currentTick = ticksByPool.get(poolKey);
     if (currentTick === undefined) {
-      const slot0 = await client.readContract({
-        address: poolAddress,
-        abi: poolAbi,
-        functionName: "slot0"
-      });
+      const slot0 = await readPoolSlot0WithFallback(client, poolAddress);
       currentTick = Number(slot0[1]);
       ticksByPool.set(poolKey, currentTick);
     }
@@ -290,7 +307,7 @@ export async function syncWalletOnce(options: SyncWalletOptions = {}) {
         status: SyncRunStatus.failed,
         finishedAt: new Date(),
         transactionsSeen: seen,
-        error: error instanceof Error ? error.message : String(error)
+        error: redactSensitiveRpcText(error instanceof Error ? error.message : String(error))
       }
     });
     throw error;

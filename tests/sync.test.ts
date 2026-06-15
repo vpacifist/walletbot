@@ -42,8 +42,10 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/chain", () => ({
+  baseRpcUrlsWithPublicFallback: vi.fn(() => []),
   baseRpcUrls: vi.fn(() => []),
-  createBaseClient: mocks.createBaseClient
+  createBaseClient: mocks.createBaseClient,
+  createBaseClientForUrl: vi.fn()
 }));
 
 vi.mock("@/lib/classifier", () => ({

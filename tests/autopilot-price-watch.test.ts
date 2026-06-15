@@ -27,6 +27,8 @@ vi.mock("@/lib/config", () => {
 
 vi.mock("@/lib/chain", () => {
   return {
+    baseRpcUrlsWithPublicFallback: vi.fn(() => []),
+    createBaseClientForUrl: vi.fn(),
     createBaseClient: vi.fn()
   };
 });
