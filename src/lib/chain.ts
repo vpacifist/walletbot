@@ -3,7 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getConfig } from "./config";
 
-export const PUBLIC_BASE_RPC_URL = "https://mainnet.base.org";
+export const PUBLIC_BASE_RPC_URLS = ["https://mainnet.base.org", "https://base-rpc.publicnode.com", "https://base.drpc.org"] as const;
 
 export function baseRpcUrls() {
   const config = getConfig();
@@ -12,7 +12,7 @@ export function baseRpcUrls() {
 }
 
 export function baseRpcUrlsWithPublicFallback() {
-  return [...new Set([...baseRpcUrls(), PUBLIC_BASE_RPC_URL])];
+  return [...new Set([...baseRpcUrls(), ...PUBLIC_BASE_RPC_URLS])];
 }
 
 export function createBaseClientForUrl(url: string) {
