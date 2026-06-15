@@ -1,15 +1,13 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
-import { poolAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
-import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { getConfig } from "./config";
-import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
+import { readWethUsdcPoolTick } from "./weth-usdc-pool";
 
 type ActiveRange = {
   id: string;
@@ -42,32 +40,6 @@ function shortError(error: unknown) {
   const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
   if (message.length <= 240) return message;
   return `${message.slice(0, 237)}...`;
-}
-
-async function readPoolTickWithClient(client: ReturnType<typeof createBaseClient>) {
-  const slot0 = await client.readContract({
-    address: CONTRACTS.wethUsdcUniswapV3Pool3000,
-    abi: poolAbi,
-    functionName: "slot0"
-  });
-  return Number(slot0[1]);
-}
-
-export async function readWethUsdcPoolTick() {
-  const client = createBaseClient();
-  try {
-    return await readPoolTickWithClient(client);
-  } catch (primaryError) {
-    let lastError = primaryError;
-    for (const url of baseRpcUrlsWithPublicFallback()) {
-      try {
-        return await readPoolTickWithClient(createBaseClientForUrl(url));
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError;
-  }
 }
 
 export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {

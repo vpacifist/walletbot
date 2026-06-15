@@ -685,7 +685,7 @@ async function DashboardContentInner({ config }: { config: ReturnType<typeof get
         lowerLabel: `Min ${formatUsd(lowerPrice)}`,
         upperLabel: `Max ${formatUsd(upperPrice)}`,
         rangeCount,
-        livePriceEndpoint: position.fee === 3000 ? "/api/rebalance?widthMultiplier=1" : undefined
+        livePriceEndpoint: position.fee === 3000 ? "/api/pool/weth-usdc" : undefined
       },
       positionAmounts: {
         weth: formatNumber(displayAmounts.weth, 4),

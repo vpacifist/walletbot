@@ -1,17 +1,13 @@
 import { type Position } from "@/generated/prisma/client";
 import { createHash } from "node:crypto";
 import { getAddress } from "viem";
-import { factoryAbi, poolAbi } from "./abi";
 import { calculateAutopilotPlan } from "./autopilot-plan";
-import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
-import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
 import { getUncollectedPositionFees } from "./uniswap-v3-fees";
 import { getWalletAssetAmountsSnapshot } from "./wallet-assets";
-
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+import { readWethUsdcPoolSnapshot } from "./weth-usdc-pool";
 
 function activeNarrowPosition(position: Position) {
   return position.fee === WETH_USDC_NARROW_FEE && position.status !== "closed_or_zero_liquidity" && position.currentTick !== null;
@@ -37,27 +33,7 @@ function autopilotBaselineAt() {
 }
 
 async function livePoolSnapshot() {
-  const client = createBaseClient();
-  const poolAddress = await client.readContract({
-    address: CONTRACTS.uniswapV3Factory,
-    abi: factoryAbi,
-    functionName: "getPool",
-    args: [CONTRACTS.weth, CONTRACTS.usdc, WETH_USDC_NARROW_FEE]
-  });
-
-  if (poolAddress === ZERO_ADDRESS) throw new Error("WETH/USDC 0.3% pool not found");
-
-  const [slot0, token0, token1] = await Promise.all([
-    client.readContract({ address: poolAddress, abi: poolAbi, functionName: "slot0" }),
-    client.readContract({ address: poolAddress, abi: poolAbi, functionName: "token0" }),
-    client.readContract({ address: poolAddress, abi: poolAbi, functionName: "token1" })
-  ]);
-
-  return {
-    currentTick: Number(slot0[1]),
-    token0,
-    token1
-  };
+  return readWethUsdcPoolSnapshot();
 }
 
 export async function getCurrentAutopilotPlan() {
