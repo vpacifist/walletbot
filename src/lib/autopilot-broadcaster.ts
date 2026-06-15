@@ -82,6 +82,33 @@ function findOutOfGasCall(call: Record<string, unknown>): string | null {
   return null;
 }
 
+function callLabel(call: Record<string, unknown>) {
+  const to = typeof call.to === "string" ? call.to : "";
+  const selector = typeof call.input === "string" ? call.input.slice(0, 10).toLowerCase() : "";
+  if (to.toLowerCase() === CONTRACTS.odosSmartOrderRouterV3.toLowerCase()) return "Odos router";
+  if (to.toLowerCase() === CONTRACTS.zeroExAllowanceHolder.toLowerCase()) return "0x AllowanceHolder";
+  return functionNameFromSelector(typeof call.input === "string" ? call.input : undefined) ?? (selector || "internal call");
+}
+
+function findRevertedCall(call: Record<string, unknown>): string | null {
+  const error = typeof call.error === "string" ? call.error : "";
+  const revertReason = typeof call.revertReason === "string" ? call.revertReason.trim() : "";
+  if ((/execution reverted/i.test(error) || revertReason) && revertReason) {
+    return `${callLabel(call)}: ${revertReason}`;
+  }
+
+  const calls = Array.isArray(call.calls) ? call.calls : [];
+  for (const child of calls) {
+    if (child && typeof child === "object") {
+      const result = findRevertedCall(child as Record<string, unknown>);
+      if (result) return result;
+    }
+  }
+
+  if (/execution reverted/i.test(error)) return `${callLabel(call)} reverted`;
+  return null;
+}
+
 function findRevertData(value: unknown, seen = new Set<unknown>()): `0x${string}` | null {
   if (!value || seen.has(value)) return null;
   seen.add(value);
@@ -119,12 +146,14 @@ function decodeRevertData(data: `0x${string}`) {
 }
 
 async function explainRevertedReceipt(hash: `0x${string}`, gasUsed: bigint, gasLimit: bigint) {
-  if ((gasUsed * 10_000n) / gasLimit < OUT_OF_GAS_THRESHOLD_BPS) return `On-chain transaction reverted. Hash: ${hash}`;
-
   const baseUrl = getConfig().BLOCKSCOUT_BASE_URL.replace(/\/+$/, "");
   try {
     const response = await fetch(`${baseUrl}/api/v2/transactions/${hash}/raw-trace`);
     const trace = (await response.json()) as Record<string, unknown>;
+    const reverted = findRevertedCall(trace);
+    if (reverted) {
+      return `On-chain transaction reverted: ${reverted}. Tx Hash: ${hash}`;
+    }
     const step = findOutOfGasCall(trace);
     if (step) {
       return `Out of gas during ${step}. Gas used ${gasUsed.toString()} / limit ${gasLimit.toString()}. Tx Hash: ${hash}`;
@@ -132,6 +161,8 @@ async function explainRevertedReceipt(hash: `0x${string}`, gasUsed: bigint, gasL
   } catch {
     // Blockscout traces are best-effort and can lag immediately after mining.
   }
+
+  if ((gasUsed * 10_000n) / gasLimit < OUT_OF_GAS_THRESHOLD_BPS) return `On-chain transaction reverted. Hash: ${hash}`;
 
   return `Out of gas during atomic rebalance. Gas used ${gasUsed.toString()} / limit ${gasLimit.toString()}. Tx Hash: ${hash}`;
 }

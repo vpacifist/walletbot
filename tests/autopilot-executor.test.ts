@@ -204,6 +204,50 @@ describe("buildAutopilotDryRunExecution", () => {
     expect(adjustment.request.amountIn).toBeCloseTo(Number(adjustment.adjustedAmountIn) / 1e18, 12);
   });
 
+  it("reverses a stale planned swap direction when live close proceeds require the opposite token", () => {
+    const adjustment = adjustedSwapAmountFromLiveClose(
+      smallCapitalPreview({
+        pool: {
+          currentTick: -201575,
+          price: 1762.57
+        }
+      }),
+      {
+        tokenIn: CONTRACTS.weth,
+        tokenOut: CONTRACTS.usdc,
+        fee: 3000,
+        amountIn: 0.000609,
+        spendSymbol: "WETH",
+        receiveSymbol: "USDC"
+      },
+      {
+        kind: "mint_position",
+        target: "Uniswap v3 NonfungiblePositionManager",
+        lowerTick: -201600,
+        upperTick: -201360,
+        budgetUsd: 482.26,
+        description: "mint"
+      },
+      {
+        status: "available",
+        tokenId: "5332384",
+        liquidity: 952862612136224n,
+        tokensOwed0: 0n,
+        tokensOwed1: 0n,
+        decreaseAmount0: 452844212270017n,
+        decreaseAmount1: 478_323_736n
+      }
+    );
+
+    expect(adjustment?.status).toBe("adjusted");
+    if (adjustment?.status !== "adjusted") throw new Error("expected reversed live-close swap");
+    expect(adjustment.request.tokenIn).toBe(CONTRACTS.usdc);
+    expect(adjustment.request.tokenOut).toBe(CONTRACTS.weth);
+    expect(adjustment.request.spendSymbol).toBe("USDC");
+    expect(adjustment.request.receiveSymbol).toBe("WETH");
+    expect(adjustment.reason).toContain("reversed the stale planned swap direction");
+  });
+
   it("validates a ready preview with a required quote", () => {
     const execution = buildAutopilotDryRunExecution(preview(), {
       rebalancerRoles: {

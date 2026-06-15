@@ -231,7 +231,7 @@ function liveReviewMessage(planId: string, execution: Awaited<ReturnType<typeof 
 }
 
 function retryablePriceMovementFailure(result: AutopilotBroadcastResult) {
-  return !result.success && /Swap price moved beyond slippage tolerance|retry with a fresh plan/i.test(result.error ?? "");
+  return !result.success && /Swap price moved beyond slippage tolerance|Slippage Limit Exceeded|retry with a fresh plan/i.test(result.error ?? "");
 }
 
 const FAST_QUOTE_RETRY_LIMIT = 3;

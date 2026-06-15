@@ -961,11 +961,73 @@ export function adjustedSwapAmountFromLiveClose(
   const tokenIn = getAddress(swapRequest.tokenIn);
   const weth = getAddress(CONTRACTS.weth);
   const usdc = getAddress(CONTRACTS.usdc);
+  const plannedDirection = tokenIn === weth ? "weth_to_usdc" : tokenIn === usdc ? "usdc_to_weth" : null;
+  if (!plannedDirection) return null;
+
+  const liveWethExcess = available0 > desired.amount0 ? available0 - desired.amount0 : 0n;
+  const liveUsdcExcess = available1 > desired.amount1 ? available1 - desired.amount1 : 0n;
+  const needsWeth = available0 < desired.amount0;
+  const needsUsdc = available1 < desired.amount1;
+  const originalAmountIn = rawAmountBigInt(swapRequest.amountIn, swapRequest.tokenIn);
+
+  if (needsWeth && liveUsdcExcess > 0n) {
+    const adjustedAmountIn = humanAmount(liveUsdcExcess, CONTRACTS.usdc);
+    if (!Number.isFinite(adjustedAmountIn) || adjustedAmountIn <= 0) {
+      return {
+        status: "unavailable" as const,
+        reason: "Live close simulation produced an unusable USDC-to-WETH swap amount."
+      };
+    }
+    return {
+      status: "adjusted" as const,
+      request: {
+        ...swapRequest,
+        tokenIn: CONTRACTS.usdc,
+        tokenOut: CONTRACTS.weth,
+        amountIn: adjustedAmountIn,
+        spendSymbol: "USDC" as const,
+        receiveSymbol: "WETH" as const
+      },
+      originalAmountIn,
+      adjustedAmountIn: liveUsdcExcess,
+      reason:
+        plannedDirection === "usdc_to_weth"
+          ? "Live close simulation capped swap input to available USDC excess."
+          : "Live close simulation reversed the stale planned swap direction to USDC -> WETH."
+    };
+  }
+
+  if (needsUsdc && liveWethExcess > 0n) {
+    const adjustedAmountIn = humanAmount(liveWethExcess, CONTRACTS.weth);
+    if (!Number.isFinite(adjustedAmountIn) || adjustedAmountIn <= 0) {
+      return {
+        status: "unavailable" as const,
+        reason: "Live close simulation produced an unusable WETH-to-USDC swap amount."
+      };
+    }
+    return {
+      status: "adjusted" as const,
+      request: {
+        ...swapRequest,
+        tokenIn: CONTRACTS.weth,
+        tokenOut: CONTRACTS.usdc,
+        amountIn: adjustedAmountIn,
+        spendSymbol: "WETH" as const,
+        receiveSymbol: "USDC" as const
+      },
+      originalAmountIn,
+      adjustedAmountIn: liveWethExcess,
+      reason:
+        plannedDirection === "weth_to_usdc"
+          ? "Live close simulation capped swap input to available WETH excess."
+          : "Live close simulation reversed the stale planned swap direction to WETH -> USDC."
+    };
+  }
+
   const desiredInputReserve = tokenIn === weth ? desired.amount0 : tokenIn === usdc ? desired.amount1 : null;
   const availableInput = tokenIn === weth ? available0 : tokenIn === usdc ? available1 : null;
   if (desiredInputReserve === null || availableInput === null) return null;
 
-  const originalAmountIn = rawAmountBigInt(swapRequest.amountIn, swapRequest.tokenIn);
   const maxAmountIn = availableInput > desiredInputReserve ? availableInput - desiredInputReserve : 0n;
   if (originalAmountIn <= maxAmountIn) return null;
   if (maxAmountIn <= 0n) {
@@ -990,7 +1052,8 @@ export function adjustedSwapAmountFromLiveClose(
       amountIn: adjustedAmountIn
     },
     originalAmountIn,
-    adjustedAmountIn: maxAmountIn
+    adjustedAmountIn: maxAmountIn,
+    reason: "Live close simulation capped swap input to available excess."
   };
 }
 
@@ -1033,6 +1096,8 @@ async function rebuildPreviewQuoteFromLiveClose(
     const quote = await quoteBestExecutableSwap(adjustment.request);
     const oldAmount = humanAmount(adjustment.originalAmountIn, swapQuoteRequest.tokenIn);
     const newAmount = humanAmount(adjustment.adjustedAmountIn, swapQuoteRequest.tokenIn);
+    const directionChanged = adjustment.request.tokenIn.toLowerCase() !== swapQuoteRequest.tokenIn.toLowerCase();
+    const adjustmentReason = adjustment.reason ?? "Live close simulation adjusted the swap input.";
     return {
       ...preview,
       steps: preview.steps.map((step) =>
@@ -1040,7 +1105,9 @@ async function rebuildPreviewQuoteFromLiveClose(
           ? {
               ...step,
               quoteRequest: adjustment.request,
-              detail: `${step.detail} Live close caps swap input from ${formatToken(oldAmount, swapQuoteRequest.spendSymbol)} to ${formatToken(newAmount, swapQuoteRequest.spendSymbol)}.`
+              detail: directionChanged
+                ? `${step.detail} ${adjustmentReason} Rebuilt quote: swap ${formatToken(newAmount, adjustment.request.spendSymbol)} to ${adjustment.request.receiveSymbol}.`
+                : `${step.detail} ${adjustmentReason} Input changed from ${formatToken(oldAmount, swapQuoteRequest.spendSymbol)} to ${formatToken(newAmount, adjustment.request.spendSymbol)}.`
             }
           : step
       ),
@@ -1048,7 +1115,7 @@ async function rebuildPreviewQuoteFromLiveClose(
         status: "available",
         data: {
           ...quote,
-          executionNote: `${quote.executionNote} Swap input was capped to the live close simulation so wallet leftovers are not spent.`
+          executionNote: `${quote.executionNote} ${adjustmentReason}`
         }
       }
     };

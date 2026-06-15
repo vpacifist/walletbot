@@ -340,6 +340,59 @@ describe("broadcastAutopilotRebalance", () => {
     fetchSpy.mockRestore();
   });
 
+  it("reports raw-trace revert reasons for mined slippage reverts", async () => {
+    vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
+      id: "test-plan-id",
+      status: "approved"
+    } as any);
+    vi.mocked(prisma.rebalancePlan.updateMany).mockResolvedValue({ count: 1 } as any);
+    vi.mocked(executor.createAutopilotDryRunExecution).mockResolvedValue({
+      planId: "test-plan-id",
+      status: "validated",
+      checks: [],
+      atomicCall: {
+        status: "prepared",
+        target: "0xb6Ba43FDCC4a501f4F7Eb5e3BB9F9385103eaDb0",
+        data: "0x12345678"
+      }
+    } as any);
+
+    vi.mocked(chain.createAutopilotExecutorWalletClient).mockReturnValue({
+      sendTransaction: vi.fn().mockResolvedValue("0xmocktxhash"),
+      chain: { id: 8453 },
+      account: { address: "0x5551266bcf3e7a86da53D53CaE370e8aA31CDf45" }
+    } as any);
+    vi.mocked(chain.createBaseClient).mockReturnValue({
+      call: vi.fn().mockResolvedValue("0x"),
+      estimateGas: vi.fn().mockResolvedValue(100000n),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({
+        status: "reverted",
+        transactionHash: "0xmocktxhash",
+        gasUsed: 90000n
+      }),
+      ...mockGasGuardReads()
+    } as any);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      json: vi.fn().mockResolvedValue({
+        calls: [
+          {
+            to: "0x0D05a7D3448512B78fa8A9e46c4872C88C4a0D05",
+            input: "0x30f80b4c",
+            error: "execution reverted",
+            revertReason: "Slippage Limit Exceeded"
+          }
+        ]
+      })
+    } as any);
+
+    const result = await broadcastAutopilotRebalance("test-plan-id");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("On-chain transaction reverted: Odos router: Slippage Limit Exceeded");
+    expect(result.error).toContain("Tx Hash: 0xmocktxhash");
+    fetchSpy.mockRestore();
+  });
+
   it("blocks live execution when estimated gas cost exceeds the configured USD cap", async () => {
     vi.mocked(prisma.rebalancePlan.findUnique).mockResolvedValue({
       id: "test-plan-id",
