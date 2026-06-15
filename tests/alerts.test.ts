@@ -7,6 +7,7 @@ import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { isAutopilotRuntimePaused } from "@/lib/autopilot-pause";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { recordAutopilotPlanDecision } from "@/lib/autopilot-service";
+import { sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
 import { prisma } from "@/lib/db";
 import { syncWalletOnce } from "@/lib/sync";
 
@@ -37,6 +38,12 @@ vi.mock("@/lib/autopilot-executor", () => {
 vi.mock("@/lib/autopilot-broadcaster", () => {
   return {
     broadcastAutopilotRebalance: vi.fn()
+  };
+});
+
+vi.mock("@/lib/autopilot-top-up", () => {
+  return {
+    sendTopUpOpportunityAlert: vi.fn()
   };
 });
 
@@ -118,6 +125,7 @@ describe("sendAutopilotPlanAlert", () => {
     vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(false);
     vi.mocked(recordAutopilotPlanDecision).mockImplementation(async (id) => ({ ...planRecord().record, id, status: "approved" }) as any);
     vi.mocked(syncWalletOnce).mockResolvedValue({ transactionsSeen: 1, positionsSeen: 1, toBlock: 1n } as any);
+    vi.mocked(sendTopUpOpportunityAlert).mockResolvedValue({ sent: 0, skipped: "insufficient_balanced_leftovers" });
     vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
       status: "validated",
       operations: [{ label: "Close/review stale range", detail: "Close current test range" }],
@@ -373,6 +381,7 @@ describe("sendAutopilotPlanAlert", () => {
       "63853863",
       expect.stringContaining("Active range: #5246424 -201240 - -201000")
     );
+    expect(sendTopUpOpportunityAlert).toHaveBeenCalledWith(testBot, -201081);
     expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         alertType: "autopilot_plan",

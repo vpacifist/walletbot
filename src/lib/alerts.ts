@@ -6,6 +6,7 @@ import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type Autop
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
 import { isAutopilotRuntimePaused } from "./autopilot-pause";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./autopilot-service";
+import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { getConfig } from "./config";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
@@ -288,6 +289,7 @@ async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
     await syncWalletOnce();
     const postCheck = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
     await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, buildAutoGuardedPostCheckSummary(postCheck.plan, txHash));
+    await sendTopUpOpportunityAlert(bot, postCheck.plan.pool.currentTick);
   } catch (error) {
     await bot.telegram.sendMessage(
       TELEGRAM_CHAT_ID,
