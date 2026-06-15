@@ -1,5 +1,8 @@
 import type { HistoricalPricesByBlock } from "@/lib/historical-prices";
 
+const LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO = 0.5;
+const LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO = 1.5;
+
 export type PerformanceAssetAmounts = {
   weth: number | null;
   usdc: number | null;
@@ -84,7 +87,7 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
     const totalUsd = portfolioTotalUsd(row, rowPrices);
     const portfolioTotal = totalUsd === undefined ? null : totalUsd;
     const isCashFlow = row.type === "deposit" || row.type === "withdrawal";
-    const isPortfolioRestructure = isCashFlow || row.type.startsWith("lp_");
+    const isLpLifecycle = row.type.startsWith("lp_");
 
     if (baseWethPrice === null && wethPriceUsd !== null && wethPriceUsd > 0) {
       baseWethPrice = wethPriceUsd;
@@ -93,11 +96,17 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
     if (portfolioTotal !== null && portfolioTotal > 0) {
       if (previousPortfolioTotal === null || previousPortfolioTotal <= 0) {
         previousPortfolioTotal = portfolioTotal;
-      } else if (!isPortfolioRestructure) {
-        portfolioIndex *= portfolioTotal / previousPortfolioTotal;
+      } else if (isCashFlow) {
         previousPortfolioTotal = portfolioTotal;
       } else {
-        previousPortfolioTotal = portfolioTotal;
+        const ratio = portfolioTotal / previousPortfolioTotal;
+        const isLpSnapshotDiscontinuity =
+          isLpLifecycle && (ratio < LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO || ratio > LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO);
+
+        if (!isLpSnapshotDiscontinuity) {
+          portfolioIndex *= ratio;
+          previousPortfolioTotal = portfolioTotal;
+        }
       }
     }
 
