@@ -1,7 +1,7 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
-import { factoryAbi, poolAbi } from "./abi";
+import { poolAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
@@ -32,8 +32,6 @@ const state: PriceWatchState = {
   lastTopUpCheckAt: 0
 };
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
-
 function redactSensitiveRpcText(message: string) {
   return message
     .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
@@ -47,16 +45,8 @@ function shortError(error: unknown) {
 }
 
 async function readPoolTickWithClient(client: ReturnType<typeof createBaseClient>) {
-  const poolAddress = await client.readContract({
-    address: CONTRACTS.uniswapV3Factory,
-    abi: factoryAbi,
-    functionName: "getPool",
-    args: [CONTRACTS.weth, CONTRACTS.usdc, WETH_USDC_NARROW_FEE]
-  });
-  if (poolAddress === ZERO_ADDRESS) throw new Error("WETH/USDC 0.3% pool not found");
-
   const slot0 = await client.readContract({
-    address: poolAddress,
+    address: CONTRACTS.wethUsdcUniswapV3Pool3000,
     abi: poolAbi,
     functionName: "slot0"
   });

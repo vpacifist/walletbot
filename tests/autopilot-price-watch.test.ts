@@ -67,10 +67,8 @@ function bot() {
 }
 
 function mockPoolTick(tick: number) {
-  const poolAddress = "0x6c561B446416E1A00E8E93E221854d6eA4171372";
   vi.mocked(createBaseClient).mockReturnValue({
     readContract: vi.fn().mockImplementation((params) => {
-      if (params.functionName === "getPool") return Promise.resolve(poolAddress);
       if (params.functionName === "slot0") return Promise.resolve([0n, tick]);
       return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
     })
