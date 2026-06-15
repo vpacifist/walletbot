@@ -58,6 +58,9 @@ vi.mock("@/lib/db", () => {
       wallet: {
         findUnique: vi.fn()
       },
+      telegramEvent: {
+        findFirst: vi.fn()
+      },
       position: {
         findFirst: vi.fn(),
         update: vi.fn()
@@ -112,6 +115,7 @@ describe("checkAutopilotPriceBoundary", () => {
     vi.clearAllMocks();
     resetAutopilotPriceWatchStateForTest();
     mockActiveRange();
+    vi.mocked(prisma.telegramEvent.findFirst).mockResolvedValue(null);
     vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 1, planId: "plan-1" } as any);
     vi.mocked(sendTopUpOpportunityAlert).mockResolvedValue({ sent: 0, skipped: "below_minimum_value" } as any);
     vi.mocked(refreshTrackedPositionsForWallet).mockResolvedValue([]);
@@ -189,6 +193,20 @@ describe("checkAutopilotPriceBoundary", () => {
 
     expect(second).toMatchObject({ triggered: false, skipped: "duplicate_fast_trigger" });
     expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-enters the auto alert path after a sustained breakout wait expires", async () => {
+    mockPoolTick(-201605);
+    vi.mocked(prisma.telegramEvent.findFirst).mockResolvedValue({
+      sentAt: new Date(Date.now() - 16 * 60 * 1000)
+    } as any);
+    const testBot = bot();
+
+    await checkAutopilotPriceBoundary(testBot as any);
+    const second = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(second).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
+    expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(2);
   });
 
   it("offers an explicit retry button when the current incident was already deduped", async () => {

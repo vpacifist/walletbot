@@ -20,6 +20,8 @@ type ActiveRange = {
   upperTick: number;
 };
 
+const SUSTAINED_BREAKOUT_WAIT_MS = 15 * 60 * 1000;
+
 type PriceWatchState = {
   running: boolean;
   topUpRunning: boolean;
@@ -97,6 +99,21 @@ async function rangeHasLiveLiquidity(tokenId: string) {
   return position[7] > 0n;
 }
 
+async function sustainedWaitExpired(range: ActiveRange, side: "above" | "below") {
+  const direction = side === "above" ? "above_range" : "below_range";
+  const existing = await prisma.telegramEvent.findFirst({
+    where: {
+      alertType: "autopilot_sustained_wait",
+      dedupeKey: {
+        contains: `:${range.tokenId}:${range.lowerTick}:${range.upperTick}:${direction}`
+      }
+    },
+    orderBy: { sentAt: "desc" }
+  });
+
+  return Boolean(existing && Date.now() - existing.sentAt.getTime() >= SUSTAINED_BREAKOUT_WAIT_MS);
+}
+
 export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const config = getConfig();
   if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
@@ -118,7 +135,9 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   }
 
   const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;
-  if (state.lastTriggerKey === triggerKey) return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
+  if (state.lastTriggerKey === triggerKey && !(await sustainedWaitExpired(range, side))) {
+    return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
+  }
 
   let hasLiveLiquidity = false;
   try {
