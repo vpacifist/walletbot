@@ -148,4 +148,28 @@ describe("portfolio performance", () => {
     expect(points[4].portfolioTotalUsd).toBeNull();
     expect(points[5].portfolioGrowthPercent).toBeCloseTo(8);
   });
+
+  it("ignores partial LP snapshots that drift down in smaller steps", () => {
+    const rows = [
+      row({ id: "recovered", blockNumber: "5", timestamp: "2026-01-05T00:00:00.000Z", type: "swap", assets: { usdc: 105 } }),
+      row({ id: "partial-2", blockNumber: "4", timestamp: "2026-01-04T00:00:00.000Z", type: "swap", assets: { usdc: 10, lpUsdc: 45 } }),
+      row({ id: "partial-1", blockNumber: "3", timestamp: "2026-01-03T00:00:00.000Z", type: "swap", assets: { usdc: 10, lpUsdc: 70 } }),
+      row({ id: "mint", blockNumber: "2", timestamp: "2026-01-02T00:00:00.000Z", type: "lp_deposit", assets: { usdc: 100 } }),
+      row({ id: "start", blockNumber: "1", timestamp: "2026-01-01T00:00:00.000Z", assets: { usdc: 100 } })
+    ];
+
+    const points = cashFlowNeutralGrowthSeries(rows, {
+      "1": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "2": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "3": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "4": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "5": { ethPriceUsd: 1000, aeroPriceUsd: 1 }
+    });
+
+    expect(points[2].portfolioGrowthPercent).toBeCloseTo(0);
+    expect(points[2].portfolioTotalUsd).toBeNull();
+    expect(points[3].portfolioGrowthPercent).toBeCloseTo(0);
+    expect(points[3].portfolioTotalUsd).toBeNull();
+    expect(points[4].portfolioGrowthPercent).toBeCloseTo(5);
+  });
 });
