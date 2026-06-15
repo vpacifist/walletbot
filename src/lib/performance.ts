@@ -87,11 +87,11 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
     const totalUsd = portfolioTotalUsd(row, rowPrices);
     const portfolioTotal = totalUsd === undefined ? null : totalUsd;
     const isCashFlow = row.type === "deposit" || row.type === "withdrawal";
-    const isLpLifecycle = row.type.startsWith("lp_");
-
     if (baseWethPrice === null && wethPriceUsd !== null && wethPriceUsd > 0) {
       baseWethPrice = wethPriceUsd;
     }
+
+    let portfolioTotalForDisplay = portfolioTotal;
 
     if (portfolioTotal !== null && portfolioTotal > 0) {
       if (previousPortfolioTotal === null || previousPortfolioTotal <= 0) {
@@ -100,12 +100,13 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
         previousPortfolioTotal = portfolioTotal;
       } else {
         const ratio = portfolioTotal / previousPortfolioTotal;
-        const isLpSnapshotDiscontinuity =
-          isLpLifecycle && (ratio < LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO || ratio > LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO);
+        const isSnapshotDiscontinuity = ratio < LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO || ratio > LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO;
 
-        if (!isLpSnapshotDiscontinuity) {
+        if (!isSnapshotDiscontinuity) {
           portfolioIndex *= ratio;
           previousPortfolioTotal = portfolioTotal;
+        } else {
+          portfolioTotalForDisplay = null;
         }
       }
     }
@@ -116,7 +117,7 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
       type: row.type,
       portfolioGrowthPercent: previousPortfolioTotal === null ? null : (portfolioIndex - 1) * 100,
       wethGrowthPercent: baseWethPrice === null || wethPriceUsd === null ? null : (wethPriceUsd / baseWethPrice - 1) * 100,
-      portfolioTotalUsd: portfolioTotal,
+      portfolioTotalUsd: portfolioTotalForDisplay,
       wethPriceUsd,
       isCashFlow
     };
