@@ -1,6 +1,6 @@
 import { formatUnits, getAddress, type Address } from "viem";
 import { positionManagerAbi } from "./abi";
-import { createBaseClient } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { CONTRACTS, TOKEN_META } from "./constants";
 
 const MAX_UINT128 = 2n ** 128n - 1n;
@@ -11,14 +11,8 @@ function amountForToken(token: string, rawAmount: bigint) {
   return Number(formatUnits(rawAmount, meta.decimals));
 }
 
-export async function getUncollectedPositionFees(input: {
-  tokenId: string;
-  token0: string;
-  token1: string;
-  walletAddress: Address;
-}) {
-  const client = createBaseClient();
-  const [amount0, amount1] = await client
+async function simulateCollect(input: { tokenId: string; walletAddress: Address }, client: ReturnType<typeof createBaseClient>) {
+  return client
     .simulateContract({
       account: input.walletAddress,
       address: CONTRACTS.nonfungiblePositionManager,
@@ -34,6 +28,36 @@ export async function getUncollectedPositionFees(input: {
       ]
     })
     .then((result) => result.result);
+}
+
+export async function getUncollectedPositionFees(input: {
+  tokenId: string;
+  token0: string;
+  token1: string;
+  walletAddress: Address;
+}) {
+  const client = createBaseClient();
+  let amount0: bigint;
+  let amount1: bigint;
+
+  try {
+    [amount0, amount1] = await simulateCollect(input, client);
+  } catch (primaryError) {
+    let lastError = primaryError;
+    let result: readonly [bigint, bigint] | null = null;
+
+    for (const url of baseRpcUrlsWithPublicFallback()) {
+      try {
+        result = await simulateCollect(input, createBaseClientForUrl(url));
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!result) throw lastError;
+    [amount0, amount1] = result;
+  }
 
   const token0 = getAddress(input.token0);
   const token1 = getAddress(input.token1);
