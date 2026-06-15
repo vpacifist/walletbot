@@ -198,6 +198,12 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
       };
     } else if ("autoGuarded" in result && result.autoGuarded === "sent") {
       state.retryAfter = null;
+    } else if ("skipped" in result && result.skipped === "auto_guarded_already_running") {
+      state.retryAfter = {
+        triggerKey,
+        at: Date.now() + AUTO_GUARDED_TRANSIENT_RETRY_COOLDOWN_MS,
+        reason: result.skipped
+      };
     }
     if ("skipped" in result && result.skipped === "duplicate_plan_key") {
       await bot.telegram.sendMessage(

@@ -265,6 +265,23 @@ describe("checkAutopilotPriceBoundary", () => {
     dateNow.mockRestore();
   });
 
+  it("throttles price-watch attempts while auto_guarded execution is already running", async () => {
+    mockPoolTick(-201605);
+    vi.mocked(sendAutopilotPlanAlert).mockResolvedValueOnce({ sent: 0, skipped: "auto_guarded_already_running" } as any);
+    const testBot = bot();
+
+    const first = await checkAutopilotPriceBoundary(testBot as any);
+    const second = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(first).toMatchObject({ triggered: true, result: { skipped: "auto_guarded_already_running" } });
+    expect(second).toMatchObject({
+      triggered: false,
+      skipped: "auto_guarded_retry_cooldown",
+      reason: "auto_guarded_already_running"
+    });
+    expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(1);
+  });
+
   it("is disabled outside auto_guarded mode", async () => {
     autopilotMode = "approve_in_telegram";
     mockPoolTick(-201605);
