@@ -5,7 +5,7 @@ import { positionManagerAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
-import { createBaseClient } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
@@ -70,13 +70,29 @@ export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {
 }
 
 async function rangeHasLiveLiquidity(tokenId: string) {
-  const client = createBaseClient();
-  const position = await client.readContract({
-    address: CONTRACTS.nonfungiblePositionManager,
-    abi: positionManagerAbi,
-    functionName: "positions",
-    args: [BigInt(tokenId)]
-  });
+  const read = (client: ReturnType<typeof createBaseClient>) =>
+    client.readContract({
+      address: CONTRACTS.nonfungiblePositionManager,
+      abi: positionManagerAbi,
+      functionName: "positions",
+      args: [BigInt(tokenId)]
+    });
+
+  let position;
+  try {
+    position = await read(createBaseClient());
+  } catch (primaryError) {
+    let lastError = primaryError;
+    for (const url of baseRpcUrlsWithPublicFallback()) {
+      try {
+        position = await read(createBaseClientForUrl(url));
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!position) throw lastError;
+  }
 
   return position[7] > 0n;
 }
@@ -101,7 +117,16 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
     return { triggered: false, skipped: "micro_breakout", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
-  if (!(await rangeHasLiveLiquidity(range.tokenId))) {
+  let hasLiveLiquidity = false;
+  try {
+    hasLiveLiquidity = await rangeHasLiveLiquidity(range.tokenId);
+  } catch (error) {
+    state.lastTriggerKey = null;
+    console.error("autopilot live liquidity check failed", shortError(error));
+    return { triggered: false, skipped: "live_liquidity_check_failed", tick, tokenId: range.tokenId, side, depthTicks };
+  }
+
+  if (!hasLiveLiquidity) {
     state.lastTriggerKey = null;
     await refreshTrackedPositionsForWallet([range.tokenId]);
     return { triggered: false, skipped: "stale_closed_position", tick, tokenId: range.tokenId, side, depthTicks };
