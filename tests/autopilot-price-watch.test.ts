@@ -59,7 +59,8 @@ vi.mock("@/lib/db", () => {
         findUnique: vi.fn()
       },
       position: {
-        findFirst: vi.fn()
+        findFirst: vi.fn(),
+        update: vi.fn()
       }
     }
   };
@@ -167,6 +168,13 @@ describe("checkAutopilotPriceBoundary", () => {
     const result = await checkAutopilotPriceBoundary(testBot as any);
 
     expect(result).toMatchObject({ triggered: false, skipped: "stale_closed_position", tick: -201605, tokenId: "5257034" });
+    expect(prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-1" },
+      data: expect.objectContaining({
+        liquidity: "0",
+        status: PositionStatus.closed_or_zero_liquidity
+      })
+    });
     expect(refreshTrackedPositionsForWallet).toHaveBeenCalledWith(["5257034"]);
     expect(sendAutopilotPlanAlert).not.toHaveBeenCalled();
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();

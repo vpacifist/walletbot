@@ -117,23 +117,31 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
     return { triggered: false, skipped: "micro_breakout", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
+  const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;
+  if (state.lastTriggerKey === triggerKey) return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
+
   let hasLiveLiquidity = false;
   try {
     hasLiveLiquidity = await rangeHasLiveLiquidity(range.tokenId);
   } catch (error) {
-    state.lastTriggerKey = null;
+    state.lastTriggerKey = triggerKey;
     console.error("autopilot live liquidity check failed", shortError(error));
     return { triggered: false, skipped: "live_liquidity_check_failed", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
   if (!hasLiveLiquidity) {
-    state.lastTriggerKey = null;
+    state.lastTriggerKey = triggerKey;
+    await prisma.position.update({
+      where: { id: range.id },
+      data: {
+        liquidity: "0",
+        status: PositionStatus.closed_or_zero_liquidity,
+        lastCheckedAt: new Date()
+      }
+    });
     await refreshTrackedPositionsForWallet([range.tokenId]);
     return { triggered: false, skipped: "stale_closed_position", tick, tokenId: range.tokenId, side, depthTicks };
   }
-
-  const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;
-  if (state.lastTriggerKey === triggerKey) return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
 
   state.running = true;
   state.lastTriggerKey = triggerKey;
