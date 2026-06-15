@@ -2,6 +2,7 @@ import type { HistoricalPricesByBlock } from "@/lib/historical-prices";
 
 const LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO = 0.5;
 const LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO = 1.5;
+const WALLET_ONLY_INCOMPLETE_SNAPSHOT_MIN_RATIO = 0.8;
 
 export type PerformanceAssetAmounts = {
   weth: number | null;
@@ -75,6 +76,10 @@ export function portfolioTotalUsd(row: PerformanceTransaction, prices?: { ethPri
   return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 }
 
+function hasLpValue(row: PerformanceTransaction) {
+  return (row.assets.lpWeth ?? 0) > 0 || (row.assets.lpUsdc ?? 0) > 0;
+}
+
 export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], prices: HistoricalPricesByBlock): GrowthChartPoint[] {
   const chronologicalRows = [...rows].reverse();
   let baseWethPrice: number | null = null;
@@ -100,7 +105,10 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
         previousPortfolioTotal = portfolioTotal;
       } else {
         const ratio = portfolioTotal / previousPortfolioTotal;
-        const isSnapshotDiscontinuity = ratio < LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO || ratio > LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO;
+        const isSnapshotDiscontinuity =
+          ratio < LP_SNAPSHOT_DISCONTINUITY_MIN_RATIO ||
+          ratio > LP_SNAPSHOT_DISCONTINUITY_MAX_RATIO ||
+          (!hasLpValue(row) && ratio < WALLET_ONLY_INCOMPLETE_SNAPSHOT_MIN_RATIO);
 
         if (!isSnapshotDiscontinuity) {
           portfolioIndex *= ratio;

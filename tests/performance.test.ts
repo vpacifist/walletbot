@@ -120,4 +120,32 @@ describe("portfolio performance", () => {
     expect(points[2].portfolioTotalUsd).toBeNull();
     expect(points[3].portfolioGrowthPercent).toBeCloseTo(10);
   });
+
+  it("does not compound a chain of incomplete snapshots into a fake drawdown", () => {
+    const rows = [
+      row({ id: "recovered", blockNumber: "6", timestamp: "2026-01-06T00:00:00.000Z", type: "swap", assets: { usdc: 108 } }),
+      row({ id: "missing-3", blockNumber: "5", timestamp: "2026-01-05T00:00:00.000Z", type: "swap", assets: { usdc: 20 } }),
+      row({ id: "missing-2", blockNumber: "4", timestamp: "2026-01-04T00:00:00.000Z", type: "swap", assets: { usdc: 45 } }),
+      row({ id: "missing-1", blockNumber: "3", timestamp: "2026-01-03T00:00:00.000Z", type: "swap", assets: { usdc: 70 } }),
+      row({ id: "mint", blockNumber: "2", timestamp: "2026-01-02T00:00:00.000Z", type: "lp_deposit", assets: { usdc: 100 } }),
+      row({ id: "start", blockNumber: "1", timestamp: "2026-01-01T00:00:00.000Z", assets: { usdc: 100 } })
+    ];
+
+    const points = cashFlowNeutralGrowthSeries(rows, {
+      "1": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "2": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "3": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "4": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "5": { ethPriceUsd: 1000, aeroPriceUsd: 1 },
+      "6": { ethPriceUsd: 1000, aeroPriceUsd: 1 }
+    });
+
+    expect(points[2].portfolioGrowthPercent).toBeCloseTo(0);
+    expect(points[2].portfolioTotalUsd).toBeNull();
+    expect(points[3].portfolioGrowthPercent).toBeCloseTo(0);
+    expect(points[3].portfolioTotalUsd).toBeNull();
+    expect(points[4].portfolioGrowthPercent).toBeCloseTo(0);
+    expect(points[4].portfolioTotalUsd).toBeNull();
+    expect(points[5].portfolioGrowthPercent).toBeCloseTo(8);
+  });
 });
