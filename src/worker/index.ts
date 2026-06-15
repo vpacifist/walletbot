@@ -16,6 +16,17 @@ function msUntilNextMoscowTen(now = new Date()) {
   return next.getTime() - now.getTime();
 }
 
+function redactSensitiveRpcText(message: string) {
+  return message
+    .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
+    .replace(/https:\/\/[^/\s]+\/v2\/[A-Za-z0-9_-]+/g, "https://[rpc-redacted]/v2/[redacted]");
+}
+
+function shortError(error: unknown) {
+  const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
+  return message.length <= 240 ? message : `${message.slice(0, 237)}...`;
+}
+
 async function main() {
   const config = getConfig();
   const bot = createBot();
@@ -75,7 +86,7 @@ async function main() {
   const run = async () => {
     try {
       const refreshedPositions = await refreshTrackedPositionsForWallet().catch((error) => {
-        console.error("RPC position refresh failed", error);
+        console.error("RPC position refresh failed", shortError(error));
         return [];
       });
       const result = await syncWalletOnce();

@@ -1,7 +1,7 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { getAddress, type Address, zeroAddress } from "viem";
 import { erc721OwnerAbi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
-import { createBaseClient } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { getConfig } from "./config";
@@ -10,6 +10,22 @@ import { getPositionTokenAmounts } from "./uniswap-v3-position";
 function tokenPairIsWethUsdc(token0: string, token1: string) {
   const pair = new Set([token0.toLowerCase(), token1.toLowerCase()]);
   return pair.has(CONTRACTS.weth.toLowerCase()) && pair.has(CONTRACTS.usdc.toLowerCase());
+}
+
+async function readWithFallback<T>(read: (client: ReturnType<typeof createBaseClient>) => Promise<T>) {
+  try {
+    return await read(createBaseClient());
+  } catch (primaryError) {
+    let lastError = primaryError;
+    for (const url of baseRpcUrlsWithPublicFallback()) {
+      try {
+        return await read(createBaseClientForUrl(url));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
 }
 
 export function calculateRangeStatus(input: {
@@ -25,22 +41,21 @@ export function calculateRangeStatus(input: {
 }
 
 export async function discoverOwnedPositionTokenIds(walletAddress: Address) {
-  const client = createBaseClient();
-  const balance = await client.readContract({
+  const balance = await readWithFallback((client) => client.readContract({
     address: CONTRACTS.nonfungiblePositionManager,
     abi: erc721OwnerAbi,
     functionName: "balanceOf",
     args: [walletAddress]
-  });
+  }));
 
   const owned = await Promise.all(
     Array.from({ length: Number(balance) }, (_, index) =>
-      client.readContract({
+      readWithFallback((client) => client.readContract({
         address: CONTRACTS.nonfungiblePositionManager,
         abi: erc721OwnerAbi,
         functionName: "tokenOfOwnerByIndex",
         args: [walletAddress, BigInt(index)]
-      })
+      }))
     )
   );
 
@@ -48,19 +63,17 @@ export async function discoverOwnedPositionTokenIds(walletAddress: Address) {
 }
 
 export async function upsertTrackedPositions(walletId: string, walletAddress: Address, extraTokenIds: string[] = []) {
-  const client = createBaseClient();
   const ownedTokenIds = await discoverOwnedPositionTokenIds(walletAddress).catch(() => []);
   const tokenIds = [...new Set([...ownedTokenIds, ...extraTokenIds])];
   const positions = [];
 
   for (const tokenId of tokenIds) {
-    const position = await client
-      .readContract({
+    const position = await readWithFallback((client) => client.readContract({
         address: CONTRACTS.nonfungiblePositionManager,
         abi: positionManagerAbi,
         functionName: "positions",
         args: [BigInt(tokenId)]
-      })
+      }))
       .catch(() => null);
 
     if (!position) continue;
@@ -68,12 +81,12 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
     const [, , token0, token1, fee, tickLower, tickUpper, liquidity] = position;
     if (!tokenPairIsWethUsdc(token0, token1)) continue;
 
-    const poolAddress = await client.readContract({
+    const poolAddress = await readWithFallback((client) => client.readContract({
       address: CONTRACTS.uniswapV3Factory,
       abi: factoryAbi,
       functionName: "getPool",
       args: [token0, token1, fee]
-    });
+    }));
 
     let currentTick: number | null = null;
     let status: PositionStatus = PositionStatus.unknown;
@@ -81,11 +94,11 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
     let usdcAmount: string | null = null;
 
     if (poolAddress !== zeroAddress) {
-      const slot0 = await client.readContract({
+      const slot0 = await readWithFallback((client) => client.readContract({
         address: poolAddress,
         abi: poolAbi,
         functionName: "slot0"
-      });
+      }));
       currentTick = slot0[1];
       status = calculateRangeStatus({
         liquidity,
