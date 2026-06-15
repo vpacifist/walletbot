@@ -85,7 +85,6 @@ async function main() {
     }
   };
 
-  await run();
   const interval = setInterval(run, config.SYNC_INTERVAL_SECONDS * 1000);
   if (bot) {
     priceWatchInterval = startAutopilotPriceWatch(bot);
@@ -95,6 +94,7 @@ async function main() {
     lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
     topUpCheckTimeout = setTimeout(runTopUpCheck, msUntilNextMoscowTen());
   }
+  void run();
 
   const shutdown = async () => {
     clearInterval(interval);
