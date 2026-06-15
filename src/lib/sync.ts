@@ -1,6 +1,7 @@
 import { Prisma, SyncRunStatus } from "@/generated/prisma/client";
 import { createPublicClient, getAddress, http, type Address } from "viem";
 import { base } from "viem/chains";
+import { poolAbi } from "./abi";
 import { fetchWalletTransactions } from "./blockscout";
 import { baseRpcUrls, createBaseClient } from "./chain";
 import { classifyTransaction } from "./classifier";
@@ -8,8 +9,9 @@ import { getConfig } from "./config";
 import { prisma } from "./db";
 import { jsonSafe } from "./json";
 import { applyPositionLifecycleClassification, updatePositionLiquidityState } from "./lp-lifecycle";
-import { upsertTrackedPositions } from "./positions";
+import { calculateRangeStatus, upsertTrackedPositions } from "./positions";
 import { getWethUsdcUniswapV3PoolAddresses } from "./uniswap-v3";
+import { getPositionTokenAmounts } from "./uniswap-v3-position";
 
 const REBALANCER_TX_LOOKBACK_BLOCKS = 50_000n;
 const PUBLIC_BASE_RPC_URL = "https://mainnet.base.org";
@@ -96,6 +98,73 @@ async function getTransactionReceiptWithFallback(client: ReturnType<typeof creat
   }
 
   return null;
+}
+
+async function refreshStoredPositionStates(client: ReturnType<typeof createBaseClient>, walletId: string) {
+  const positions = await prisma.position.findMany({
+    where: {
+      walletId,
+      poolAddress: { not: null },
+      liquidity: { not: "0" }
+    },
+    select: {
+      id: true,
+      poolAddress: true,
+      token0: true,
+      token1: true,
+      tickLower: true,
+      tickUpper: true,
+      liquidity: true
+    }
+  });
+  const ticksByPool = new Map<string, number>();
+  let refreshed = 0;
+
+  for (const position of positions) {
+    if (!position.poolAddress) continue;
+    const poolAddress = getAddress(position.poolAddress);
+    const poolKey = poolAddress.toLowerCase();
+    let currentTick = ticksByPool.get(poolKey);
+    if (currentTick === undefined) {
+      const slot0 = await client.readContract({
+        address: poolAddress,
+        abi: poolAbi,
+        functionName: "slot0"
+      });
+      currentTick = Number(slot0[1]);
+      ticksByPool.set(poolKey, currentTick);
+    }
+
+    const liquidity = BigInt(position.liquidity);
+    const status = calculateRangeStatus({
+      liquidity,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      currentTick
+    });
+    const amounts = getPositionTokenAmounts({
+      token0: position.token0,
+      token1: position.token1,
+      liquidity,
+      tickLower: position.tickLower,
+      tickUpper: position.tickUpper,
+      currentTick
+    });
+
+    await prisma.position.update({
+      where: { id: position.id },
+      data: {
+        currentTick,
+        status,
+        wethAmount: amounts.weth,
+        usdcAmount: amounts.usdc,
+        lastCheckedAt: new Date()
+      }
+    });
+    refreshed += 1;
+  }
+
+  return refreshed;
 }
 
 export async function syncWalletOnce(options: SyncWalletOptions = {}) {
@@ -195,15 +264,8 @@ export async function syncWalletOnce(options: SyncWalletOptions = {}) {
       });
     }
 
-    const trackedPositions = await prisma.position.findMany({
-      where: { walletId: wallet.id },
-      select: { tokenId: true }
-    });
-    for (const position of trackedPositions) {
-      discoveredTokenIds.add(position.tokenId);
-    }
-
-    const positions = await upsertTrackedPositions(wallet.id, wallet.address as Address, [...discoveredTokenIds]);
+    const positions = discoveredTokenIds.size > 0 ? await upsertTrackedPositions(wallet.id, wallet.address as Address, [...discoveredTokenIds]) : [];
+    const refreshedStoredPositions = await refreshStoredPositionStates(client, wallet.id);
 
     await prisma.wallet.update({
       where: { id: wallet.id },
@@ -220,7 +282,7 @@ export async function syncWalletOnce(options: SyncWalletOptions = {}) {
       }
     });
 
-    return { runId: run.id, transactionsSeen: seen, positionsSeen: positions.length, toBlock: maxBlock.toString() };
+    return { runId: run.id, transactionsSeen: seen, positionsSeen: positions.length + refreshedStoredPositions, toBlock: maxBlock.toString() };
   } catch (error) {
     await prisma.syncRun.update({
       where: { id: run.id },
