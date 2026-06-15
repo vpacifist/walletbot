@@ -1,10 +1,11 @@
-import { encodeFunctionData, getAddress, parseUnits, type Address } from "viem";
+import { encodeFunctionData, formatUnits, getAddress, parseUnits, type Address } from "viem";
 import { autopilotRebalancerAbi, erc20Abi, positionManagerAbi, swapRouter02Abi } from "./abi";
 import { createAutopilotExecutionPreview, type AutopilotExecutionPreview, type AutopilotExecutionPreviewOptions } from "./autopilot-execution-preview";
 import { autopilotExecutorAddress, createBaseClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS, TOKEN_META } from "./constants";
 import { priceFromTick, WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
+import { quoteBestExecutableSwap, type SwapQuoteRequest } from "./swap-quote";
 
 type TransactionIntent =
   | {
@@ -196,6 +197,10 @@ function rawAmountBigInt(amount: number, tokenAddress: string) {
   return BigInt(rawAmount(amount, tokenAddress));
 }
 
+function humanAmount(amount: bigint, tokenAddress: string) {
+  return Number(formatUnits(amount, tokenDecimals(tokenAddress)));
+}
+
 function intentSummary(intent: TransactionIntent) {
   if (intent.kind === "close_position") {
     return `Close position #${intent.tokenId} via ${intent.target}: ${intent.description}`;
@@ -280,8 +285,14 @@ function dataPreview(data: string) {
   return `${data.slice(0, 18)}...${data.slice(-8)}`;
 }
 
+function redactSensitiveRpcText(message: string) {
+  return message
+    .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
+    .replace(/https:\/\/[^/\s]+\/v2\/[A-Za-z0-9_-]+/g, "https://[rpc-redacted]/v2/[redacted]");
+}
+
 function shortError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
   if (message.includes("Status: 429") || message.toLowerCase().includes("too many requests")) {
     return "RPC rate limit while reading close position state.";
   }
@@ -936,6 +947,124 @@ function atomicMintAmounts(
   };
 }
 
+export function adjustedSwapAmountFromLiveClose(
+  preview: AutopilotExecutionPreview,
+  swapRequest: SwapQuoteRequest,
+  mintIntent: Extract<TransactionIntent, { kind: "mint_position" }>,
+  closeState: Extract<ClosePositionState, { status: "available" }>
+) {
+  const desired = mintDesiredAmounts(mintIntent, preview.pool);
+  if (!desired || closeState.decreaseAmount0 === undefined || closeState.decreaseAmount1 === undefined) return null;
+
+  const available0 = closeState.decreaseAmount0 + closeState.tokensOwed0;
+  const available1 = closeState.decreaseAmount1 + closeState.tokensOwed1;
+  const tokenIn = getAddress(swapRequest.tokenIn);
+  const weth = getAddress(CONTRACTS.weth);
+  const usdc = getAddress(CONTRACTS.usdc);
+  const desiredInputReserve = tokenIn === weth ? desired.amount0 : tokenIn === usdc ? desired.amount1 : null;
+  const availableInput = tokenIn === weth ? available0 : tokenIn === usdc ? available1 : null;
+  if (desiredInputReserve === null || availableInput === null) return null;
+
+  const originalAmountIn = rawAmountBigInt(swapRequest.amountIn, swapRequest.tokenIn);
+  const maxAmountIn = availableInput > desiredInputReserve ? availableInput - desiredInputReserve : 0n;
+  if (originalAmountIn <= maxAmountIn) return null;
+  if (maxAmountIn <= 0n) {
+    return {
+      status: "unavailable" as const,
+      reason: "Live close simulation no longer leaves excess input token for the planned swap."
+    };
+  }
+
+  const adjustedAmountIn = humanAmount(maxAmountIn, swapRequest.tokenIn);
+  if (!Number.isFinite(adjustedAmountIn) || adjustedAmountIn <= 0) {
+    return {
+      status: "unavailable" as const,
+      reason: "Live close simulation produced an unusable adjusted swap amount."
+    };
+  }
+
+  return {
+    status: "adjusted" as const,
+    request: {
+      ...swapRequest,
+      amountIn: adjustedAmountIn
+    },
+    originalAmountIn,
+    adjustedAmountIn: maxAmountIn
+  };
+}
+
+async function rebuildPreviewQuoteFromLiveClose(
+  preview: AutopilotExecutionPreview,
+  closePositions: Record<string, ClosePositionState>
+): Promise<AutopilotExecutionPreview> {
+  const closeStep = preview.steps.find((step) => step.type === "close" && step.tokenId);
+  const swapStep = preview.steps.find((step) => step.type === "partial_swap" && step.quoteRequest);
+  const mintStep = preview.steps.find((step) => step.type === "mint" && step.lowerTick !== undefined && step.upperTick !== undefined && step.budgetUsd !== undefined);
+  if (!closeStep?.tokenId || !swapStep?.quoteRequest || !mintStep) return preview;
+
+  const closeState = closePositions[closeStep.tokenId];
+  if (!closeState || closeState.status !== "available") return preview;
+  const swapQuoteRequest = swapStep.quoteRequest;
+
+  const mintIntent: Extract<TransactionIntent, { kind: "mint_position" }> = {
+    kind: "mint_position",
+    target: "Uniswap v3 NonfungiblePositionManager",
+    lowerTick: mintStep.lowerTick as number,
+    upperTick: mintStep.upperTick as number,
+    budgetUsd: mintStep.budgetUsd as number,
+    description: mintStep.detail
+  };
+  const adjustment = adjustedSwapAmountFromLiveClose(preview, swapQuoteRequest, mintIntent, closeState);
+  if (!adjustment) return preview;
+
+  if (adjustment.status === "unavailable") {
+    return {
+      ...preview,
+      quote: {
+        status: "unavailable",
+        request: swapQuoteRequest,
+        reason: adjustment.reason
+      }
+    };
+  }
+
+  try {
+    const quote = await quoteBestExecutableSwap(adjustment.request);
+    const oldAmount = humanAmount(adjustment.originalAmountIn, swapQuoteRequest.tokenIn);
+    const newAmount = humanAmount(adjustment.adjustedAmountIn, swapQuoteRequest.tokenIn);
+    return {
+      ...preview,
+      steps: preview.steps.map((step) =>
+        step === swapStep
+          ? {
+              ...step,
+              quoteRequest: adjustment.request,
+              detail: `${step.detail} Live close caps swap input from ${formatToken(oldAmount, swapQuoteRequest.spendSymbol)} to ${formatToken(newAmount, swapQuoteRequest.spendSymbol)}.`
+            }
+          : step
+      ),
+      quote: {
+        status: "available",
+        data: {
+          ...quote,
+          executionNote: `${quote.executionNote} Swap input was capped to the live close simulation so wallet leftovers are not spent.`
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      ...preview,
+      steps: preview.steps.map((step) => (step === swapStep ? { ...step, quoteRequest: adjustment.request } : step)),
+      quote: {
+        status: "unavailable",
+        request: adjustment.request,
+        reason: `Adjusted live-close quote failed: ${shortError(error)}`
+      }
+    };
+  }
+}
+
 function buildRebalancerRoleChecks(intents: TransactionIntent[], options: BuildExecutionOptions = {}) {
   const needsAtomicRebalancer =
     intents.some((intent) => intent.kind === "close_position") &&
@@ -1339,8 +1468,10 @@ export async function createAutopilotDryRunExecution(planId: string, options: Au
     fetchAllowance(CONTRACTS.usdc),
     createBaseClient().getGasPrice().catch(() => undefined)
   ]);
-  const execution = buildAutopilotDryRunExecution(preview, {
-    closePositions: Object.fromEntries(closeStates.map((state) => [state.tokenId, state])),
+  const closePositionsByTokenId = Object.fromEntries(closeStates.map((state) => [state.tokenId, state]));
+  const liveClosePreview = await rebuildPreviewQuoteFromLiveClose(preview, closePositionsByTokenId);
+  const execution = buildAutopilotDryRunExecution(liveClosePreview, {
+    closePositions: closePositionsByTokenId,
     nftApprovals: Object.fromEntries(nftApprovals.map((state) => [state.tokenId, state])),
     rebalancerRoles,
     gasPriceWei,

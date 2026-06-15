@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAutopilotDryRunExecution } from "@/lib/autopilot-executor";
+import { adjustedSwapAmountFromLiveClose, buildAutopilotDryRunExecution } from "@/lib/autopilot-executor";
 import { type AutopilotExecutionPreview } from "@/lib/autopilot-execution-preview";
 import { CONTRACTS } from "@/lib/constants";
 
@@ -162,6 +162,48 @@ function smallCapitalPreview(input: Partial<AutopilotExecutionPreview> = {}): Au
 }
 
 describe("buildAutopilotDryRunExecution", () => {
+  it("caps planned swap input to live close proceeds while preserving the desired input-token reserve", () => {
+    const adjustment = adjustedSwapAmountFromLiveClose(
+      preview({
+        pool: {
+          currentTick: -201900,
+          price: 1701.27
+        }
+      }),
+      {
+        tokenIn: CONTRACTS.weth,
+        tokenOut: CONTRACTS.usdc,
+        fee: 3000,
+        amountIn: 0.25939174048319963,
+        spendSymbol: "WETH",
+        receiveSymbol: "USDC"
+      },
+      {
+        kind: "mint_position",
+        target: "Uniswap v3 NonfungiblePositionManager",
+        lowerTick: -202080,
+        upperTick: -201840,
+        budgetUsd: 470.26,
+        description: "mint"
+      },
+      {
+        status: "available",
+        tokenId: "5332384",
+        liquidity: 952862612136224n,
+        tokensOwed0: 0n,
+        tokensOwed1: 0n,
+        decreaseAmount0: 240710227335520413n,
+        decreaseAmount1: 0n
+      }
+    );
+
+    expect(adjustment?.status).toBe("adjusted");
+    if (adjustment?.status !== "adjusted") throw new Error("expected adjusted live-close swap");
+    expect(adjustment.adjustedAmountIn).toBeLessThan(259391740483199629n);
+    expect(adjustment.adjustedAmountIn).toBeLessThanOrEqual(240710227335520413n);
+    expect(adjustment.request.amountIn).toBeCloseTo(Number(adjustment.adjustedAmountIn) / 1e18, 12);
+  });
+
   it("validates a ready preview with a required quote", () => {
     const execution = buildAutopilotDryRunExecution(preview(), {
       rebalancerRoles: {

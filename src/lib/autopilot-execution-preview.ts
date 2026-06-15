@@ -54,8 +54,14 @@ function statusIcon(ok: boolean) {
   return ok ? "OK" : "BLOCKED";
 }
 
+function redactSensitiveRpcText(message: string) {
+  return message
+    .replace(/https:\/\/base-mainnet\.g\.alchemy\.com\/v2\/[A-Za-z0-9_-]+/g, "https://base-mainnet.g.alchemy.com/v2/[redacted]")
+    .replace(/https:\/\/[^/\s]+\/v2\/[A-Za-z0-9_-]+/g, "https://[rpc-redacted]/v2/[redacted]");
+}
+
 function shortError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
   if (message.includes("Status: 429") || message.toLowerCase().includes("too many requests")) {
     return "RPC rate limit while requesting quote. Try approving again in a few minutes.";
   }

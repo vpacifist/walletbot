@@ -391,6 +391,57 @@ describe("sendAutopilotPlanAlert", () => {
     expect(vi.mocked(prisma.telegramEvent.create).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(syncWalletOnce).mock.invocationCallOrder[0]);
   });
 
+  it("silently skips a refreshed auto_guarded hold plan after a retryable preflight move", async () => {
+    vi.mocked(getOrCreatePendingAutopilotPlan)
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            mode: "auto_guarded"
+          }
+        }) as any
+      )
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            state: "idle",
+            mode: "auto_guarded",
+            title: "Small test range active",
+            telegramSummary: "Small test range active\nState: idle",
+            actions: [
+              {
+                type: "hold",
+                label: "Hold current in-range test range",
+                detail: "Current range -201840 - -201600 still contains price; do not recenter until breakout."
+              }
+            ]
+          }
+        }) as any
+      );
+    vi.mocked(broadcastAutopilotRebalance).mockResolvedValue({
+      success: false,
+      error: "Swap price moved beyond slippage tolerance"
+    });
+    const testBot = bot();
+
+    const result = await sendAutopilotPlanAlert(testBot as any);
+
+    expect(result).toEqual({ sent: 0, planId: "plan-1", skipped: "auto_guarded_no_executable_action" });
+    expect(recordAutopilotPlanDecision).toHaveBeenCalledTimes(1);
+    expect(createAutopilotDryRunExecution).toHaveBeenCalledTimes(1);
+    expect(broadcastAutopilotRebalance).toHaveBeenCalledTimes(1);
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      "Auto-guarded price moved during preflight. Rebuilding a fresh plan and quote..."
+    );
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalledWith("63853863", expect.stringContaining("Auto-guarded blocked"), expect.anything());
+    expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        alertType: "autopilot_plan",
+        dedupeKey: "autopilot-incident:small_capital_test:5199548:-200100:-199860:below_range"
+      })
+    });
+  });
+
   it("falls back to manual review when auto_guarded is runtime-paused", async () => {
     vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(true);
     vi.mocked(getOrCreatePendingAutopilotPlan).mockResolvedValue(

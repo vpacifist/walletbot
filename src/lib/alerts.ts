@@ -340,6 +340,17 @@ async function executeAutoGuardedPlanInner(
   const { TELEGRAM_CHAT_ID, BLOCKSCOUT_BASE_URL } = getConfig();
   if (!TELEGRAM_CHAT_ID) return { sent: 0, skipped: "telegram_not_configured" };
 
+  const hasExecutableAction = autopilotPlan.plan.actions.some((action) => action.type !== "hold" && action.type !== "wait");
+  if (!hasExecutableAction) {
+    await recordAutopilotPlanEvent({
+      dedupeKey,
+      plan: autopilotPlan.plan,
+      planId: autopilotPlan.record.id,
+      planKey: autopilotPlan.record.planKey
+    });
+    return { sent: 0, planId: autopilotPlan.record.id, skipped: "auto_guarded_no_executable_action" };
+  }
+
   const approved = await recordAutopilotPlanDecision(autopilotPlan.record.id, "approved");
   const autoExecutionOptions = { allowUncoveredDebt: true, allowEquivalentPlanFreshness: true, ...options };
   const execution = await createAutopilotDryRunExecution(approved.id, autoExecutionOptions);
