@@ -21,11 +21,13 @@ type ActiveRange = {
 };
 
 const SUSTAINED_BREAKOUT_WAIT_MS = 15 * 60 * 1000;
+const AUTO_GUARDED_TRANSIENT_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
 
 type PriceWatchState = {
   running: boolean;
   topUpRunning: boolean;
   lastTriggerKey: string | null;
+  retryAfter: { triggerKey: string; at: number; reason: string } | null;
   lastTopUpCheckAt: number;
 };
 
@@ -33,6 +35,7 @@ const state: PriceWatchState = {
   running: false,
   topUpRunning: false,
   lastTriggerKey: null,
+  retryAfter: null,
   lastTopUpCheckAt: 0
 };
 
@@ -126,6 +129,7 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const side = autopilotBreakoutSide(tick, range);
   if (!side) {
     state.lastTriggerKey = null;
+    state.retryAfter = null;
     await maybeCheckTopUpOpportunity(bot, tick);
     return { triggered: false, skipped: "inside_range", tick, tokenId: range.tokenId };
   }
@@ -135,6 +139,26 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   }
 
   const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;
+  const now = Date.now();
+  if (state.retryAfter?.triggerKey === triggerKey && now < state.retryAfter.at) {
+    return {
+      triggered: false,
+      skipped: "auto_guarded_retry_cooldown",
+      tick,
+      tokenId: range.tokenId,
+      side,
+      depthTicks,
+      retryAfterMs: state.retryAfter.at - now,
+      reason: state.retryAfter.reason
+    };
+  }
+  if (state.retryAfter?.triggerKey === triggerKey && now >= state.retryAfter.at) {
+    state.retryAfter = null;
+    state.lastTriggerKey = null;
+  }
+  if (state.retryAfter && state.retryAfter.triggerKey !== triggerKey) {
+    state.retryAfter = null;
+  }
   if (state.lastTriggerKey === triggerKey && !(await sustainedWaitExpired(range, side))) {
     return { triggered: false, skipped: "duplicate_fast_trigger", tick, tokenId: range.tokenId, side, depthTicks };
   }
@@ -166,8 +190,14 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   state.lastTriggerKey = triggerKey;
   try {
     const result = await sendAutopilotPlanAlert(bot);
-    if ("autoGuarded" in result && result.autoGuarded === "failed") {
-      state.lastTriggerKey = null;
+    if ("autoGuarded" in result && (result.autoGuarded === "failed" || result.autoGuarded === "blocked")) {
+      state.retryAfter = {
+        triggerKey,
+        at: Date.now() + AUTO_GUARDED_TRANSIENT_RETRY_COOLDOWN_MS,
+        reason: result.autoGuarded
+      };
+    } else if ("autoGuarded" in result && result.autoGuarded === "sent") {
+      state.retryAfter = null;
     }
     if ("skipped" in result && result.skipped === "duplicate_plan_key") {
       await bot.telegram.sendMessage(
@@ -236,5 +266,6 @@ export function resetAutopilotPriceWatchStateForTest() {
   state.running = false;
   state.topUpRunning = false;
   state.lastTriggerKey = null;
+  state.retryAfter = null;
   state.lastTopUpCheckAt = 0;
 }
