@@ -16,6 +16,7 @@ import { getWalletAssetSnapshot } from "./wallet-assets";
 const LOW_NATIVE_ETH_THRESHOLD_USD = 10;
 const SUSTAINED_BREAKOUT_DRIFT_TICKS = 30;
 const SUSTAINED_BREAKOUT_WAIT_MS = 15 * 60 * 1000;
+const AUTO_GUARDED_POST_CHECK_RETRY_DELAYS_MS = [3 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000];
 
 let autoGuardedExecutionRunning = false;
 
@@ -258,6 +259,31 @@ function buildAutoGuardedPostCheckSummary(plan: Awaited<ReturnType<typeof getOrC
     .join("\n");
 }
 
+function isBlockscoutTransactionFetchFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Blockscout transaction fetch failed/i.test(message);
+}
+
+function postCheckRetryDelayText(ms: number) {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  return `${minutes} min`;
+}
+
+function scheduleAutoGuardedPostCheckRetry(bot: Telegraf, txHash: string, attempt: number) {
+  const delayMs = AUTO_GUARDED_POST_CHECK_RETRY_DELAYS_MS[attempt - 1];
+  const timeout = setTimeout(() => {
+    void sendAutoGuardedPostCheck(bot, txHash, attempt).catch((error) => {
+      console.error("Auto-guarded post-check retry failed", error);
+    });
+  }, delayMs);
+
+  if (typeof timeout === "object" && "unref" in timeout && typeof timeout.unref === "function") {
+    timeout.unref();
+  }
+
+  return delayMs;
+}
+
 function checkText(execution: { checks: Array<{ label: string; detail: string }> }, label: string) {
   return execution.checks.find((check) => check.label === label)?.detail;
 }
@@ -281,7 +307,7 @@ function autoGuardedBlockedMessage(planId: string, summary: string, reasons: str
   ].join("\n");
 }
 
-async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
+async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string, attempt = 0) {
   const { TELEGRAM_CHAT_ID } = getConfig();
   if (!TELEGRAM_CHAT_ID) return;
 
@@ -291,6 +317,28 @@ async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string) {
     await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, buildAutoGuardedPostCheckSummary(postCheck.plan, txHash));
     await sendTopUpOpportunityAlert(bot, postCheck.plan.pool.currentTick);
   } catch (error) {
+    if (isBlockscoutTransactionFetchFailure(error)) {
+      const nextAttempt = attempt + 1;
+      const retryDelayMs =
+        nextAttempt <= AUTO_GUARDED_POST_CHECK_RETRY_DELAYS_MS.length
+          ? scheduleAutoGuardedPostCheckRetry(bot, txHash, nextAttempt)
+          : null;
+
+      await bot.telegram.sendMessage(
+        TELEGRAM_CHAT_ID,
+        [
+          retryDelayMs ? "Auto-guarded post-check delayed" : "Auto-guarded post-check still waiting",
+          `Tx: ${shortAddress(txHash)}`,
+          "The transaction was sent successfully; Blockscout indexing is temporarily unavailable.",
+          error instanceof Error ? error.message : "Blockscout transaction fetch failed.",
+          retryDelayMs
+            ? `Retry: in ${postCheckRetryDelayText(retryDelayMs)} (${nextAttempt}/${AUTO_GUARDED_POST_CHECK_RETRY_DELAYS_MS.length})`
+            : "Retries exhausted. Use /autopilot after Blockscout recovers to refresh manually."
+        ].join("\n")
+      );
+      return;
+    }
+
     await bot.telegram.sendMessage(
       TELEGRAM_CHAT_ID,
       [

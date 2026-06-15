@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
 import { isOutOfRange, retryCurrentAutopilotIncident, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
@@ -133,6 +133,11 @@ describe("sendAutopilotPlanAlert", () => {
       telegramSummary: "Executor dry run\nStatus: validated"
     } as any);
     vi.mocked(broadcastAutopilotRebalance).mockResolvedValue({ success: true, txHash: "0xabc" });
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("sends a new executable autopilot plan without waiting for /autopilot", async () => {
@@ -389,6 +394,79 @@ describe("sendAutopilotPlanAlert", () => {
       })
     });
     expect(vi.mocked(prisma.telegramEvent.create).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(syncWalletOnce).mock.invocationCallOrder[0]);
+  });
+
+  it("delays and retries auto-guarded post-check when Blockscout is temporarily unavailable", async () => {
+    vi.useFakeTimers();
+    vi.mocked(syncWalletOnce)
+      .mockRejectedValueOnce(new Error("Blockscout transaction fetch failed: 500 "))
+      .mockResolvedValue({ transactionsSeen: 1, positionsSeen: 1, toBlock: 1n } as any);
+    vi.mocked(getOrCreatePendingAutopilotPlan)
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            mode: "auto_guarded"
+          }
+        }) as any
+      )
+      .mockResolvedValueOnce(
+        planRecord({
+          plan: {
+            state: "idle",
+            mode: "auto_guarded",
+            title: "Small test range active",
+            pool: { currentTick: -201081, price: 1851.82 },
+            economics: {
+              reversalDebtUsd: 1.3,
+              feeCreditUsd: 0,
+              uncoveredReversalDebtUsd: 1.3,
+              lastDirectionalSwap: null
+            },
+            ladder: [
+              {
+                role: "active",
+                tokenId: "5246424",
+                range: "-201240 - -201000",
+                lowerTick: -201240,
+                upperTick: -201000,
+                lowerPrice: 1822.61,
+                upperPrice: 1866.88,
+                status: "ok",
+                plannedAction: "Keep current 240-tick test range until breakout"
+              }
+            ],
+            actions: [{ type: "hold", label: "Hold single test range" }]
+          }
+        }) as any
+      );
+    const testBot = bot();
+
+    await sendAutopilotPlanAlert(testBot as any);
+
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded post-check delayed")
+    );
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Retry: in 3 min (1/3)")
+    );
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded post-check failed")
+    );
+
+    await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
+
+    expect(syncWalletOnce).toHaveBeenCalledTimes(2);
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded post-check")
+    );
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Active range: #5246424 -201240 - -201000")
+    );
   });
 
   it("silently skips a refreshed auto_guarded hold plan after a retryable preflight move", async () => {
