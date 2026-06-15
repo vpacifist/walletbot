@@ -1,12 +1,16 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
+import { positionManagerAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
+import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
+import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { WETH_USDC_NARROW_FEE } from "./narrow-range-rebalance";
+import { refreshTrackedPositionsForWallet } from "./positions";
 import { readWethUsdcPoolTick } from "./weth-usdc-pool";
 
 type ActiveRange = {
@@ -65,6 +69,18 @@ export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {
   };
 }
 
+async function rangeHasLiveLiquidity(tokenId: string) {
+  const client = createBaseClient();
+  const position = await client.readContract({
+    address: CONTRACTS.nonfungiblePositionManager,
+    abi: positionManagerAbi,
+    functionName: "positions",
+    args: [BigInt(tokenId)]
+  });
+
+  return position[7] > 0n;
+}
+
 export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const config = getConfig();
   if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
@@ -83,6 +99,12 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const depthTicks = autopilotBreakoutDepthTicks(tick, range);
   if (depthTicks < config.AUTOPILOT_PRICE_WATCH_MIN_BREAKOUT_TICKS) {
     return { triggered: false, skipped: "micro_breakout", tick, tokenId: range.tokenId, side, depthTicks };
+  }
+
+  if (!(await rangeHasLiveLiquidity(range.tokenId))) {
+    state.lastTriggerKey = null;
+    await refreshTrackedPositionsForWallet([range.tokenId]);
+    return { triggered: false, skipped: "stale_closed_position", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
   const triggerKey = `${range.tokenId}:${range.lowerTick}:${range.upperTick}:${side}`;

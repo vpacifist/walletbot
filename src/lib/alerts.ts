@@ -1,15 +1,19 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { Telegraf } from "telegraf";
-import { getAddress } from "viem";
+import { getAddress, parseEventLogs, zeroAddress } from "viem";
+import { positionManagerAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
 import { isAutopilotRuntimePaused } from "./autopilot-pause";
 import { getOrCreatePendingAutopilotPlan, recordAutopilotPlanDecision } from "./autopilot-service";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
+import { createBaseClient } from "./chain";
 import { getConfig } from "./config";
+import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
 import { formatNumber, shortAddress } from "./format";
+import { refreshTrackedPositionsForWallet } from "./positions";
 import { syncWalletOnce } from "./sync";
 import { getWalletAssetSnapshot } from "./wallet-assets";
 
@@ -284,6 +288,36 @@ function scheduleAutoGuardedPostCheckRetry(bot: Telegraf, txHash: string, attemp
   return delayMs;
 }
 
+async function refreshAutoGuardedPositionsFromTx(txHash: string) {
+  const client = createBaseClient();
+  const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+  const positionManagerLogs = receipt.logs.filter((log) => log.address.toLowerCase() === CONTRACTS.nonfungiblePositionManager.toLowerCase());
+  const events = parseEventLogs({
+    abi: positionManagerAbi,
+    logs: positionManagerLogs,
+    strict: false
+  });
+  const tokenIds = new Set<string>();
+
+  for (const event of events) {
+    const tokenId = event.args.tokenId;
+    if (tokenId === undefined) continue;
+
+    if (event.eventName === "Transfer" && event.args.from?.toLowerCase() === zeroAddress) {
+      tokenIds.add(tokenId.toString());
+    }
+    if (event.eventName === "DecreaseLiquidity") {
+      tokenIds.add(tokenId.toString());
+    }
+    if (event.eventName === "IncreaseLiquidity") {
+      tokenIds.add(tokenId.toString());
+    }
+  }
+
+  if (tokenIds.size === 0) return [];
+  return refreshTrackedPositionsForWallet([...tokenIds]);
+}
+
 function checkText(execution: { checks: Array<{ label: string; detail: string }> }, label: string) {
   return execution.checks.find((check) => check.label === label)?.detail;
 }
@@ -433,6 +467,9 @@ async function executeAutoGuardedPlanInner(
       plan: autopilotPlan.plan,
       planId: approved.id,
       planKey: approved.planKey
+    });
+    await refreshAutoGuardedPositionsFromTx(result.txHash).catch((error) => {
+      console.error("Auto-guarded RPC position refresh failed", error);
     });
     await sendAutoGuardedPostCheck(bot, result.txHash);
     return { sent: 1, planId: approved.id, autoGuarded: "sent", txHash: result.txHash };

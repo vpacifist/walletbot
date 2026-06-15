@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
+import { encodeEventTopics, zeroAddress } from "viem";
 import { isOutOfRange, retryCurrentAutopilotIncident, sendAutopilotPlanAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
 import { broadcastAutopilotRebalance } from "@/lib/autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "@/lib/autopilot-executor";
@@ -8,7 +9,10 @@ import { isAutopilotRuntimePaused } from "@/lib/autopilot-pause";
 import { getOrCreatePendingAutopilotPlan } from "@/lib/autopilot-service";
 import { recordAutopilotPlanDecision } from "@/lib/autopilot-service";
 import { sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
+import { createBaseClient } from "@/lib/chain";
+import { CONTRACTS } from "@/lib/constants";
 import { prisma } from "@/lib/db";
+import { refreshTrackedPositionsForWallet } from "@/lib/positions";
 import { syncWalletOnce } from "@/lib/sync";
 
 vi.mock("@/lib/config", () => {
@@ -50,6 +54,18 @@ vi.mock("@/lib/autopilot-top-up", () => {
 vi.mock("@/lib/autopilot-pause", () => {
   return {
     isAutopilotRuntimePaused: vi.fn()
+  };
+});
+
+vi.mock("@/lib/chain", () => {
+  return {
+    createBaseClient: vi.fn()
+  };
+});
+
+vi.mock("@/lib/positions", () => {
+  return {
+    refreshTrackedPositionsForWallet: vi.fn()
   };
 });
 
@@ -125,6 +141,10 @@ describe("sendAutopilotPlanAlert", () => {
     vi.mocked(isAutopilotRuntimePaused).mockResolvedValue(false);
     vi.mocked(recordAutopilotPlanDecision).mockImplementation(async (id) => ({ ...planRecord().record, id, status: "approved" }) as any);
     vi.mocked(syncWalletOnce).mockResolvedValue({ transactionsSeen: 1, positionsSeen: 1, toBlock: 1n } as any);
+    vi.mocked(createBaseClient).mockReturnValue({
+      getTransactionReceipt: vi.fn().mockResolvedValue({ logs: [] })
+    } as any);
+    vi.mocked(refreshTrackedPositionsForWallet).mockResolvedValue([]);
     vi.mocked(sendTopUpOpportunityAlert).mockResolvedValue({ sent: 0, skipped: "insufficient_balanced_leftovers" });
     vi.mocked(createAutopilotDryRunExecution).mockResolvedValue({
       status: "validated",
@@ -315,6 +335,36 @@ describe("sendAutopilotPlanAlert", () => {
   });
 
   it("auto-executes auto_guarded plans with uncovered debt accepted", async () => {
+    const mintedTokenId = 5337936n;
+    vi.mocked(createBaseClient).mockReturnValue({
+      getTransactionReceipt: vi.fn().mockResolvedValue({
+        logs: [
+          {
+            address: CONTRACTS.nonfungiblePositionManager,
+            topics: encodeEventTopics({
+              abi: [
+                {
+                  type: "event",
+                  name: "Transfer",
+                  inputs: [
+                    { indexed: true, name: "from", type: "address" },
+                    { indexed: true, name: "to", type: "address" },
+                    { indexed: true, name: "tokenId", type: "uint256" }
+                  ]
+                }
+              ],
+              eventName: "Transfer",
+              args: {
+                from: zeroAddress,
+                to: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057",
+                tokenId: mintedTokenId
+              }
+            }),
+            data: "0x"
+          }
+        ]
+      })
+    } as any);
     vi.mocked(getOrCreatePendingAutopilotPlan)
       .mockResolvedValueOnce(
         planRecord({
@@ -387,6 +437,7 @@ describe("sendAutopilotPlanAlert", () => {
       expect.stringContaining("Active range: #5246424 -201240 - -201000")
     );
     expect(sendTopUpOpportunityAlert).toHaveBeenCalledWith(testBot, -201081);
+    expect(refreshTrackedPositionsForWallet).toHaveBeenCalledWith([mintedTokenId.toString()]);
     expect(prisma.telegramEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         alertType: "autopilot_plan",

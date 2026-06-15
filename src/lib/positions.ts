@@ -4,6 +4,7 @@ import { erc721OwnerAbi, factoryAbi, poolAbi, positionManagerAbi } from "./abi";
 import { createBaseClient } from "./chain";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
+import { getConfig } from "./config";
 import { getPositionTokenAmounts } from "./uniswap-v3-position";
 
 function tokenPairIsWethUsdc(token0: string, token1: string) {
@@ -156,4 +157,12 @@ export async function upsertTrackedPositions(walletId: string, walletAddress: Ad
   }
 
   return positions;
+}
+
+export async function refreshTrackedPositionsForWallet(extraTokenIds: string[] = []) {
+  const walletAddress = getAddress(getConfig().BASE_WALLET_ADDRESS);
+  const wallet = await prisma.wallet.findUnique({ where: { address: walletAddress } });
+  if (!wallet) return [];
+
+  return upsertTrackedPositions(wallet.id, walletAddress, extraTokenIds);
 }

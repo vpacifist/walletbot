@@ -6,6 +6,7 @@ import { sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
 import { sendAutopilotPlanAlert } from "@/lib/alerts";
 import { createBaseClient } from "@/lib/chain";
 import { prisma } from "@/lib/db";
+import { refreshTrackedPositionsForWallet } from "@/lib/positions";
 
 let autopilotMode = "auto_guarded";
 
@@ -45,6 +46,12 @@ vi.mock("@/lib/autopilot-top-up", () => {
   };
 });
 
+vi.mock("@/lib/positions", () => {
+  return {
+    refreshTrackedPositionsForWallet: vi.fn()
+  };
+});
+
 vi.mock("@/lib/db", () => {
   return {
     prisma: {
@@ -70,6 +77,17 @@ function mockPoolTick(tick: number) {
   vi.mocked(createBaseClient).mockReturnValue({
     readContract: vi.fn().mockImplementation((params) => {
       if (params.functionName === "slot0") return Promise.resolve([0n, tick]);
+      if (params.functionName === "positions") return Promise.resolve([0n, "0x0", "0x0", "0x0", 3000, -201600, -201360, 1n]);
+      return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
+    })
+  } as any);
+}
+
+function mockPoolTickWithClosedPosition(tick: number) {
+  vi.mocked(createBaseClient).mockReturnValue({
+    readContract: vi.fn().mockImplementation((params) => {
+      if (params.functionName === "slot0") return Promise.resolve([0n, tick]);
+      if (params.functionName === "positions") return Promise.resolve([0n, "0x0", "0x0", "0x0", 3000, -201600, -201360, 0n]);
       return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
     })
   } as any);
@@ -95,6 +113,7 @@ describe("checkAutopilotPriceBoundary", () => {
     mockActiveRange();
     vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 1, planId: "plan-1" } as any);
     vi.mocked(sendTopUpOpportunityAlert).mockResolvedValue({ sent: 0, skipped: "below_minimum_value" } as any);
+    vi.mocked(refreshTrackedPositionsForWallet).mockResolvedValue([]);
   });
 
   it("does nothing while the live tick is inside the active range", async () => {
@@ -139,6 +158,18 @@ describe("checkAutopilotPriceBoundary", () => {
     expect(result).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
     expect(sendAutopilotPlanAlert).toHaveBeenCalledWith(testBot);
+  });
+
+  it("refreshes positions and skips stale closed ranges before triggering", async () => {
+    mockPoolTickWithClosedPosition(-201605);
+    const testBot = bot();
+
+    const result = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(result).toMatchObject({ triggered: false, skipped: "stale_closed_position", tick: -201605, tokenId: "5257034" });
+    expect(refreshTrackedPositionsForWallet).toHaveBeenCalledWith(["5257034"]);
+    expect(sendAutopilotPlanAlert).not.toHaveBeenCalled();
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 
   it("does not repeatedly trigger the same out-of-range incident", async () => {
