@@ -1,4 +1,4 @@
-import { PositionStatus, Prisma, SyncRunStatus } from "@/generated/prisma/client";
+import { Prisma, SyncRunStatus } from "@/generated/prisma/client";
 import { createPublicClient, getAddress, http, type Address } from "viem";
 import { base } from "viem/chains";
 import { fetchWalletTransactions } from "./blockscout";
@@ -196,10 +196,7 @@ export async function syncWalletOnce(options: SyncWalletOptions = {}) {
     }
 
     const trackedPositions = await prisma.position.findMany({
-      where: {
-        walletId: wallet.id,
-        status: { not: PositionStatus.closed_or_zero_liquidity }
-      },
+      where: { walletId: wallet.id },
       select: { tokenId: true }
     });
     for (const position of trackedPositions) {

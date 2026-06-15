@@ -136,10 +136,7 @@ describe("syncWalletOnce", () => {
     const result = await syncWalletOnce();
 
     expect(mocks.prisma.position.findMany).toHaveBeenCalledWith({
-      where: {
-        walletId: "wallet-1",
-        status: { not: "closed_or_zero_liquidity" }
-      },
+      where: { walletId: "wallet-1" },
       select: { tokenId: true }
     });
     expect(mocks.upsertTrackedPositions).toHaveBeenCalledWith("wallet-1", walletAddress, ["5332384"]);
