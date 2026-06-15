@@ -84,6 +84,7 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
     const totalUsd = portfolioTotalUsd(row, rowPrices);
     const portfolioTotal = totalUsd === undefined ? null : totalUsd;
     const isCashFlow = row.type === "deposit" || row.type === "withdrawal";
+    const isPortfolioRestructure = isCashFlow || row.type.startsWith("lp_");
 
     if (baseWethPrice === null && wethPriceUsd !== null && wethPriceUsd > 0) {
       baseWethPrice = wethPriceUsd;
@@ -92,7 +93,7 @@ export function cashFlowNeutralGrowthSeries(rows: PerformanceTransaction[], pric
     if (portfolioTotal !== null && portfolioTotal > 0) {
       if (previousPortfolioTotal === null || previousPortfolioTotal <= 0) {
         previousPortfolioTotal = portfolioTotal;
-      } else if (!isCashFlow) {
+      } else if (!isPortfolioRestructure) {
         portfolioIndex *= portfolioTotal / previousPortfolioTotal;
         previousPortfolioTotal = portfolioTotal;
       } else {
