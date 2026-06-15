@@ -447,11 +447,8 @@ describe("sendAutopilotPlanAlert", () => {
     expect(vi.mocked(prisma.telegramEvent.create).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(syncWalletOnce).mock.invocationCallOrder[0]);
   });
 
-  it("delays and retries auto-guarded post-check when Blockscout is temporarily unavailable", async () => {
-    vi.useFakeTimers();
-    vi.mocked(syncWalletOnce)
-      .mockRejectedValueOnce(new Error("Blockscout transaction fetch failed: 500 "))
-      .mockResolvedValue({ transactionsSeen: 1, positionsSeen: 1, toBlock: 1n } as any);
+  it("sends RPC-backed auto-guarded post-check when Blockscout is temporarily unavailable", async () => {
+    vi.mocked(syncWalletOnce).mockRejectedValueOnce(new Error("Blockscout transaction fetch failed: 500 "));
     vi.mocked(getOrCreatePendingAutopilotPlan)
       .mockResolvedValueOnce(
         planRecord({
@@ -496,28 +493,21 @@ describe("sendAutopilotPlanAlert", () => {
 
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
-      expect.stringContaining("Auto-guarded post-check delayed")
-    );
-    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
-      "63853863",
-      expect.stringContaining("Retry: in 3 min (1/3)")
-    );
-    expect(testBot.telegram.sendMessage).not.toHaveBeenCalledWith(
-      "63853863",
-      expect.stringContaining("Auto-guarded post-check failed")
-    );
-
-    await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
-
-    expect(syncWalletOnce).toHaveBeenCalledTimes(2);
-    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
-      "63853863",
       expect.stringContaining("Auto-guarded post-check")
     );
     expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
       "63853863",
       expect.stringContaining("Active range: #5246424 -201240 - -201000")
     );
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("Auto-guarded post-check delayed")
+    );
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledWith(
+      "63853863",
+      expect.stringContaining("History sync: delayed (Blockscout unavailable)")
+    );
+    expect(syncWalletOnce).toHaveBeenCalledTimes(1);
   });
 
   it("silently skips a refreshed auto_guarded hold plan after a retryable preflight move", async () => {

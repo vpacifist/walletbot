@@ -3,6 +3,7 @@ import { startAutopilotPriceWatch } from "@/lib/autopilot-price-watch";
 import { sendTopUpAlert } from "@/lib/autopilot-top-up";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
+import { refreshTrackedPositionsForWallet } from "@/lib/positions";
 import { syncWalletOnce } from "@/lib/sync";
 import { createBot } from "./bot";
 
@@ -73,13 +74,17 @@ async function main() {
 
   const run = async () => {
     try {
+      const refreshedPositions = await refreshTrackedPositionsForWallet().catch((error) => {
+        console.error("RPC position refresh failed", error);
+        return [];
+      });
       const result = await syncWalletOnce();
       if (bot) {
         const autopilotAlert = await sendAutopilotPlanAlert(bot);
         const rangeAlerts = await sendOutOfRangeAlerts(bot);
         console.log("alert checks complete", { autopilotAlert, rangeAlerts });
       }
-      console.log("sync complete", result);
+      console.log("sync complete", { ...result, rpcPositionsRefreshed: refreshedPositions.length });
     } catch (error) {
       console.error("sync failed", error);
     }

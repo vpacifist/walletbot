@@ -1,7 +1,7 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { Telegraf } from "telegraf";
 import { getAddress, parseEventLogs, zeroAddress } from "viem";
-import { positionManagerAbi } from "./abi";
+import { autopilotRebalancerAbi, positionManagerAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { broadcastAutopilotRebalance, type AutopilotBroadcastOptions, type AutopilotBroadcastResult } from "./autopilot-broadcaster";
 import { createAutopilotDryRunExecution } from "./autopilot-executor";
@@ -240,7 +240,11 @@ function formatPriceRange(lowerPrice: number | null, upperPrice: number | null) 
   return `${formatUsd(lowerPrice)} - ${formatUsd(upperPrice)}`;
 }
 
-function buildAutoGuardedPostCheckSummary(plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"], txHash: string) {
+function buildAutoGuardedPostCheckSummary(
+  plan: Awaited<ReturnType<typeof getOrCreatePendingAutopilotPlan>>["plan"],
+  txHash: string,
+  syncWarning?: string
+) {
   const active = plan.ladder.find((segment) => segment.role === "active");
   const primaryAction = plan.actions[0];
   const lastSwap = plan.economics.lastDirectionalSwap;
@@ -257,6 +261,7 @@ function buildAutoGuardedPostCheckSummary(plan: Awaited<ReturnType<typeof getOrC
     `Fee credit: ${formatUsd(plan.economics.feeCreditUsd)}`,
     `Uncovered debt: ${formatUsd(plan.economics.uncoveredReversalDebtUsd)}`,
     lastSwap ? `Last directional swap: ${lastSwap.side === "sell_weth" ? "Sold WETH" : "Bought WETH"} @ ${formatUsd(lastSwap.effectivePrice)}` : undefined,
+    syncWarning ? `History sync: delayed (${syncWarning})` : undefined,
     `Tx: ${shortAddress(txHash)}`
   ]
     .filter(Boolean)
@@ -291,15 +296,30 @@ function scheduleAutoGuardedPostCheckRetry(bot: Telegraf, txHash: string, attemp
 async function refreshAutoGuardedPositionsFromTx(txHash: string) {
   const client = createBaseClient();
   const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+  const configuredRebalancer = getConfig().AUTOPILOT_REBALANCER_ADDRESS;
+  const rebalancerAddress = configuredRebalancer ? getAddress(configuredRebalancer) : null;
+  const rebalancerLogs = rebalancerAddress ? receipt.logs.filter((log) => log.address.toLowerCase() === rebalancerAddress.toLowerCase()) : [];
   const positionManagerLogs = receipt.logs.filter((log) => log.address.toLowerCase() === CONTRACTS.nonfungiblePositionManager.toLowerCase());
-  const events = parseEventLogs({
+  const rebalancerEvents = parseEventLogs({
+    abi: autopilotRebalancerAbi,
+    logs: rebalancerLogs,
+    strict: false
+  });
+  const positionEvents = parseEventLogs({
     abi: positionManagerAbi,
     logs: positionManagerLogs,
     strict: false
   });
   const tokenIds = new Set<string>();
 
-  for (const event of events) {
+  for (const event of rebalancerEvents) {
+    if (event.eventName !== "Rebalanced") continue;
+    if (event.args.closedTokenId === undefined || event.args.mintedTokenId === undefined) continue;
+    tokenIds.add(event.args.closedTokenId.toString());
+    tokenIds.add(event.args.mintedTokenId.toString());
+  }
+
+  for (const event of positionEvents) {
     const tokenId = event.args.tokenId;
     if (tokenId === undefined) continue;
 
@@ -346,9 +366,17 @@ async function sendAutoGuardedPostCheck(bot: Telegraf, txHash: string, attempt =
   if (!TELEGRAM_CHAT_ID) return;
 
   try {
-    await syncWalletOnce();
+    await refreshAutoGuardedPositionsFromTx(txHash);
+    let syncWarning: string | undefined;
+    try {
+      await syncWalletOnce();
+    } catch (error) {
+      if (!isBlockscoutTransactionFetchFailure(error)) throw error;
+      syncWarning = "Blockscout unavailable";
+      console.warn("Auto-guarded post-check history sync delayed", error instanceof Error ? error.message : error);
+    }
     const postCheck = await getOrCreatePendingAutopilotPlan({ telegramChatId: TELEGRAM_CHAT_ID });
-    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, buildAutoGuardedPostCheckSummary(postCheck.plan, txHash));
+    await bot.telegram.sendMessage(TELEGRAM_CHAT_ID, buildAutoGuardedPostCheckSummary(postCheck.plan, txHash, syncWarning));
     await sendTopUpOpportunityAlert(bot, postCheck.plan.pool.currentTick);
   } catch (error) {
     if (isBlockscoutTransactionFetchFailure(error)) {
