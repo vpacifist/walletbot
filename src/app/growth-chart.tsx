@@ -94,12 +94,17 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
   const [prices, setPrices] = useState(initialPrices);
   const [activePointIndex, setActivePointIndex] = useState<number | null>(null);
   const blockNumbers = useMemo(() => [...new Set(rows.map((row) => row.blockNumber))], [rows]);
+  const missingBlockNumbers = useMemo(
+    () =>
+      blockNumbers.filter((blockNumber) => {
+        const blockPrices = prices[blockNumber];
+        return blockPrices?.ethPriceUsd === undefined || blockPrices?.aeroPriceUsd === undefined;
+      }),
+    [blockNumbers, prices]
+  );
+  const isLoadingHistoricalPrices = missingBlockNumbers.length > 0;
 
   useEffect(() => {
-    const missingBlockNumbers = blockNumbers.filter((blockNumber) => {
-      const blockPrices = prices[blockNumber];
-      return blockPrices?.ethPriceUsd === undefined || blockPrices?.aeroPriceUsd === undefined;
-    });
     if (missingBlockNumbers.length === 0) return;
 
     const controller = new AbortController();
@@ -121,10 +126,12 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
       });
 
     return () => controller.abort();
-  }, [blockNumbers, prices]);
+  }, [missingBlockNumbers]);
 
   const points = useMemo(() => cashFlowNeutralGrowthSeries(rows, prices), [rows, prices]);
-  const chartPoints = points.filter((point) => point.portfolioGrowthPercent !== null || point.wethGrowthPercent !== null);
+  const chartPoints = isLoadingHistoricalPrices
+    ? []
+    : points.filter((point) => point.portfolioGrowthPercent !== null || point.wethGrowthPercent !== null);
   const portfolioValues = chartPoints.map((point) => point.portfolioGrowthPercent);
   const wethValues = chartPoints.map((point) => point.wethGrowthPercent);
   const comparisonValues = chartPoints.map((point) =>
@@ -203,35 +210,41 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         <div className="hero-metric">
           <p className="metric-label">Portfolio growth</p>
           <strong className={latestPortfolioGrowth !== null && latestPortfolioGrowth < 0 ? "negative-text" : ""}>
-            {formatPercent(latestPortfolioGrowth)}
+            {isLoadingHistoricalPrices ? "-" : formatPercent(latestPortfolioGrowth)}
           </strong>
           <span>
-            {portfolioComparison === null ? "cash-flow neutral" : `${formatPercentagePoints(portfolioComparison)} vs WETH`}
+            {isLoadingHistoricalPrices
+              ? `loading ${missingBlockNumbers.length} price${missingBlockNumbers.length === 1 ? "" : "s"}`
+              : portfolioComparison === null
+                ? "cash-flow neutral"
+                : `${formatPercentagePoints(portfolioComparison)} vs WETH`}
           </span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">WETH growth</p>
           <strong className={latestWethGrowth !== null && latestWethGrowth < 0 ? "negative-text" : ""}>
-            {formatPercent(latestWethGrowth)}
+            {isLoadingHistoricalPrices ? "-" : formatPercent(latestWethGrowth)}
           </strong>
           <span>same start block</span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">Current portfolio</p>
-          <strong>{formatUsd(latestPoint?.portfolioTotalUsd ?? null)}</strong>
+          <strong>{isLoadingHistoricalPrices ? "-" : formatUsd(latestPoint?.portfolioTotalUsd ?? null)}</strong>
           <span>{cashFlowCount} deposits/withdrawals neutralized</span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">Portfolio vs WETH</p>
           <strong className={latestComparison !== null && latestComparison < 0 ? "negative-text" : ""}>
-            {formatPercentagePoints(latestComparison)}
+            {isLoadingHistoricalPrices ? "-" : formatPercentagePoints(latestComparison)}
           </strong>
           <span>percentage-point spread</span>
         </div>
       </div>
 
       <div className="chart-frame">
-        {chartPoints.length < 2 || allValues.length === 0 ? (
+        {isLoadingHistoricalPrices ? (
+          <div className="chart-empty">Loading historical prices before drawing growth.</div>
+        ) : chartPoints.length < 2 || allValues.length === 0 ? (
           <div className="chart-empty">Need at least two priced transactions to draw growth.</div>
         ) : (
           <svg
