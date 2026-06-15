@@ -201,7 +201,7 @@ async function maybeWaitForSustainedBreakout(
     return { status: "waiting" as const, sent: 0, depthTicks: breakout.depthTicks, waitRemainingMs };
   }
 
-  return { status: "execute" as const, allowBoundaryDrift: true, depthTicks: breakout.depthTicks };
+  return { status: "execute" as const, allowBoundaryDrift: true, depthTicks: breakout.depthTicks, fromSustainedWait: true };
 }
 
 async function recordAutopilotPlanEvent(input: {
@@ -658,6 +658,27 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   const dedupeKey = autopilotIncidentDedupeKey(autopilotPlan.plan, autopilotPlan.record.planKey);
   const existing = await prisma.telegramEvent.findUnique({ where: { dedupeKey } });
   if (existing) {
+    if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused) {
+      const sustained = await maybeWaitForSustainedBreakout(bot, autopilotPlan, dedupeKey);
+      if (sustained.status === "waiting") {
+        return {
+          sent: sustained.sent,
+          planId: autopilotPlan.record.id,
+          autoGuarded: "sustained_wait",
+          depthTicks: sustained.depthTicks,
+          waitRemainingMs: sustained.waitRemainingMs
+        };
+      }
+      if (sustained.fromSustainedWait) {
+        await prisma.telegramEvent.deleteMany({
+          where: {
+            alertType: "autopilot_plan",
+            dedupeKey
+          }
+        });
+        return executeAutoGuardedPlan(bot, autopilotPlan, dedupeKey, false, { allowBoundaryDrift: true });
+      }
+    }
     if (autopilotPlan.plan.mode === "auto_guarded" && !runtimePaused && autoGuardedDedupeExpired(existing.sentAt)) {
       await prisma.telegramEvent.deleteMany({
         where: {
