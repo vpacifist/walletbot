@@ -149,6 +149,8 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
   const latestPortfolioPoint = latestFinitePoint(chartPoints, "portfolioGrowthPercent");
   const latestWethPoint = latestFinitePoint(chartPoints, "wethGrowthPercent");
   const latestComparisonPoint = latestFinitePoint(chartPoints, "portfolioVsWethPercentagePoints");
+  const isWaitingForCompletePortfolio = !isLoadingHistoricalPrices && chartPoints.length > 0 && latestPoint?.portfolioTotalUsd === null;
+  const isChartPending = isLoadingHistoricalPrices || isWaitingForCompletePortfolio;
   const cashFlowCount = points.filter((point) => point.isCashFlow).length;
   const minValue = Math.min(0, ...allValues);
   const maxValue = Math.max(0, ...allValues);
@@ -210,11 +212,13 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         <div className="hero-metric">
           <p className="metric-label">Portfolio growth</p>
           <strong className={latestPortfolioGrowth !== null && latestPortfolioGrowth < 0 ? "negative-text" : ""}>
-            {isLoadingHistoricalPrices ? "-" : formatPercent(latestPortfolioGrowth)}
+            {isChartPending ? "-" : formatPercent(latestPortfolioGrowth)}
           </strong>
           <span>
             {isLoadingHistoricalPrices
               ? `loading ${missingBlockNumbers.length} price${missingBlockNumbers.length === 1 ? "" : "s"}`
+              : isWaitingForCompletePortfolio
+                ? "loading portfolio value"
               : portfolioComparison === null
                 ? "cash-flow neutral"
                 : `${formatPercentagePoints(portfolioComparison)} vs WETH`}
@@ -223,19 +227,19 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
         <div className="hero-metric">
           <p className="metric-label">WETH growth</p>
           <strong className={latestWethGrowth !== null && latestWethGrowth < 0 ? "negative-text" : ""}>
-            {isLoadingHistoricalPrices ? "-" : formatPercent(latestWethGrowth)}
+            {isChartPending ? "-" : formatPercent(latestWethGrowth)}
           </strong>
           <span>same start block</span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">Current portfolio</p>
-          <strong>{isLoadingHistoricalPrices ? "-" : formatUsd(latestPoint?.portfolioTotalUsd ?? null)}</strong>
+          <strong>{isChartPending ? "-" : formatUsd(latestPoint?.portfolioTotalUsd ?? null)}</strong>
           <span>{cashFlowCount} deposits/withdrawals neutralized</span>
         </div>
         <div className="hero-metric">
           <p className="metric-label">Portfolio vs WETH</p>
           <strong className={latestComparison !== null && latestComparison < 0 ? "negative-text" : ""}>
-            {isLoadingHistoricalPrices ? "-" : formatPercentagePoints(latestComparison)}
+            {isChartPending ? "-" : formatPercentagePoints(latestComparison)}
           </strong>
           <span>percentage-point spread</span>
         </div>
@@ -244,6 +248,8 @@ export function GrowthChart({ rows, initialPrices }: GrowthChartProps) {
       <div className="chart-frame">
         {isLoadingHistoricalPrices ? (
           <div className="chart-empty">Loading historical prices before drawing growth.</div>
+        ) : isWaitingForCompletePortfolio ? (
+          <div className="chart-empty">Loading complete portfolio value before drawing growth.</div>
         ) : chartPoints.length < 2 || allValues.length === 0 ? (
           <div className="chart-empty">Need at least two priced transactions to draw growth.</div>
         ) : (
