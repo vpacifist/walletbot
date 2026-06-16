@@ -17,6 +17,11 @@ export type SyncWalletOptions = {
   fromBlock?: bigint | null;
 };
 
+function isBlockscoutTransactionFetchFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Blockscout transaction fetch failed/i.test(message);
+}
+
 export async function ensureConfiguredWallet() {
   const address = getAddress(getConfig().BASE_WALLET_ADDRESS);
   return prisma.wallet.upsert({
@@ -200,7 +205,34 @@ export async function syncWalletOnce(options: SyncWalletOptions = {}) {
   let maxBlock = wallet.lastSyncedBlock ?? 0n;
 
   try {
-    const txs = await fetchConfiguredWalletTransactions(wallet.address, fromBlock);
+    let txs;
+    let historySyncWarning: string | undefined;
+    try {
+      txs = await fetchConfiguredWalletTransactions(wallet.address, fromBlock);
+    } catch (error) {
+      if (!isBlockscoutTransactionFetchFailure(error)) throw error;
+
+      const refreshedStoredPositions = await refreshStoredPositionStates(client, wallet.id);
+      historySyncWarning = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
+      await prisma.syncRun.update({
+        where: { id: run.id },
+        data: {
+          status: SyncRunStatus.failed,
+          finishedAt: new Date(),
+          toBlock: wallet.lastSyncedBlock,
+          transactionsSeen: 0,
+          error: historySyncWarning
+        }
+      });
+
+      return {
+        runId: run.id,
+        transactionsSeen: 0,
+        positionsSeen: refreshedStoredPositions,
+        toBlock: maxBlock.toString(),
+        historySyncWarning
+      };
+    }
     const uniswapV3PoolAddresses = await getWethUsdcUniswapV3PoolAddresses(client).catch(() => new Set<string>());
     const positionLiquidityState = new Map<string, bigint>();
     const existingTransactions = await prisma.transaction.findMany({

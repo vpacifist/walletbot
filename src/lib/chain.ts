@@ -26,7 +26,7 @@ export function createBaseClientForUrl(url: string) {
 }
 
 function baseTransport() {
-  const transports = baseRpcUrls().map((url) =>
+  const transports = baseRpcUrlsWithPublicFallback().map((url) =>
     http(url, {
       retryCount: 3,
       timeout: 15_000

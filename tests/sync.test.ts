@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   fetchWalletTransactions: vi.fn(),
@@ -76,6 +76,10 @@ const executorAddress = "0x2222222222222222222222222222222222222222";
 const rebalancerA = "0x3333333333333333333333333333333333333333";
 const rebalancerB = "0x4444444444444444444444444444444444444444";
 const unrelatedAddress = "0x5555555555555555555555555555555555555555";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 function tx(hash: string, blockNumber: number, from: string, to: string | null) {
   return {
@@ -183,5 +187,64 @@ describe("syncWalletOnce", () => {
       })
     });
     expect(result).toMatchObject({ transactionsSeen: 0, positionsSeen: 1 });
+  });
+
+  it("returns a degraded position refresh when Blockscout transaction history is unavailable", async () => {
+    const { syncWalletOnce } = await import("@/lib/sync");
+    mocks.getConfig.mockReturnValue({
+      BASE_WALLET_ADDRESS: walletAddress,
+      BASE_RPC_URL: "https://rpc.example",
+      BASE_RPC_ADD_URLS: "",
+      AUTOPILOT_REBALANCER_ADDRESS: "",
+      AUTOPILOT_REBALANCER_ADDRESSES: "",
+      AUTOPILOT_EXECUTOR_ADDRESS: ""
+    });
+    mocks.prisma.wallet.upsert.mockResolvedValue({
+      id: "wallet-1",
+      address: walletAddress,
+      lastSyncedBlock: 47350000n
+    });
+    mocks.prisma.syncRun.create.mockResolvedValue({ id: "sync-1" });
+    mocks.fetchWalletTransactions.mockRejectedValue(new Error("Blockscout transaction fetch failed: 500 Internal server error"));
+    mocks.prisma.position.findMany.mockResolvedValue([
+      {
+        id: "position-1",
+        poolAddress: "0xd0b53D9277642d899DF5C87A3966A349A798F224",
+        token0: "0x4200000000000000000000000000000000000006",
+        token1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        tickLower: -201840,
+        tickUpper: -201600,
+        liquidity: "952862612136224"
+      }
+    ]);
+    mocks.prisma.position.update.mockResolvedValue({});
+    mocks.prisma.syncRun.update.mockResolvedValue({});
+    mocks.createBaseClient.mockReturnValue({
+      readContract: vi.fn().mockResolvedValue([0n, -201836])
+    });
+
+    const result = await syncWalletOnce();
+
+    expect(mocks.prisma.syncRun.update).toHaveBeenCalledWith({
+      where: { id: "sync-1" },
+      data: expect.objectContaining({
+        status: "failed",
+        transactionsSeen: 0,
+        error: expect.stringContaining("Blockscout transaction fetch failed")
+      })
+    });
+    expect(mocks.prisma.transaction.findMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-1" },
+      data: expect.objectContaining({
+        currentTick: -201836,
+        status: "in_range"
+      })
+    });
+    expect(result).toMatchObject({
+      transactionsSeen: 0,
+      positionsSeen: 1,
+      historySyncWarning: expect.stringContaining("Blockscout transaction fetch failed")
+    });
   });
 });
