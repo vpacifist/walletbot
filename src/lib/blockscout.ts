@@ -18,6 +18,7 @@ type BlockscoutResponse = {
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 750;
+const FETCH_TIMEOUT_MS = 10_000;
 const MAX_PAGES = 100;
 const HTTP_FETCH_ERROR_PREFIX = "Blockscout transaction fetch failed:";
 
@@ -29,12 +30,24 @@ function isRetryableStatus(status: number) {
   return status === 429 || status >= 500;
 }
 
+async function fetchWithTimeout(url: URL) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      headers: { accept: "application/json" },
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
+  let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
     try {
-      const response = await fetch(url, {
-        headers: { accept: "application/json" }
-      });
+      const response = await fetchWithTimeout(url);
 
       if (response.ok) {
         return (await response.json()) as BlockscoutResponse;
@@ -50,6 +63,7 @@ async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
 
       throw new Error(message);
     } catch (error) {
+      lastError = error;
       if (error instanceof Error && error.message.startsWith(HTTP_FETCH_ERROR_PREFIX)) {
         throw error;
       }
@@ -59,11 +73,13 @@ async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
         continue;
       }
 
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${HTTP_FETCH_ERROR_PREFIX} ${message || "request timed out"}`);
     }
   }
 
-  throw new Error("Blockscout transaction fetch failed");
+  const message = lastError instanceof Error ? lastError.message : String(lastError ?? "request timed out");
+  throw new Error(`${HTTP_FETCH_ERROR_PREFIX} ${message}`);
 }
 
 function buildTransactionsUrl(address: string, pageParams?: Record<string, string | number> | null) {

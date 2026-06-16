@@ -81,4 +81,22 @@ describe("fetchWalletTransactions", () => {
     expect(fetchMock.mock.calls[1][0].toString()).toContain("block_number=3");
     expect(result.map((item) => item.hash)).toEqual(["0x3", "0x4"]);
   });
+
+  it("times out hung Blockscout requests", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("request aborted")));
+      });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchWalletTransactions } = await importBlockscout();
+
+    const resultPromise = expect(fetchWalletTransactions(walletAddress)).rejects.toThrow("Blockscout transaction fetch failed");
+    await vi.advanceTimersByTimeAsync(10_000 + 750 + 10_000 + 1_500 + 10_000);
+    await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
