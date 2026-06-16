@@ -19,10 +19,14 @@ type BlockscoutResponse = {
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 750;
 const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TOTAL_TIMEOUT_MS = 30_000;
 const MAX_PAGES = 100;
 const HTTP_FETCH_ERROR_PREFIX = "Blockscout transaction fetch failed:";
 
-function sleep(ms: number) {
+function sleep(ms: number, deadlineMs?: number) {
+  if (deadlineMs !== undefined && Date.now() + ms > deadlineMs) {
+    return Promise.reject(new Error(`${HTTP_FETCH_ERROR_PREFIX} request timed out`));
+  }
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -30,9 +34,12 @@ function isRetryableStatus(status: number) {
   return status === 429 || status >= 500;
 }
 
-async function fetchWithTimeout(url: URL) {
+async function fetchWithTimeout(url: URL, deadlineMs?: number) {
+  const remainingMs = deadlineMs === undefined ? FETCH_TIMEOUT_MS : Math.min(FETCH_TIMEOUT_MS, deadlineMs - Date.now());
+  if (remainingMs <= 0) throw new Error(`${HTTP_FETCH_ERROR_PREFIX} request timed out`);
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), remainingMs);
   try {
     return await fetch(url, {
       headers: { accept: "application/json" },
@@ -43,11 +50,11 @@ async function fetchWithTimeout(url: URL) {
   }
 }
 
-async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
+async function fetchBlockscoutPage(url: URL, deadlineMs: number): Promise<BlockscoutResponse> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
     try {
-      const response = await fetchWithTimeout(url);
+      const response = await fetchWithTimeout(url, deadlineMs);
 
       if (response.ok) {
         return (await response.json()) as BlockscoutResponse;
@@ -57,7 +64,7 @@ async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
       const message = `${HTTP_FETCH_ERROR_PREFIX} ${response.status} ${responseText.slice(0, 500)}`;
 
       if (isRetryableStatus(response.status) && attempt < MAX_RETRIES) {
-        await sleep(RETRY_BASE_DELAY_MS * attempt);
+        await sleep(RETRY_BASE_DELAY_MS * attempt, deadlineMs);
         continue;
       }
 
@@ -69,7 +76,7 @@ async function fetchBlockscoutPage(url: URL): Promise<BlockscoutResponse> {
       }
 
       if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_BASE_DELAY_MS * attempt);
+        await sleep(RETRY_BASE_DELAY_MS * attempt, deadlineMs);
         continue;
       }
 
@@ -96,9 +103,12 @@ function buildTransactionsUrl(address: string, pageParams?: Record<string, strin
 export async function fetchWalletTransactions(address: string, fromBlock?: bigint) {
   const transactions: BlockscoutTransaction[] = [];
   let pageParams: Record<string, string | number> | null | undefined;
+  const deadlineMs = Date.now() + FETCH_TOTAL_TIMEOUT_MS;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const payload = await fetchBlockscoutPage(buildTransactionsUrl(address, pageParams));
+    if (Date.now() >= deadlineMs) throw new Error(`${HTTP_FETCH_ERROR_PREFIX} request timed out`);
+
+    const payload = await fetchBlockscoutPage(buildTransactionsUrl(address, pageParams), deadlineMs);
     transactions.push(...payload.items);
 
     const oldestBlockOnPage = payload.items.at(-1)?.block_number;
