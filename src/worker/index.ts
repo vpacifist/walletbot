@@ -1,5 +1,5 @@
 import { sendAutopilotPlanAlert, sendLowNativeEthAlert, sendOutOfRangeAlerts } from "@/lib/alerts";
-import { startAutopilotPriceWatch } from "@/lib/autopilot-price-watch";
+import { type AutopilotPriceWatchHandle, startAutopilotPriceWatch } from "@/lib/autopilot-price-watch";
 import { sendTopUpAlert } from "@/lib/autopilot-top-up";
 import { getConfig } from "@/lib/config";
 import { prisma } from "@/lib/db";
@@ -32,7 +32,7 @@ async function main() {
   const bot = createBot();
   let lowEthCheckTimeout: ReturnType<typeof setTimeout> | undefined;
   let topUpCheckTimeout: ReturnType<typeof setTimeout> | undefined;
-  let priceWatchInterval: ReturnType<typeof setInterval> | null = null;
+  let priceWatchHandle: AutopilotPriceWatchHandle | null = null;
 
   if (bot) {
     await bot.telegram
@@ -103,9 +103,13 @@ async function main() {
 
   const interval = setInterval(run, config.SYNC_INTERVAL_SECONDS * 1000);
   if (bot) {
-    priceWatchInterval = startAutopilotPriceWatch(bot);
-    if (priceWatchInterval) {
-      console.log(`autopilot fast price watch enabled: ${config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS}ms`);
+    priceWatchHandle = startAutopilotPriceWatch(bot);
+    if (priceWatchHandle) {
+      console.log(
+        priceWatchHandle.mode === "logs_subscription"
+          ? "autopilot fast price watch enabled: WETH/USDC swap log subscription"
+          : `autopilot fast price watch enabled: ${config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS}ms`
+      );
     }
     lowEthCheckTimeout = setTimeout(runLowEthCheck, msUntilNextMoscowTen());
     topUpCheckTimeout = setTimeout(runTopUpCheck, msUntilNextMoscowTen());
@@ -114,7 +118,7 @@ async function main() {
 
   const shutdown = async () => {
     clearInterval(interval);
-    if (priceWatchInterval) clearInterval(priceWatchInterval);
+    priceWatchHandle?.stop();
     if (lowEthCheckTimeout) clearTimeout(lowEthCheckTimeout);
     if (topUpCheckTimeout) clearTimeout(topUpCheckTimeout);
     bot?.stop("SIGTERM");

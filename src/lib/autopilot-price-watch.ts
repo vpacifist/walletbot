@@ -1,11 +1,11 @@
 import { PositionStatus } from "@/generated/prisma/client";
 import { type Telegraf } from "telegraf";
 import { getAddress } from "viem";
-import { positionManagerAbi } from "./abi";
+import { poolAbi, positionManagerAbi } from "./abi";
 import { autopilotBreakoutDepthTicks, autopilotBreakoutSide } from "./autopilot-breakout";
 import { sendTopUpOpportunityAlert } from "./autopilot-top-up";
 import { sendAutopilotPlanAlert } from "./alerts";
-import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl } from "./chain";
+import { baseRpcUrlsWithPublicFallback, createBaseClient, createBaseClientForUrl, createBaseWebSocketClient } from "./chain";
 import { getConfig } from "./config";
 import { CONTRACTS } from "./constants";
 import { prisma } from "./db";
@@ -22,6 +22,12 @@ type ActiveRange = {
 
 const SUSTAINED_BREAKOUT_WAIT_MS = 15 * 60 * 1000;
 const AUTO_GUARDED_TRANSIENT_RETRY_COOLDOWN_MS = 2 * 60 * 1000;
+const PRICE_WATCH_EVENT_THROTTLE_MS = 1000;
+
+export type AutopilotPriceWatchHandle = {
+  mode: "logs_subscription" | "slot0_polling";
+  stop: () => void;
+};
 
 type PriceWatchState = {
   running: boolean;
@@ -121,9 +127,18 @@ export async function checkAutopilotPriceBoundary(bot: Telegraf) {
   const config = getConfig();
   if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
   if (!config.TELEGRAM_CHAT_ID) return { triggered: false, skipped: "telegram_not_configured" };
+
+  const tick = await readWethUsdcPoolTick();
+  return checkAutopilotPriceBoundaryForTick(bot, tick);
+}
+
+export async function checkAutopilotPriceBoundaryForTick(bot: Telegraf, tick: number) {
+  const config = getConfig();
+  if (config.AUTOPILOT_MODE !== "auto_guarded") return { triggered: false, skipped: "mode_not_auto_guarded" };
+  if (!config.TELEGRAM_CHAT_ID) return { triggered: false, skipped: "telegram_not_configured" };
   if (state.running) return { triggered: false, skipped: "already_running" };
 
-  const [range, tick] = await Promise.all([getActiveAutopilotRange(), readWethUsdcPoolTick()]);
+  const range = await getActiveAutopilotRange();
   if (!range) return { triggered: false, skipped: "active_range_not_found", tick };
 
   const side = autopilotBreakoutSide(tick, range);
@@ -252,7 +267,16 @@ async function maybeCheckTopUpOpportunity(bot: Telegraf, tick: number) {
 }
 
 export function startAutopilotPriceWatch(bot: Telegraf) {
-  const intervalMs = getConfig().AUTOPILOT_PRICE_WATCH_INTERVAL_MS;
+  const config = getConfig();
+  if (config.BASE_WS_RPC_URL) {
+    try {
+      return startAutopilotSwapLogWatch(bot);
+    } catch (error) {
+      console.error("autopilot swap log subscription setup failed; falling back to slot0 polling", shortError(error));
+    }
+  }
+
+  const intervalMs = config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS;
   if (intervalMs <= 0) return null;
 
   const interval = setInterval(() => {
@@ -265,7 +289,73 @@ export function startAutopilotPriceWatch(bot: Telegraf) {
       .catch((error) => console.error("autopilot price watch failed", shortError(error)));
   }, intervalMs);
 
-  return interval;
+  return {
+    mode: "slot0_polling" as const,
+    stop: () => clearInterval(interval)
+  };
+}
+
+function startAutopilotSwapLogWatch(bot: Telegraf): AutopilotPriceWatchHandle {
+  const client = createBaseWebSocketClient();
+  let stopped = false;
+  let pendingTick: number | null = null;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  let processing = false;
+
+  const scheduleCheck = () => {
+    if (pendingTimer || stopped) return;
+    pendingTimer = setTimeout(() => {
+      pendingTimer = null;
+      void processLatestTick();
+    }, PRICE_WATCH_EVENT_THROTTLE_MS);
+  };
+
+  const processLatestTick = async () => {
+    if (processing || stopped || pendingTick === null) {
+      if (pendingTick !== null && !stopped) scheduleCheck();
+      return;
+    }
+
+    const tick = pendingTick;
+    pendingTick = null;
+    processing = true;
+    try {
+      const result = await checkAutopilotPriceBoundaryForTick(bot, tick);
+      if (result.triggered || result.skipped !== "inside_range") {
+        console.log("autopilot price watch", { source: "swap_logs", ...result });
+      }
+    } catch (error) {
+      console.error("autopilot swap log price watch failed", shortError(error));
+    } finally {
+      processing = false;
+      if (pendingTick !== null && !stopped) scheduleCheck();
+    }
+  };
+
+  const unwatch = client.watchContractEvent({
+    address: CONTRACTS.wethUsdcUniswapV3Pool3000,
+    abi: poolAbi,
+    eventName: "Swap",
+    onLogs: (logs) => {
+      const latest = logs.at(-1);
+      const tick = latest?.args.tick;
+      if (typeof tick !== "number") return;
+      pendingTick = tick;
+      scheduleCheck();
+    },
+    onError: (error) => {
+      console.error("autopilot swap log subscription failed", shortError(error));
+    }
+  });
+
+  return {
+    mode: "logs_subscription",
+    stop: () => {
+      stopped = true;
+      if (pendingTimer) clearTimeout(pendingTimer);
+      unwatch();
+    }
+  };
 }
 
 export function resetAutopilotPriceWatchStateForTest() {

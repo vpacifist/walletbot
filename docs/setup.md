@@ -13,6 +13,7 @@ corepack prepare pnpm@10.12.1 --activate
 
 - `BASE_WALLET_ADDRESS`
 - `BASE_RPC_URL`
+- `BASE_WS_RPC_URL` optionally, as a WebSocket RPC URL for the WETH/USDC swap-log price watch; for Infura Base use `wss://base-mainnet.infura.io/ws/v3/YOUR_KEY`
 - `BASE_RPC_ADD_URLS` optionally, as comma/space/newline separated fallback RPC URLs
 - `AUTOPILOT_PRESET`, either `triple_range` or `small_capital_test`
 - `AUTOPILOT_MODE`, usually `approve_in_telegram`; set `auto_guarded` only when guarded live execution should auto-submit clean out-of-range rebalances

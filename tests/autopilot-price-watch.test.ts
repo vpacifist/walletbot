@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PositionStatus } from "@/generated/prisma/client";
-import { checkAutopilotPriceBoundary, resetAutopilotPriceWatchStateForTest } from "@/lib/autopilot-price-watch";
+import { checkAutopilotPriceBoundary, checkAutopilotPriceBoundaryForTick, resetAutopilotPriceWatchStateForTest } from "@/lib/autopilot-price-watch";
 import { sendTopUpOpportunityAlert } from "@/lib/autopilot-top-up";
 import { sendAutopilotPlanAlert } from "@/lib/alerts";
 import { createBaseClient } from "@/lib/chain";
@@ -20,6 +20,7 @@ vi.mock("@/lib/config", () => {
       AUTOPILOT_TOP_UP_WATCH_INTERVAL_MS: 30000,
       AUTOPILOT_TOP_UP_MIN_EFFICIENCY_BPS: 8500,
       AUTOPILOT_TOP_UP_MIN_BOUNDARY_DISTANCE_TICKS: 10,
+      BASE_WS_RPC_URL: "",
       BASE_WALLET_ADDRESS: "0x5fafB7Cf2332dDA90d9bDd8ff8320e8a50884057",
       TELEGRAM_CHAT_ID: "63853863"
     }))
@@ -30,6 +31,7 @@ vi.mock("@/lib/chain", () => {
   return {
     baseRpcUrlsWithPublicFallback: vi.fn(() => []),
     createBaseClientForUrl: vi.fn(),
+    createBaseWebSocketClient: vi.fn(),
     createBaseClient: vi.fn()
   };
 });
@@ -162,6 +164,21 @@ describe("checkAutopilotPriceBoundary", () => {
 
     expect(result).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(sendAutopilotPlanAlert).toHaveBeenCalledWith(testBot);
+  });
+
+  it("uses a subscribed swap tick without reading pool slot0", async () => {
+    const readContract = vi.fn().mockImplementation((params) => {
+      if (params.functionName === "positions") return Promise.resolve([0n, "0x0", "0x0", "0x0", 3000, -201600, -201360, 1n]);
+      return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
+    });
+    vi.mocked(createBaseClient).mockReturnValue({ readContract } as any);
+    const testBot = bot();
+
+    const result = await checkAutopilotPriceBoundaryForTick(testBot as any, -201605);
+
+    expect(result).toMatchObject({ triggered: true, tick: -201605, tokenId: "5257034", side: "below", depthTicks: 5 });
+    expect(readContract).not.toHaveBeenCalledWith(expect.objectContaining({ functionName: "slot0" }));
     expect(sendAutopilotPlanAlert).toHaveBeenCalledWith(testBot);
   });
 

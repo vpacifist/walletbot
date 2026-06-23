@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, fallback, http } from "viem";
+import { createPublicClient, createWalletClient, fallback, http, webSocket } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getConfig } from "./config";
@@ -45,6 +45,21 @@ export function createBaseClient() {
   return createPublicClient({
     chain: base,
     transport: baseTransport()
+  });
+}
+
+export function createBaseWebSocketClient() {
+  const url = getConfig().BASE_WS_RPC_URL;
+  if (!url) {
+    throw new Error("BASE_WS_RPC_URL is not configured in environment.");
+  }
+
+  return createPublicClient({
+    chain: base,
+    transport: webSocket(url, {
+      retryCount: 3,
+      timeout: 15_000
+    })
   });
 }
 

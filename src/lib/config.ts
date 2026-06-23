@@ -9,6 +9,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   BASE_WALLET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   BASE_RPC_URL: z.string().url(),
+  BASE_WS_RPC_URL: z.union([z.literal(""), z.string().url()]).optional().default(""),
   BASE_RPC_ADD_URLS: z.string().optional().default(""),
   AUTOPILOT_PRESET: z.enum(["triple_range", "small_capital_test"]).optional().default("triple_range"),
   AUTOPILOT_MODE: z.enum(["manual", "approve_in_telegram", "auto_guarded", "auto_full"]).optional().default("approve_in_telegram"),
