@@ -270,13 +270,16 @@ export function startAutopilotPriceWatch(bot: Telegraf) {
   const config = getConfig();
   if (config.BASE_WS_RPC_URL) {
     try {
-      return startAutopilotSwapLogWatch(bot);
+      return startAutopilotSwapLogWatch(bot, config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS);
     } catch (error) {
       console.error("autopilot swap log subscription setup failed; falling back to slot0 polling", shortError(error));
     }
   }
 
-  const intervalMs = config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS;
+  return startAutopilotSlot0PollingWatch(bot, config.AUTOPILOT_PRICE_WATCH_INTERVAL_MS);
+}
+
+function startAutopilotSlot0PollingWatch(bot: Telegraf, intervalMs: number): AutopilotPriceWatchHandle | null {
   if (intervalMs <= 0) return null;
 
   const interval = setInterval(() => {
@@ -295,12 +298,29 @@ export function startAutopilotPriceWatch(bot: Telegraf) {
   };
 }
 
-function startAutopilotSwapLogWatch(bot: Telegraf): AutopilotPriceWatchHandle {
+function startAutopilotSwapLogWatch(bot: Telegraf, fallbackIntervalMs: number): AutopilotPriceWatchHandle {
   const client = createBaseWebSocketClient();
   let stopped = false;
   let pendingTick: number | null = null;
   let pendingTimer: ReturnType<typeof setTimeout> | null = null;
   let processing = false;
+  let fallback: AutopilotPriceWatchHandle | null = null;
+  let unwatch: (() => void) | null = null;
+
+  const fallBackToPolling = (error: unknown) => {
+    if (stopped || fallback) return;
+    console.error("autopilot swap log subscription failed; falling back to slot0 polling", shortError(error));
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      pendingTimer = null;
+    }
+    try {
+      unwatch?.();
+    } catch {
+      // Best-effort cleanup before the polling fallback takes over.
+    }
+    fallback = startAutopilotSlot0PollingWatch(bot, fallbackIntervalMs);
+  };
 
   const scheduleCheck = () => {
     if (pendingTimer || stopped) return;
@@ -332,7 +352,7 @@ function startAutopilotSwapLogWatch(bot: Telegraf): AutopilotPriceWatchHandle {
     }
   };
 
-  const unwatch = client.watchContractEvent({
+  unwatch = client.watchContractEvent({
     address: CONTRACTS.wethUsdcUniswapV3Pool3000,
     abi: poolAbi,
     eventName: "Swap",
@@ -344,7 +364,7 @@ function startAutopilotSwapLogWatch(bot: Telegraf): AutopilotPriceWatchHandle {
       scheduleCheck();
     },
     onError: (error) => {
-      console.error("autopilot swap log subscription failed", shortError(error));
+      fallBackToPolling(error);
     }
   });
 
@@ -353,7 +373,8 @@ function startAutopilotSwapLogWatch(bot: Telegraf): AutopilotPriceWatchHandle {
     stop: () => {
       stopped = true;
       if (pendingTimer) clearTimeout(pendingTimer);
-      unwatch();
+      fallback?.stop();
+      unwatch?.();
     }
   };
 }
