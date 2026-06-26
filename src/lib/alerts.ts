@@ -665,16 +665,8 @@ export async function sendAutopilotPlanAlert(bot: Telegraf) {
   if (!autopilotPlanNeedsAttention(autopilotPlan.plan)) {
     await prisma.telegramEvent.deleteMany({
       where: {
-        OR: [
-          {
-            alertType: "autopilot_plan",
-            dedupeKey: { startsWith: "autopilot-incident:" }
-          },
-          {
-            alertType: "autopilot_sustained_wait",
-            dedupeKey: { startsWith: "autopilot-sustained-wait:autopilot-incident:" }
-          }
-        ]
+        alertType: "autopilot_plan",
+        dedupeKey: { startsWith: "autopilot-incident:" }
       }
     });
     return { sent: 0, skipped: "plan_does_not_need_attention" };

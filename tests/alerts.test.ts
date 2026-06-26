@@ -207,16 +207,8 @@ describe("sendAutopilotPlanAlert", () => {
     expect(result).toEqual({ sent: 0, skipped: "plan_does_not_need_attention" });
     expect(prisma.telegramEvent.deleteMany).toHaveBeenCalledWith({
       where: {
-        OR: [
-          {
-            alertType: "autopilot_plan",
-            dedupeKey: { startsWith: "autopilot-incident:" }
-          },
-          {
-            alertType: "autopilot_sustained_wait",
-            dedupeKey: { startsWith: "autopilot-sustained-wait:autopilot-incident:" }
-          }
-        ]
+        alertType: "autopilot_plan",
+        dedupeKey: { startsWith: "autopilot-incident:" }
       }
     });
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
