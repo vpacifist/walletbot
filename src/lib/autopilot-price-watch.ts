@@ -33,6 +33,7 @@ type PriceWatchState = {
   running: boolean;
   topUpRunning: boolean;
   lastTriggerKey: string | null;
+  lastRetryPromptKey: string | null;
   retryAfter: { triggerKey: string; at: number; reason: string } | null;
   lastTopUpCheckAt: number;
 };
@@ -41,6 +42,7 @@ const state: PriceWatchState = {
   running: false,
   topUpRunning: false,
   lastTriggerKey: null,
+  lastRetryPromptKey: null,
   retryAfter: null,
   lastTopUpCheckAt: 0
 };
@@ -55,6 +57,11 @@ function shortError(error: unknown) {
   const message = redactSensitiveRpcText(error instanceof Error ? error.message : String(error));
   if (message.length <= 240) return message;
   return `${message.slice(0, 237)}...`;
+}
+
+function stalePositionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Invalid token ID|nonexistent token/i.test(message);
 }
 
 export async function getActiveAutopilotRange(): Promise<ActiveRange | null> {
@@ -108,6 +115,18 @@ async function rangeHasLiveLiquidity(tokenId: string) {
   return position[7] > 0n;
 }
 
+async function markRangeClosed(range: ActiveRange) {
+  await prisma.position.update({
+    where: { id: range.id },
+    data: {
+      liquidity: "0",
+      status: PositionStatus.closed_or_zero_liquidity,
+      lastCheckedAt: new Date()
+    }
+  });
+  await refreshTrackedPositionsForWallet([range.tokenId]);
+}
+
 async function sustainedWaitExpired(range: ActiveRange, side: "above" | "below") {
   const direction = side === "above" ? "above_range" : "below_range";
   const existing = await prisma.telegramEvent.findFirst({
@@ -144,6 +163,7 @@ export async function checkAutopilotPriceBoundaryForTick(bot: Telegraf, tick: nu
   const side = autopilotBreakoutSide(tick, range);
   if (!side) {
     state.lastTriggerKey = null;
+    state.lastRetryPromptKey = null;
     state.retryAfter = null;
     await maybeCheckTopUpOpportunity(bot, tick);
     return { triggered: false, skipped: "inside_range", tick, tokenId: range.tokenId };
@@ -183,21 +203,18 @@ export async function checkAutopilotPriceBoundaryForTick(bot: Telegraf, tick: nu
     hasLiveLiquidity = await rangeHasLiveLiquidity(range.tokenId);
   } catch (error) {
     state.lastTriggerKey = triggerKey;
+    if (stalePositionError(error)) {
+      await markRangeClosed(range);
+      console.error("autopilot stale position closed", shortError(error));
+      return { triggered: false, skipped: "stale_closed_position", tick, tokenId: range.tokenId, side, depthTicks };
+    }
     console.error("autopilot live liquidity check failed", shortError(error));
     return { triggered: false, skipped: "live_liquidity_check_failed", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
   if (!hasLiveLiquidity) {
     state.lastTriggerKey = triggerKey;
-    await prisma.position.update({
-      where: { id: range.id },
-      data: {
-        liquidity: "0",
-        status: PositionStatus.closed_or_zero_liquidity,
-        lastCheckedAt: new Date()
-      }
-    });
-    await refreshTrackedPositionsForWallet([range.tokenId]);
+    await markRangeClosed(range);
     return { triggered: false, skipped: "stale_closed_position", tick, tokenId: range.tokenId, side, depthTicks };
   }
 
@@ -221,20 +238,23 @@ export async function checkAutopilotPriceBoundaryForTick(bot: Telegraf, tick: nu
       };
     }
     if ("skipped" in result && result.skipped === "duplicate_plan_key") {
-      await bot.telegram.sendMessage(
-        config.TELEGRAM_CHAT_ID,
-        [
-          "Auto-guarded retry is waiting for your confirmation",
-          "This crossing was already seen before the latest fix/deploy, so the old duplicate guard blocked an automatic restart.",
-          "",
-          "Use this only when the previous auto-rebalance attempt failed and you want to restart the current incident."
-        ].join("\n"),
-        {
-          reply_markup: {
-            inline_keyboard: [[{ text: "Retry current incident", callback_data: "ap:retry_current" }]]
+      if (state.lastRetryPromptKey !== triggerKey) {
+        state.lastRetryPromptKey = triggerKey;
+        await bot.telegram.sendMessage(
+          config.TELEGRAM_CHAT_ID,
+          [
+            "Auto-guarded retry is waiting for your confirmation",
+            "This crossing was already seen before the latest fix/deploy, so the old duplicate guard blocked an automatic restart.",
+            "",
+            "Use this only when the previous auto-rebalance attempt failed and you want to restart the current incident."
+          ].join("\n"),
+          {
+            reply_markup: {
+              inline_keyboard: [[{ text: "Retry current incident", callback_data: "ap:retry_current" }]]
+            }
           }
-        }
-      );
+        );
+      }
     }
     return { triggered: true, tick, tokenId: range.tokenId, side, depthTicks, result };
   } finally {
@@ -383,6 +403,7 @@ export function resetAutopilotPriceWatchStateForTest() {
   state.running = false;
   state.topUpRunning = false;
   state.lastTriggerKey = null;
+  state.lastRetryPromptKey = null;
   state.retryAfter = null;
   state.lastTopUpCheckAt = 0;
 }

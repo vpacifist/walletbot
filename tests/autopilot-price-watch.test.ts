@@ -99,6 +99,16 @@ function mockPoolTickWithClosedPosition(tick: number) {
   } as any);
 }
 
+function mockPoolTickWithInvalidToken(tick: number) {
+  vi.mocked(createBaseClient).mockReturnValue({
+    readContract: vi.fn().mockImplementation((params) => {
+      if (params.functionName === "slot0") return Promise.resolve([0n, tick]);
+      if (params.functionName === "positions") return Promise.reject(new Error("The contract function \"positions\" reverted with the following reason:\nInvalid token ID"));
+      return Promise.reject(new Error(`Unexpected readContract ${params.functionName}`));
+    })
+  } as any);
+}
+
 function mockActiveRange() {
   vi.mocked(prisma.wallet.findUnique).mockResolvedValue({ id: "wallet-1" } as any);
   vi.mocked(prisma.position.findFirst).mockResolvedValue({
@@ -201,6 +211,25 @@ describe("checkAutopilotPriceBoundary", () => {
     expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("marks invalid on-chain token ids as stale closed ranges", async () => {
+    mockPoolTickWithInvalidToken(-201605);
+    const testBot = bot();
+
+    const result = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(result).toMatchObject({ triggered: false, skipped: "stale_closed_position", tick: -201605, tokenId: "5257034" });
+    expect(prisma.position.update).toHaveBeenCalledWith({
+      where: { id: "position-1" },
+      data: expect.objectContaining({
+        liquidity: "0",
+        status: PositionStatus.closed_or_zero_liquidity
+      })
+    });
+    expect(refreshTrackedPositionsForWallet).toHaveBeenCalledWith(["5257034"]);
+    expect(sendAutopilotPlanAlert).not.toHaveBeenCalled();
+    expect(testBot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("does not repeatedly trigger the same out-of-range incident", async () => {
     mockPoolTick(-201605);
     const testBot = bot();
@@ -243,6 +272,23 @@ describe("checkAutopilotPriceBoundary", () => {
         }
       }
     );
+  });
+
+  it("does not repeat the explicit retry button for the same incident", async () => {
+    mockPoolTick(-201605);
+    vi.mocked(prisma.telegramEvent.findFirst).mockResolvedValue({
+      sentAt: new Date(Date.now() - 16 * 60 * 1000)
+    } as any);
+    vi.mocked(sendAutopilotPlanAlert).mockResolvedValue({ sent: 0, skipped: "duplicate_plan_key" } as any);
+    const testBot = bot();
+
+    const first = await checkAutopilotPriceBoundary(testBot as any);
+    const second = await checkAutopilotPriceBoundary(testBot as any);
+
+    expect(first).toMatchObject({ triggered: true, result: { skipped: "duplicate_plan_key" } });
+    expect(second).toMatchObject({ triggered: true, result: { skipped: "duplicate_plan_key" } });
+    expect(sendAutopilotPlanAlert).toHaveBeenCalledTimes(2);
+    expect(testBot.telegram.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("throttles auto_guarded retries after a failed attempt before the incident leaves range", async () => {
